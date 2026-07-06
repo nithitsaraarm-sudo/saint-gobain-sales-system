@@ -59,13 +59,14 @@ async function loadBootstrap() {
       return response;
     }
     if (response.data) {
-      DB = response.data;
+      DB = typeof normalizeDb === 'function' ? normalizeDb(response.data) : response.data;
     }
     if (typeof renderAll === 'function') {
       renderAll();
     }
     return response;
   } catch (error) {
+    console.error(error);
     toastMessage('เข้าสู่ระบบไม่สำเร็จ');
     return { ok: false, message: String(error && error.message ? error.message : 'API error') };
   }
@@ -109,6 +110,7 @@ async function startTestMode() {
     toastMessage('เข้าสู่โหมดทดลองใช้งานแล้ว');
     return response;
   } catch (error) {
+    console.error(error);
     toastMessage('เข้าสู่ระบบไม่สำเร็จ');
     return { ok: false, message: String(error && error.message ? error.message : 'API error') };
   }
@@ -193,7 +195,6 @@ window.startTestMode = startTestMode;
 window.login = login;
 window.register = register;
 window.resetPass = resetPass;
-window.showApp = showApp;
 window.logout = logout;
 window.isLoggedIn = isLoggedIn;
 window.getCurrentUser = getCurrentUser;

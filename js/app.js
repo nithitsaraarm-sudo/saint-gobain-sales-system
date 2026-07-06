@@ -1,6 +1,35 @@
-let DB={settings:{},customers:[],products:[],promotions:[],quotes:[]}, USER=null, CART=[];
+let DB=normalizeDb(), USER=null, CART=[];
 const $=id=>document.getElementById(id); const money=n=>Number(n||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
-window.addEventListener('load',()=>{ const u=localStorage.getItem('koiUser'); if(u){USER=JSON.parse(u); showApp();} loadData(); });
+window.addEventListener('load',()=>{
+  const u=localStorage.getItem('currentUser');
+  if(u){
+    try {
+      USER=JSON.parse(u);
+      showApp();
+    } catch (e) {
+      localStorage.removeItem('currentUser');
+    }
+  }
+  loadData();
+});
+
+function normalizeDb(data){
+  const source=data&&typeof data==='object'?data:{};
+  return {
+    ...source,
+    settings:source.settings&&typeof source.settings==='object'?source.settings:{},
+    customers:Array.isArray(source.customers)?source.customers:[],
+    products:Array.isArray(source.products)?source.products:[],
+    promotions:Array.isArray(source.promotions)?source.promotions:[],
+    quotes:Array.isArray(source.quotes)?source.quotes:[]
+  };
+}
+
+function showApp(){
+  document.getElementById('loginView').classList.add('hidden');
+  document.getElementById('appView').classList.remove('hidden');
+  renderAll();
+}
 
 async function loadData(){
   try {
@@ -9,7 +38,7 @@ async function loadData(){
       toast('โหลดข้อมูลไม่สำเร็จ: ' + r.message);
       return;
     }
-    DB = r.data;
+    DB = normalizeDb(r.data);
     renderAll();
   } catch (e) {
     toast('โหลดข้อมูลไม่สำเร็จ: ' + (e && e.message ? e.message : e));
@@ -42,7 +71,7 @@ async function saveProfile(){
   toast(r.message);
   if (r.ok) {
     USER = r.data;
-    localStorage.setItem('koiUser', JSON.stringify(USER));
+    localStorage.setItem('currentUser', JSON.stringify(USER));
     renderProfile();
     renderHome();
   }
@@ -92,4 +121,4 @@ async function saveModal(type){
   await loadData();
 }
 function toast(msg){const el=document.getElementById('toast'); if(!el)return; el.textContent=msg; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),2600)}
-window.toggleMenu=toggleMenu; window.go=go; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.toast=toast;
+window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.showApp=showApp; window.loadData=loadData; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.toast=toast;

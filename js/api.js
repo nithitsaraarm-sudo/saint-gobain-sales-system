@@ -84,3 +84,6 @@ function mockApi(action, payload) {
       return { ok: false, message: 'Mock action unsupported: ' + action };
   }
 }
+
+window.callApi = callApi;
+window.gas = gas;
