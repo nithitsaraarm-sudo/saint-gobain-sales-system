@@ -1,7 +1,3 @@
-const CUSTOMERS_SHEET = 'Customers';
-const QUOTE_HISTORY_SHEET = 'QuoteHistory';
-const CUSTOMER_FREQUENT_PRODUCTS_SHEET = 'CustomerFrequentProducts';
-
 function getCustomers() {
   try {
     const result = getSheetData(CUSTOMERS_SHEET);

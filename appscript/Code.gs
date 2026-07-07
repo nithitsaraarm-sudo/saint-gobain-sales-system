@@ -1,10 +1,18 @@
 // Main Apps Script entry point for Saint-Gobain Sales System.
 function doGet() {
   try {
-    return HtmlService.createHtmlOutputFromFile('index');
+    return ContentService
+      .createTextOutput(JSON.stringify(success({
+        service: 'Saint-Gobain Sales System API',
+        status: 'API Running',
+        version: APP_VERSION
+      }, 'API Running')))
+      .setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
     logError('doGet', error);
-    return HtmlService.createHtmlOutput('<p>Failed to load application</p>');
+    return ContentService
+      .createTextOutput(JSON.stringify(fail(error && error.message ? error.message : 'API health check failed')))
+      .setMimeType(ContentService.MimeType.JSON);
   }
 }
 
@@ -52,26 +60,6 @@ function getBootstrapData() {
   }
 }
 
-function loginUser(username, password) {
-  return loginUserCore(username, password);
-}
-
-function demoLogin() {
-  return demoLoginCore();
-}
-
-function registerUser(payload) {
-  return registerUserCore(payload);
-}
-
-function resetPassword(phone, username, newPassword) {
-  return resetPasswordCore(phone, username, newPassword);
-}
-
-function updateProfile(payload) {
-  return updateProfileCore(payload);
-}
-
 function updateSettings(payload) {
   try {
     return success(payload || {}, 'Settings saved');
@@ -90,43 +78,13 @@ function savePromotion(payload) {
   }
 }
 
-function getCurrentEnvironment() {
-  return getCurrentEnvironmentCore();
-}
-
-function createDefaultSheets() {
-  return createDefaultSheetsCore();
-}
-
 function doPost(e) {
   try {
-    const params = e && e.parameter ? e.parameter : {};
-    const action = String(params.action || params.mode || 'getBootstrapData');
-    const payload = params.payload ? JSON.parse(params.payload) : {};
-    let result;
-
-    switch (action) {
-      case 'getBootstrapData':
-        result = getBootstrapData();
-        break;
-      case 'loginUser':
-        result = loginUser(params.username, params.password);
-        break;
-      case 'demoLogin':
-        result = demoLogin();
-        break;
-      case 'registerUser':
-        result = registerUser(payload);
-        break;
-      case 'resetPassword':
-        result = resetPassword(params.phone, params.username, params.newPassword);
-        break;
-      case 'updateProfile':
-        result = updateProfile(payload);
-        break;
-      default:
-        result = fail('Unsupported action');
-    }
+    const rawBody = e && e.postData && e.postData.contents ? e.postData.contents : '{}';
+    const body = JSON.parse(rawBody);
+    const action = String(body.action || '').trim();
+    const payload = body.payload || {};
+    const result = api(action, payload);
 
     return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
   } catch (error) {

@@ -1,5 +1,3 @@
-const PRODUCT_SHEET = SHEET_NAMES.PRODUCTS;
-
 function getProducts() {
   try {
     const result = getSheetData(PRODUCT_SHEET);

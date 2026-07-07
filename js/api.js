@@ -1,37 +1,27 @@
 const APP_ENV = String(window.APP_ENV || 'production').trim().toLowerCase();
 const API_MOCK_MODE = APP_ENV === 'development';
-const API_ACTIONS = ['login','demoLogin','bootstrap','customers','products','discount','quotation','createQuotation','loadQuotation','duplicateQuotation','cancelQuotation','getQuotationHistory'];
+const GAS_WEB_APP_URL =
+'https://script.google.com/macros/s/AKfycbyuhRP2aIYI11vzMsIzGr2ncuhrflHb1u9flm_OwjpjZOJOTXvAg1HQu4iq62ZwjJn3RQ/exec';
 
 function callApi(action, payload) {
-  return new Promise(function (resolve, reject) {
-    const normalizedAction = String(action || '').trim();
-    const body = payload || {};
+  const normalizedAction = String(action || '').trim();
+  const body = payload || {};
 
-    if (API_MOCK_MODE || typeof google === 'undefined' || !google || !google.script || typeof google.script.run === 'undefined') {
-      return resolve(mockApi(normalizedAction, body));
-    }
+  if (API_MOCK_MODE) {
+    return Promise.resolve(mockApi(normalizedAction, body));
+  }
 
-    try {
-      if (API_ACTIONS.indexOf(normalizedAction) >= 0) {
-        google.script.run
-          .withSuccessHandler(resolve)
-          .withFailureHandler(function (error) {
-            reject({ ok: false, message: String(error && error.message ? error.message : error || 'API error') });
-          })
-          .api(normalizedAction, body);
-      } else {
-        const runner = google.script.run.withSuccessHandler(resolve).withFailureHandler(function (error) {
-          reject({ ok: false, message: String(error && error.message ? error.message : error || 'API error') });
-        });
-        if (typeof runner[normalizedAction] === 'function') {
-          runner[normalizedAction](body);
-        } else {
-          runner.api(normalizedAction, body);
-        }
-      }
-    } catch (error) {
-      reject({ ok: false, message: String(error && error.message ? error.message : 'API invocation failed') });
-    }
+  return fetch(GAS_WEB_APP_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      action: normalizedAction,
+      payload: body
+    })
+  }).then(function (response) {
+    return response.json();
   });
 }
 

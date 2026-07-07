@@ -20,7 +20,7 @@ function logWarning(action, detail) {
 
 function logError(action, error) {
   try {
-    logActivity('', action, error && error.message ? error.message : error);
+    console.error('[ERROR] ' + action + ': ' + (error && error.message ? error.message : error));
     return fail('Error logged', RESPONSE_CODES.ERROR, error && error.message ? error.message : error);
   } catch (err) {
     console.error('[ERROR] ' + action + ': ' + err);
@@ -30,11 +30,7 @@ function logError(action, error) {
 
 function logActivity(userId, action, detail) {
   try {
-    const sheet = getSheet(SHEET_NAMES.SYSTEM_LOGS);
-    if (!sheet) {
-      console.log('[SYSLOG] ' + userId + ' | ' + action + ' | ' + detail);
-      return success(null, 'logged to console');
-    }
+    console.log('[SYSLOG] ' + userId + ' | ' + action + ' | ' + detail);
     const row = {
       userId: userId || '',
       action: action || '',

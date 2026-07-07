@@ -1,15 +1,3 @@
-const QUOTE_HISTORY_SHEET = 'QuoteHistory';
-const QUOTE_LINES_SHEET = 'QuoteLines';
-const QUOTE_STATUSES = {
-  DRAFT: 'DRAFT',
-  SAVED: 'SAVED',
-  CANCELLED: 'CANCELLED'
-};
-const LINE_STATUSES = {
-  ACTIVE: 'ACTIVE',
-  REMOVED: 'REMOVED'
-};
-
 function createQuotation(customerId) {
   try {
     const idCheck = requireValue(customerId, 'customerId');
@@ -255,21 +243,21 @@ function saveQuotation(payload) {
       const shipping = parseNumericValue(payload.shipping);
       const specialDiscount = parseNumericValue(payload.specialDiscount);
       const items = Array.isArray(payload.items) ? payload.items : [];
-      var quote = null;
+      let workingQuote = null;
       if (quoteId) {
         const quoteResult = getQuotationRow(quoteId);
         if (!quoteResult.ok) {
           return quoteResult;
         }
-        quote = quoteResult.data;
+        workingQuote = quoteResult.data;
       } else {
         const createResult = createQuotation(customerId);
         if (!createResult.ok) {
           return createResult;
         }
-        quote = createResult.data;
+        workingQuote = createResult.data;
       }
-      const id = String(quote.quoteId || quoteId).trim();
+      const id = String(workingQuote.quoteId || quoteId).trim();
       if (!id) {
         return fail('Quote ID missing');
       }
