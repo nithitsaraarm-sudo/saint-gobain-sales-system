@@ -13,14 +13,18 @@ function callApi(action, payload) {
 
   return fetch(GAS_WEB_APP_URL, {
     method: 'POST',
+    mode: 'no-cors',
     headers: {
-      'Content-Type': 'application/json'
+      'Content-Type': 'text/plain;charset=utf-8'
     },
     body: JSON.stringify({
       action: normalizedAction,
       payload: body
     })
   }).then(function (response) {
+    if (response.type === 'opaque') {
+      return { ok: true, data: null, message: 'Request sent' };
+    }
     return response.json();
   });
 }
