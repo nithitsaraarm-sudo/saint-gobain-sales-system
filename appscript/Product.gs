@@ -5,7 +5,7 @@ function getProducts() {
       logWarning('getProducts', 'Unable to read Products sheet');
       return success([]);
     }
-    const products = Array.isArray(result.data) ? result.data : [];
+    const products = Array.isArray(result.data) ? result.data.map(normalizeProductObject) : [];
     return success(filterActiveProducts(products));
   } catch (error) {
     logError('getProducts', error);
@@ -24,7 +24,7 @@ function getProduct(productId) {
       logWarning('getProduct', 'Unable to read Products sheet');
       return fail('Unable to load product');
     }
-    const products = Array.isArray(result.data) ? result.data : [];
+    const products = Array.isArray(result.data) ? result.data.map(normalizeProductObject) : [];
     const normalizedProductId = normalizeString(productId);
     const product = products.find(function (item) {
       return normalizedProductId === normalizeString(item.productId || item.id || item.sku || item.productCode);
@@ -55,10 +55,10 @@ function searchProducts(keyword) {
       return [
         item.productId,
         item.productName,
-        item.brand,
-        item.groupCode,
-        item.group,
         item.description,
+        item.brand,
+        item.discountGroup,
+        item.groupCode,
         item.unit
       ].some(function (field) {
         return normalizeString(field).indexOf(query) >= 0;
@@ -126,11 +126,16 @@ function saveProduct(payload) {
       productId: productId,
       sku: productId,
       productCode: productId,
-      productName: String(data.productName || '').trim(),
+      itemName: String(data.productName || data.itemName || '').trim(),
+      itemDesc: String(data.description || data.itemDesc || '').trim(),
       brand: String(data.brand || '').trim(),
+      discountGroup: String(data.discountGroup || '').trim(),
       unit: String(data.unit || '').trim(),
       groupCode: String(data.groupCode || data.group || '').trim(),
       listPrice: String(data.listPrice || 0),
+      imageUrl: String(data.imageUrl || ''),
+      notes: String(data.notes || ''),
+      promoText: String(data.promoText || ''),
       active: 'TRUE',
       createdAt: now,
       updatedAt: now
@@ -247,7 +252,7 @@ function calculateListPrice(productId) {
       return productResult;
     }
     const product = productResult.data || {};
-    const listPrice = roundCurrency(parseNumericValue(product.listPrice || product.price || 0));
+    const listPrice = roundCurrency(parseProductListPrice(product.listPrice || product.price || 0));
     return success({ productId: String(productId || '').trim(), listPrice: listPrice });
   } catch (error) {
     logError('calculateListPrice', error);
@@ -256,13 +261,49 @@ function calculateListPrice(productId) {
 }
 
 function filterActiveProducts(products) {
-  return Array.isArray(products) ? products.filter(function (item) {
-    var active = normalizeString(item.active);
-    if (!active) {
-      return true;
-    }
-    return active === 'true' || active === 'yes' || active === '1' || active === 'active';
-  }) : [];
+  return Array.isArray(products) ? products.filter(filterActiveProductObject) : [];
+}
+
+function filterActiveProductObject(item) {
+  var active = normalizeString(item && (item.active || item.status));
+  if (!active) {
+    return true;
+  }
+  return active === 'true' || active === 'yes' || active === '1' || active === 'active';
+}
+
+function normalizeProductObject(row) {
+  const source = row && typeof row === 'object' ? row : {};
+  const productId = String(source.productId || '').trim();
+  const itemName = String(source.itemName || '').trim();
+  const itemDesc = String(source.itemDesc || '').trim();
+  const groupCode = String(source.groupCode || '').trim();
+  const listPrice = parseProductListPrice(source.listPrice);
+
+  return Object.assign({}, source, {
+    id: productId,
+    sku: productId,
+    productId: productId,
+    productCode: productId,
+    productName: itemName,
+    description: itemDesc,
+    brand: String(source.brand || '').trim(),
+    discountGroup: String(source.discountGroup || '').trim(),
+    groupCode: groupCode,
+    group: groupCode,
+    category: groupCode,
+    unit: String(source.unit || '').trim(),
+    listPrice: listPrice,
+    imageUrl: String(source.imageUrl || '').trim(),
+    active: String(source.active || source.status || '').trim(),
+    notes: String(source.notes || '').trim(),
+    promoText: String(source.promoText || '').trim()
+  });
+}
+
+function parseProductListPrice(value) {
+  const numericValue = Number(String(value || '').replace(/,/g, ''));
+  return isNaN(numericValue) ? 0 : numericValue;
 }
 
 function findProductById(productId, products) {

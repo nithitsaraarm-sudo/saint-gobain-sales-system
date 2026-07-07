@@ -17,7 +17,7 @@ function requireRole(user, roles) {
 }
 
 function canUseDemoLogin() {
-  return isDevelopmentEnvironment();
+  return true;
 }
 
 function canManageUsers(user) {

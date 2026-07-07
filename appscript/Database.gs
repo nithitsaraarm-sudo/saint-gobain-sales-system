@@ -72,18 +72,7 @@ function getSheetData(sheetName) {
     if (!values || values.length === 0) {
       return success([]);
     }
-    const headers = values[0];
-    const rows = values.slice(1).filter(function (row) {
-      return row.some(function (cell) { return String(cell).trim() !== ''; });
-    });
-    const records = rows.map(function (row) {
-      const record = {};
-      headers.forEach(function (header, index) {
-        record[header] = row[index] || '';
-      });
-      return record;
-    });
-    return success(records);
+    return success(sheetToObjects(values));
   } catch (error) {
     logError('getSheetData', error);
     return fail(error && error.message ? error.message : 'Failed to read sheet data');
@@ -117,6 +106,36 @@ function appendRow(sheetName, object) {
       }
     }
   }
+}
+
+function sheetToObjects(values) {
+  if (!values || values.length === 0) {
+    return [];
+  }
+  const headers = values[0].map(function (header) {
+    return String(header || '').trim();
+  });
+  const rows = values.slice(1).filter(function (row) {
+    return row.some(function (cell) { return String(cell).trim() !== ''; });
+  });
+  return rows.map(function (row) {
+    const record = {};
+    headers.forEach(function (header, index) {
+      if (header) {
+        record[header] = row[index] || '';
+      }
+    });
+    return record;
+  });
+}
+
+function parseNumericValue(value) {
+  const numericValue = Number(value);
+  return isNaN(numericValue) ? 0 : numericValue;
+}
+
+function getSheetByName(name) {
+  return getSheet(name);
 }
 
 function updateRowById(sheetName, idColumn, idValue, object) {
@@ -189,10 +208,10 @@ function getHeadersForSheet(sheetName) {
     return ['userId', 'action', 'detail', 'createdAt'];
   }
   if (sheetName === SHEET_NAMES.CUSTOMERS) {
-    return ['customerId', 'customerName', 'province', 'phone', 'address', 'group', 'active', 'createdAt', 'updatedAt'];
+    return ['customerId', 'customerName', 'province', 'status', 'defaultGyprocDiscount', 'defaultWeberDiscount', 'notes', 'address'];
   }
   if (sheetName === SHEET_NAMES.PRODUCTS) {
-    return ['productId', 'sku', 'productCode', 'productName', 'brand', 'unit', 'groupCode', 'listPrice', 'active', 'createdAt', 'updatedAt'];
+    return ['productId', 'brand', 'discountGroup', 'groupCode', 'itemName', 'itemDesc', 'unit', 'listPrice', 'imageUrl', 'status', 'active', 'notes', 'promoText'];
   }
   if (sheetName === SHEET_NAMES.QUOTE_HISTORY) {
     return ['quoteId', 'customerId', 'status', 'shipping', 'specialDiscount', 'subtotal', 'vat', 'grandTotal', 'createdAt', 'updatedAt'];

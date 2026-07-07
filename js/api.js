@@ -11,15 +11,24 @@ function callApi(action, payload) {
     return Promise.resolve(mockApi(normalizedAction, body));
   }
 
+  return fetchApi(normalizedAction, body).catch(function () {
+    return jsonpApi(normalizedAction, body);
+  });
+}
+
+function gas(action, payload) {
+  return callApi(action, payload);
+}
+
+function fetchApi(action, payload) {
   return fetch(GAS_WEB_APP_URL, {
     method: 'POST',
-    mode: 'no-cors',
     headers: {
       'Content-Type': 'text/plain;charset=utf-8'
     },
     body: JSON.stringify({
-      action: normalizedAction,
-      payload: body
+      action: action,
+      payload: payload || {}
     })
   }).then(function (response) {
     if (response.type === 'opaque') {
@@ -29,8 +38,44 @@ function callApi(action, payload) {
   });
 }
 
-function gas(action, payload) {
-  return callApi(action, payload);
+function jsonpApi(action, payload) {
+  return new Promise(function (resolve, reject) {
+    const callbackName = '__sgApiCallback_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
+    const script = document.createElement('script');
+    const timeout = window.setTimeout(function () {
+      cleanup();
+      reject({ ok: false, message: 'API request timeout' });
+    }, 30000);
+
+    function cleanup() {
+      window.clearTimeout(timeout);
+      try {
+        delete window[callbackName];
+      } catch (error) {
+        window[callbackName] = undefined;
+      }
+      if (script.parentNode) {
+        script.parentNode.removeChild(script);
+      }
+    }
+
+    window[callbackName] = function (response) {
+      cleanup();
+      resolve(response);
+    };
+
+    script.onerror = function () {
+      cleanup();
+      reject({ ok: false, message: 'API request failed' });
+    };
+
+    script.src = GAS_WEB_APP_URL
+      + '?action=' + encodeURIComponent(action)
+      + '&payload=' + encodeURIComponent(JSON.stringify(payload || {}))
+      + '&callback=' + encodeURIComponent(callbackName);
+
+    document.head.appendChild(script);
+  });
 }
 
 function mockApi(action, payload) {

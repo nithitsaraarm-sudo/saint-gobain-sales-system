@@ -11,6 +11,7 @@ function fail(message, code, detail) {
   return {
     ok: false,
     code: code || RESPONSE_CODES.ERROR,
+    data: null,
     message: message || 'Request failed',
     detail: detail || null
   };

@@ -13,12 +13,14 @@ function api(action, payload) {
       case 'updateProfile':
         return authorizeAction(updateProfile, [payload]);
       case 'customers':
+      case 'getCustomers':
         return authorizeAction(getCustomers, []);
       case 'customer':
         return authorizeAction(getCustomer, [payload && payload.customerId]);
       case 'searchCustomers':
         return authorizeAction(searchCustomers, [payload && payload.keyword]);
       case 'products':
+      case 'getProducts':
         return authorizeAction(getProducts, []);
       case 'product':
         return authorizeAction(getProduct, [payload && payload.productId]);

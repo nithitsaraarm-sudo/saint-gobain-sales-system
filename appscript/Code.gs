@@ -1,18 +1,23 @@
 // Main Apps Script entry point for Saint-Gobain Sales System.
-function doGet() {
+function doGet(e) {
   try {
-    return ContentService
-      .createTextOutput(JSON.stringify(success({
-        service: 'Saint-Gobain Sales System API',
-        status: 'API Running',
-        version: APP_VERSION
-      }, 'API Running')))
-      .setMimeType(ContentService.MimeType.JSON);
+    const params = e && e.parameter ? e.parameter : {};
+    const action = String(params.action || '').trim();
+
+    if (action) {
+      const payload = params.payload ? JSON.parse(params.payload) : {};
+      const result = api(action, payload);
+      return createApiOutput(result, params.callback);
+    }
+
+    return createApiOutput(success({
+      service: 'Saint-Gobain Sales System API',
+      status: 'API Running',
+      version: APP_VERSION
+    }, 'API Running'), params.callback);
   } catch (error) {
     logError('doGet', error);
-    return ContentService
-      .createTextOutput(JSON.stringify(fail(error && error.message ? error.message : 'API health check failed')))
-      .setMimeType(ContentService.MimeType.JSON);
+    return createApiOutput(fail(error && error.message ? error.message : 'API health check failed'), e && e.parameter ? e.parameter.callback : '');
   }
 }
 
@@ -27,8 +32,8 @@ function getBootstrapData() {
     const quotesResult = getSheetData(QUOTE_HISTORY_SHEET);
     const quotesData = quotesResult.ok && Array.isArray(quotesResult.data) ? quotesResult.data : [];
 
-    const customers = customersResult.ok && Array.isArray(customersResult.data) ? customersResult.data : [];
-    const products = productsResult.ok && Array.isArray(productsResult.data) ? productsResult.data : [];
+    const customers = customersResult.ok && Array.isArray(customersResult.data) ? customersResult.data.map(normalizeCustomerObject).filter(isActiveCustomer) : [];
+    const products = productsResult.ok && Array.isArray(productsResult.data) ? productsResult.data.map(normalizeProductObject).filter(filterActiveProductObject) : [];
     const quotes = quotesData.map(function (row) {
       const customer = customers.find(function (c) {
         return String(c.customerId || '').trim() === String(row.customerId || '').trim();
@@ -91,4 +96,19 @@ function doPost(e) {
     logError('doPost', error);
     return ContentService.createTextOutput(JSON.stringify(fail(error && error.message ? error.message : 'Request processing failed'))).setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+function createApiOutput(result, callback) {
+  const json = JSON.stringify(result);
+  const callbackName = String(callback || '').trim();
+
+  if (callbackName && /^[A-Za-z_$][0-9A-Za-z_$]*(\.[A-Za-z_$][0-9A-Za-z_$]*)*$/.test(callbackName)) {
+    return ContentService
+      .createTextOutput(callbackName + '(' + json + ');')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+
+  return ContentService
+    .createTextOutput(json)
+    .setMimeType(ContentService.MimeType.JSON);
 }

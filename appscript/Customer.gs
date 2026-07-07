@@ -5,11 +5,8 @@ function getCustomers() {
       logWarning('getCustomers', 'Unable to read Customers sheet');
       return success([]);
     }
-    const customers = Array.isArray(result.data) ? result.data : [];
-    const activeCustomers = customers.filter(function (item) {
-      const activeValue = String(item.active || '').trim().toLowerCase();
-      return activeValue === 'true' || activeValue === 'yes' || activeValue === '1';
-    });
+    const customers = Array.isArray(result.data) ? result.data.map(normalizeCustomerObject) : [];
+    const activeCustomers = customers.filter(isActiveCustomer);
     return success(activeCustomers);
   } catch (error) {
     logError('getCustomers', error);
@@ -28,7 +25,7 @@ function getCustomer(customerId) {
       logWarning('getCustomer', 'Unable to read Customers sheet');
       return fail('Unable to load customer');
     }
-    const customers = Array.isArray(result.data) ? result.data : [];
+    const customers = Array.isArray(result.data) ? result.data.map(normalizeCustomerObject) : [];
     const customer = customers.find(function (item) {
       return String(item.customerId || '').trim() === String(customerId || '').trim();
     });
@@ -36,7 +33,7 @@ function getCustomer(customerId) {
       logWarning('getCustomer', 'Customer not found: ' + customerId);
       return notFound('Customer not found');
     }
-    return success(customer);
+    return success(normalizeCustomerObject(customer));
   } catch (error) {
     logError('getCustomer', error);
     return fail(error && error.message ? error.message : 'Failed to load customer');
@@ -54,12 +51,15 @@ function searchCustomers(keyword) {
       logWarning('searchCustomers', 'Unable to read Customers sheet');
       return success([]);
     }
-    const customers = Array.isArray(result.data) ? result.data : [];
+    const customers = Array.isArray(result.data) ? result.data.map(normalizeCustomerObject) : [];
     const matches = customers.filter(function (item) {
       return [
         String(item.customerId || ''),
         String(item.customerName || ''),
-        String(item.province || '')
+        String(item.province || ''),
+        String(item.customerType || ''),
+        String(item.notes || ''),
+        String(item.address || '')
       ].some(function (field) {
         return String(field).toLowerCase().indexOf(value) >= 0;
       });
@@ -174,7 +174,7 @@ function getCustomersByProvince(province) {
       logWarning('getCustomersByProvince', 'Unable to read Customers sheet');
       return success([]);
     }
-    const customers = Array.isArray(result.data) ? result.data : [];
+    const customers = Array.isArray(result.data) ? result.data.map(normalizeCustomerObject) : [];
     const matches = customers.filter(function (item) {
       return String(item.province || '').toLowerCase() === value;
     });
@@ -232,4 +232,65 @@ function getCustomerSummary(customerId) {
 function parseDate(value) {
   var date = new Date(value);
   return isNaN(date.getTime()) ? null : date;
+}
+
+function normalizeCustomerObject(row) {
+  const source = row && typeof row === 'object' ? row : {};
+  const code = String(source.customerId || '').trim();
+  const customerName = String(source.customerName || '').trim();
+  const province = String(source.province || '').trim();
+  const status = String(source.status || '').trim();
+  const defaultGyprocDiscount = String(source.defaultGyprocDiscount || '').trim();
+  const defaultWeberDiscount = String(source.defaultWeberDiscount || '').trim();
+  const notes = String(source.notes || '').trim();
+  const address = String(source.address || '').trim();
+  const phone = String(source.phone || '-').trim() || '-';
+  const customerType = getCustomerBusinessType(source);
+
+  return Object.assign({}, source, {
+    id: code,
+    customerId: code,
+    customerCode: code,
+    customerName: customerName,
+    status: status,
+    customerType: customerType,
+    defaultGyprocDiscount: defaultGyprocDiscount,
+    defaultWeberDiscount: defaultWeberDiscount,
+    notes: notes,
+    address: address,
+    province: province,
+    phone: phone,
+    active: isActiveStatus(status)
+  });
+}
+
+function getCustomerBusinessType(source) {
+  const hasGyproc = String(source.defaultGyprocDiscount || '').trim() !== '';
+  const hasWeber = String(source.defaultWeberDiscount || '').trim() !== '';
+
+  if (hasGyproc && hasWeber) {
+    return 'Gyproc/Weber';
+  }
+  if (hasGyproc) {
+    return 'Gyproc';
+  }
+  if (hasWeber) {
+    return 'Weber';
+  }
+  return '-';
+}
+
+function isActiveCustomer(customer) {
+  const statusValue = String(customer.status || customer.active || '').trim().toLowerCase();
+  if (!statusValue) {
+    return true;
+  }
+  return statusValue === 'true' || statusValue === 'yes' || statusValue === '1' || statusValue === 'active' || statusValue === 'ใช้งาน';
+}
+function isActiveStatus(status) {
+  const statusValue = String(status || '').trim().toLowerCase();
+  if (!statusValue) {
+    return true;
+  }
+  return statusValue === 'true' || statusValue === 'yes' || statusValue === '1' || statusValue === 'active';
 }

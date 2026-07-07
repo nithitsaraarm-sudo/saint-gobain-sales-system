@@ -51,6 +51,13 @@ function isLoggedIn() {
   return Boolean(getCurrentUser());
 }
 
+function extractAuthData(response) {
+  const data = response && response.data ? response.data : {};
+  const user = data.user || data;
+  const sessionToken = response?.sessionToken || data.sessionToken || user.sessionToken || '';
+  return { user: user || {}, sessionToken: sessionToken };
+}
+
 async function loadBootstrap() {
   try {
     const response = await callApi('bootstrap', {});
@@ -81,14 +88,16 @@ async function login() {
       toastMessage(response.message || 'เข้าสู่ระบบไม่สำเร็จ');
       return response;
     }
-    const user = response.data || {};
-    const sessionToken = response.sessionToken || user.sessionToken || '';
+    const auth = extractAuthData(response);
+    const user = auth.user;
+    const sessionToken = auth.sessionToken;
     saveSession(user, sessionToken);
     USER = user;
     await loadBootstrap();
     showApp();
     return response;
   } catch (error) {
+    console.error(error);
     toastMessage('เข้าสู่ระบบไม่สำเร็จ');
     return { ok: false, message: String(error && error.message ? error.message : 'API error') };
   }
@@ -101,8 +110,9 @@ async function startTestMode() {
       toastMessage(response.message || 'เข้าสู่ระบบไม่สำเร็จ');
       return response;
     }
-    const user = response.data || {};
-    const sessionToken = response.sessionToken || user.sessionToken || '';
+    const auth = extractAuthData(response);
+    const user = auth.user;
+    const sessionToken = auth.sessionToken;
     saveSession(user, sessionToken);
     USER = user;
     await loadBootstrap();
@@ -143,14 +153,16 @@ async function register() {
       toastMessage(response.message || 'เข้าสู่ระบบไม่สำเร็จ');
       return response;
     }
-    const user = response.data || {};
-    const sessionToken = response.sessionToken || user.sessionToken || '';
+    const auth = extractAuthData(response);
+    const user = auth.user;
+    const sessionToken = auth.sessionToken;
     saveSession(user, sessionToken);
     USER = user;
     await loadBootstrap();
     showApp();
     return response;
   } catch (error) {
+    console.error(error);
     toastMessage('เข้าสู่ระบบไม่สำเร็จ');
     return { ok: false, message: String(error && error.message ? error.message : 'API error') };
   }
@@ -199,6 +211,7 @@ window.logout = logout;
 window.isLoggedIn = isLoggedIn;
 window.getCurrentUser = getCurrentUser;
 window.getSessionToken = getSessionToken;
+window.extractAuthData = extractAuthData;
 window.saveSession = saveSession;
 window.clearSession = clearSession;
 window.loadBootstrap = loadBootstrap;
