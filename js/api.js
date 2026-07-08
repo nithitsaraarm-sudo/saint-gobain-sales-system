@@ -4,12 +4,164 @@ const GAS_WEB_APP_URL =
 'https://script.google.com/macros/s/AKfycbyuhRP2aIYI11vzMsIzGr2ncuhrflHb1u9flm_OwjpjZOJOTXvAg1HQu4iq62ZwjJn3RQ/exec';
 let bootstrapApiPromise = null;
 let bootstrapApiCache = null;
+const pendingApiRequests = {};
+const CACHE_KEYS = {
+  customers: 'sg_customers_cache',
+  products: 'sg_products_cache',
+  bootstrap: 'sg_bootstrap_cache',
+  discount: 'sg_discount_cache',
+  quotation: 'sg_quotation_cache'
+};
+
+function isApiDebugEnabled() {
+  try {
+    return APP_ENV === 'development'
+      || window.DEBUG_API_TIMING === true
+      || localStorage.getItem('sg_debug_api') === 'true';
+  } catch (error) {
+    return APP_ENV === 'development';
+  }
+}
+
+function logApiDebug(action, state) {
+  if (isApiDebugEnabled() && typeof console !== 'undefined' && typeof console.log === 'function') {
+    console.log('[API]', action, state);
+  }
+}
+
+function setCache(key, data, ttlMinutes) {
+  try {
+    const ttl = Math.max(1, Number(ttlMinutes || 1)) * 60 * 1000;
+    localStorage.setItem(String(key), JSON.stringify({
+      expiresAt: Date.now() + ttl,
+      data: data
+    }));
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function getCache(key) {
+  try {
+    const raw = localStorage.getItem(String(key));
+    if (!raw) {
+      return null;
+    }
+    const cached = JSON.parse(raw);
+    if (!cached || !cached.expiresAt || cached.expiresAt <= Date.now()) {
+      clearCache(key);
+      return null;
+    }
+    return cached.data;
+  } catch (error) {
+    clearCache(key);
+    return null;
+  }
+}
+
+function clearCache(key) {
+  try {
+    localStorage.removeItem(String(key));
+  } catch (error) {
+    // Cache is best-effort only.
+  }
+}
+
+function getRequestKey(action, payload) {
+  return String(action || '').trim() + JSON.stringify(payload || {});
+}
+
+function isApiTimingEnabled(action) {
+  const timedActions = ['bootstrap', 'products', 'getProducts', 'customers', 'getCustomers', 'getQuotationHistory', 'loadQuotation', 'discount', 'quotation', 'saveQuotation', 'updateQuotation'];
+  if (timedActions.indexOf(String(action || '').trim()) < 0) {
+    return false;
+  }
+  try {
+    return APP_ENV === 'development'
+      || window.DEBUG_API_TIMING === true
+      || localStorage.getItem('sg_debug_api') === 'true';
+  } catch (error) {
+    return APP_ENV === 'development';
+  }
+}
+
+function withApiTiming(action, requestKey, requestPromise) {
+  if (!isApiTimingEnabled(action) || typeof console === 'undefined' || typeof console.time !== 'function') {
+    return requestPromise;
+  }
+  const label = 'api:' + action + ':' + requestKey;
+  console.time(label);
+  return requestPromise.finally(function () {
+    if (typeof console !== 'undefined' && typeof console.timeEnd === 'function') {
+      console.timeEnd(label);
+    }
+  });
+}
+
+function getQuoteIdFromPayload(payload) {
+  if (payload && typeof payload === 'object') {
+    return String(payload.quoteId || payload.quoteNo || '').trim();
+  }
+  return String(payload || '').trim();
+}
+
+function getCachedQuotation(quoteId) {
+  const id = String(quoteId || '').trim();
+  if (!id) {
+    return null;
+  }
+  const cached = getCache(CACHE_KEYS.quotation) || {};
+  return cached[id] || null;
+}
+
+function setCachedQuotation(quoteId, data) {
+  const id = String(quoteId || '').trim();
+  if (!id || !data) {
+    return;
+  }
+  const cached = getCache(CACHE_KEYS.quotation) || {};
+  cached[id] = data;
+  const quoteNo = data.quote && data.quote.quoteNo ? String(data.quote.quoteNo).trim() : '';
+  if (quoteNo) {
+    cached[quoteNo] = data;
+  }
+  setCache(CACHE_KEYS.quotation, cached, 10);
+}
+
+function clearQuotationCache(quoteId) {
+  const id = String(quoteId || '').trim();
+  if (!id) {
+    clearCache(CACHE_KEYS.quotation);
+    return;
+  }
+  const cached = getCache(CACHE_KEYS.quotation) || {};
+  if (cached[id]) {
+    delete cached[id];
+  }
+  Object.keys(cached).forEach(function (key) {
+    const quote = cached[key] && cached[key].quote ? cached[key].quote : {};
+    if (String(quote.quoteId || '').trim() === id || String(quote.quoteNo || '').trim() === id) {
+      delete cached[key];
+    }
+  });
+  setCache(CACHE_KEYS.quotation, cached, 10);
+}
+
+function runApiRequest(action, payload) {
+  return jsonpApi(action, payload);
+}
 
 function callApi(action, payload) {
   const normalizedAction = String(action || '').trim();
-  const body = payload || {};
+  let body = payload || {};
+  if (normalizedAction === 'loadQuotation') {
+    body = { quoteId: getQuoteIdFromPayload(body) };
+  }
+  const requestKey = getRequestKey(normalizedAction, body);
 
   if (API_MOCK_MODE) {
+    logApiDebug(normalizedAction, 'cached');
     return Promise.resolve(mockApi(normalizedAction, body));
   }
 
@@ -17,18 +169,26 @@ function callApi(action, payload) {
     if (body.force) {
       bootstrapApiCache = null;
       bootstrapApiPromise = null;
+      delete pendingApiRequests[requestKey];
+    }
+    const cachedBootstrap = !body.force ? getCache(CACHE_KEYS.bootstrap) : null;
+    if (cachedBootstrap) {
+      logApiDebug(normalizedAction, 'cached');
+      return Promise.resolve({ ok: true, data: cachedBootstrap, cached: true });
     }
     if (bootstrapApiCache) {
+      logApiDebug(normalizedAction, 'cached');
       return Promise.resolve(bootstrapApiCache);
     }
     if (bootstrapApiPromise) {
+      logApiDebug(normalizedAction, 'pending');
       return bootstrapApiPromise;
     }
-    bootstrapApiPromise = fetchApi(normalizedAction, body).catch(function () {
-      return jsonpApi(normalizedAction, body);
-    }).then(function (response) {
+    logApiDebug(normalizedAction, 'network');
+    bootstrapApiPromise = withApiTiming(normalizedAction, requestKey, runApiRequest(normalizedAction, body)).then(function (response) {
       if (response && response.ok) {
         bootstrapApiCache = response;
+        setCache(CACHE_KEYS.bootstrap, response.data || {}, 15);
       }
       return response;
     }).finally(function () {
@@ -37,31 +197,35 @@ function callApi(action, payload) {
     return bootstrapApiPromise;
   }
 
-  return fetchApi(normalizedAction, body).catch(function () {
-    return jsonpApi(normalizedAction, body);
+  if (normalizedAction === 'loadQuotation') {
+    const quoteId = getQuoteIdFromPayload(body);
+    const cachedQuotation = getCachedQuotation(quoteId);
+    if (cachedQuotation) {
+      logApiDebug(normalizedAction, 'cached');
+      return Promise.resolve({ ok: true, data: cachedQuotation, cached: true });
+    }
+  }
+
+  if (pendingApiRequests[requestKey]) {
+    logApiDebug(normalizedAction, 'pending');
+    return pendingApiRequests[requestKey];
+  }
+
+  logApiDebug(normalizedAction, 'network');
+  pendingApiRequests[requestKey] = withApiTiming(normalizedAction, requestKey, runApiRequest(normalizedAction, body)).then(function (response) {
+    if (normalizedAction === 'loadQuotation' && response && response.ok && response.data) {
+      setCachedQuotation(getQuoteIdFromPayload(body), response.data);
+    }
+    return response;
+  }).finally(function () {
+    delete pendingApiRequests[requestKey];
   });
+
+  return pendingApiRequests[requestKey];
 }
 
 function gas(action, payload) {
   return callApi(action, payload);
-}
-
-function fetchApi(action, payload) {
-  return fetch(GAS_WEB_APP_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'text/plain;charset=utf-8'
-    },
-    body: JSON.stringify({
-      action: action,
-      payload: payload || {}
-    })
-  }).then(function (response) {
-    if (response.type === 'opaque') {
-      return { ok: true, data: null, message: 'Request sent' };
-    }
-    return response.json();
-  });
 }
 
 function jsonpApi(action, payload) {
@@ -134,7 +298,7 @@ function mockApi(action, payload) {
     case 'demoLogin':
       return { ok: true, data: { username: 'demo', displayName: 'ก้อย Sales', position: 'Sales Executive', phone: '0800000000' } };
     case 'bootstrap':
-      return { ok: true, data: { settings: { companyName: 'SAINT-GOBAIN', appName: 'SALES SYSTEM', welcomeText: 'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ', vatRate: 7 }, customers: [], products: [], promotions: [], quotes: [] } };
+      return { ok: true, data: { settings: { companyName: 'SAINT-GOBAIN', appName: 'SALES SYSTEM', welcomeText: 'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ', vatRate: 7 }, counts: { customers: 0, products: 0 }, sheetInitialized: true } };
     case 'customers':
       return { ok: true, data: [] };
     case 'products':
@@ -174,3 +338,8 @@ function mockApi(action, payload) {
 
 window.callApi = callApi;
 window.gas = gas;
+window.setCache = setCache;
+window.getCache = getCache;
+window.clearCache = clearCache;
+window.CACHE_KEYS = CACHE_KEYS;
+window.clearQuotationCache = clearQuotationCache;

@@ -1,36 +1,43 @@
 function getDiscount(customerId, groupCode) {
+  const timer = startPerformanceTimer('discount');
   try {
     const normalizedCustomerId = String(customerId || '').trim();
     const normalizedGroupCode = String(groupCode || '').trim();
 
     if (!normalizedCustomerId || !normalizedGroupCode) {
+      endPerformanceTimer(timer, 'validation=false');
       return validationError('customerId and groupCode are required');
     }
 
     const cacheKey = 'discount:' + normalizedCustomerId + ':' + normalizedGroupCode;
     const cached = getDiscountCache(cacheKey);
     if (cached) {
+      endPerformanceTimer(timer, 'cache=hit');
       return success(cached, cached.source === 'discount_matrix' ? 'Discount found' : 'Discount not found');
     }
 
     const matrix = readDiscountMatrixValues();
     if (!matrix.ok) {
-      return createDiscountResult(normalizedCustomerId, normalizedGroupCode, '', 0, 'not_found', matrix.message || 'DiscountMatrix unavailable');
+      endPerformanceTimer(timer, 'cache=miss matrix=false');
+      return cacheDiscountResult(cacheKey, createDiscountResult(normalizedCustomerId, normalizedGroupCode, '', 0, 'not_found', matrix.message || 'DiscountMatrix unavailable'));
     }
 
     const values = matrix.data || [];
     if (values.length < 3) {
-      return createDiscountResult(normalizedCustomerId, normalizedGroupCode, '', 0, 'not_found', 'DiscountMatrix has no discount rows');
+      endPerformanceTimer(timer, 'cache=miss rows=0');
+      return cacheDiscountResult(cacheKey, createDiscountResult(normalizedCustomerId, normalizedGroupCode, '', 0, 'not_found', 'DiscountMatrix has no discount rows'));
     }
 
     const customerColumnIndex = findDiscountCustomerColumn(values[0], normalizedCustomerId);
     if (customerColumnIndex < 0) {
-      return createDiscountResult(normalizedCustomerId, normalizedGroupCode, '', 0, 'not_found', 'Discount customer not found');
+      endPerformanceTimer(timer, 'cache=miss customer=false');
+      return cacheDiscountResult(cacheKey, createDiscountResult(normalizedCustomerId, normalizedGroupCode, '', 0, 'not_found', 'Discount customer not found'));
     }
 
     const rowIndex = findDiscountGroupRow(values, normalizedGroupCode);
     if (rowIndex < 0) {
-      return createDiscountResult(normalizedCustomerId, normalizedGroupCode, '', 0, 'not_found', 'Discount group not found');
+      endPerformanceTimer(timer, 'cache=miss group=false');
+      return cacheDiscountResult(cacheKey, createDiscountResult(normalizedCustomerId, normalizedGroupCode, '', 0, 'not_found', 'Discount group not found'));
     }
 
     const row = values[rowIndex] || [];
@@ -46,37 +53,48 @@ function getDiscount(customerId, groupCode) {
       source: hasDiscountValue ? 'discount_matrix' : 'not_found'
     };
     setDiscountCache(cacheKey, result);
+    endPerformanceTimer(timer, 'cache=miss source=' + result.source);
     return success(result, hasDiscountValue ? 'Discount found' : 'Discount not found');
   } catch (error) {
+    endPerformanceTimer(timer, 'error=true');
     logError('getDiscount', error);
     return fail(error && error.message ? error.message : 'Discount lookup failed');
   }
 }
 
 function getDiscountCache(cacheKey) {
-  try {
-    const cached = CacheService.getScriptCache().get(cacheKey);
-    return cached ? JSON.parse(cached) : null;
-  } catch (error) {
-    return null;
-  }
+  return getServerCache(cacheKey);
 }
 
 function setDiscountCache(cacheKey, data) {
-  try {
-    CacheService.getScriptCache().put(cacheKey, JSON.stringify(data), 300);
-  } catch (error) {
-    // Cache is optional; ignore cache write failures.
+  setServerCache(cacheKey, data, 3600);
+}
+
+function cacheDiscountResult(cacheKey, result) {
+  if (result && result.ok && result.data) {
+    setDiscountCache(cacheKey, result.data);
   }
+  return result;
 }
 
 function readDiscountMatrixValues() {
   try {
+    const cacheKey = 'discountMatrix:values';
+    const cached = getServerCache(cacheKey);
+    if (cached) {
+      return success(cached);
+    }
     const sheet = getSheetByName(SHEET_NAMES.DISCOUNT_MATRIX);
     if (!sheet) {
       return fail('DiscountMatrix sheet not found');
     }
-    const values = sheet.getDataRange().getDisplayValues();
+    const lastRow = sheet.getLastRow();
+    const lastColumn = sheet.getLastColumn();
+    if (lastRow < 1 || lastColumn < 1) {
+      return success([]);
+    }
+    const values = sheet.getRange(1, 1, lastRow, lastColumn).getDisplayValues();
+    setServerCache(cacheKey, values || [], 3600);
     return success(values || []);
   } catch (error) {
     logError('readDiscountMatrixValues', error);

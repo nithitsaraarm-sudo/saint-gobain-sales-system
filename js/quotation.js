@@ -1,6 +1,7 @@
 let CURRENT_QUOTE = { quoteId: '', customerId: '', customerName: '', shipping: 0, specialDiscount: 0, status: 'DRAFT' };
 const QUOTE_LINE_PREFIX = 'LINE_';
 const DISCOUNT_CACHE = {};
+const DISCOUNT_PROMISES = {};
 
 function renderQuote() {
   const customerSelect = document.getElementById('quoteCustomer');
@@ -94,13 +95,33 @@ async function getDiscountPercentForProduct(customerId, product) {
   if (DISCOUNT_CACHE[cacheKey] !== undefined) {
     return Number(DISCOUNT_CACHE[cacheKey] || 0);
   }
+  if (typeof getCache === 'function') {
+    const cachedDiscounts = getCache('sg_discount_cache') || {};
+    if (cachedDiscounts[cacheKey] !== undefined) {
+      DISCOUNT_CACHE[cacheKey] = Number(cachedDiscounts[cacheKey] || 0);
+      return Number(DISCOUNT_CACHE[cacheKey] || 0);
+    }
+  }
+  if (DISCOUNT_PROMISES[cacheKey]) {
+    return DISCOUNT_PROMISES[cacheKey];
+  }
   try {
-    const response = await callApi('discount', { customerId: customerId, groupCode: groupCode });
+    DISCOUNT_PROMISES[cacheKey] = callApi('discount', { customerId: customerId, groupCode: groupCode }).then(response => {
     const discountPercent = response && response.ok ? Number(response.data?.discountPercent || 0) : 0;
     DISCOUNT_CACHE[cacheKey] = discountPercent;
+      if (typeof getCache === 'function' && typeof setCache === 'function') {
+        const cachedDiscounts = getCache('sg_discount_cache') || {};
+        cachedDiscounts[cacheKey] = discountPercent;
+        setCache('sg_discount_cache', cachedDiscounts, 60);
+      }
     return discountPercent;
+    }).finally(() => {
+      delete DISCOUNT_PROMISES[cacheKey];
+    });
+    return DISCOUNT_PROMISES[cacheKey];
   } catch (error) {
     console.error(error);
+    delete DISCOUNT_PROMISES[cacheKey];
     return 0;
   }
 }
@@ -669,6 +690,7 @@ async function loadQuotation(quoteId) {
     toast('ต้องระบุเลขที่ใบเสนอราคา');
     return;
   }
+  toast('กำลังโหลดข้อมูล...');
   const response = await callApi('loadQuotation', { quoteId: id });
   if (!response.ok) {
     toast(response.message || 'โหลดใบเสนอราคาไม่สำเร็จ');
@@ -758,8 +780,14 @@ async function cancelQuotation(quoteId) {
       CURRENT_QUOTE.status = 'CANCELLED';
       renderQuoteMeta();
     }
+    if (typeof clearQuotationCache === 'function') {
+      clearQuotationCache(id);
+    }
+    if (typeof clearCache === 'function') {
+      clearCache('sg_quote_history_cache');
+    }
     if (typeof refreshQuotationHistory === 'function') {
-      await refreshQuotationHistory();
+      await refreshQuotationHistory({force:true});
     }
   }
   return response;
@@ -779,7 +807,7 @@ function renderCart() {
   }
   CART.forEach(recalcLineItem);
   cartList.innerHTML = CART.length ? CART.map(it => {
-    const discountText = it.discountLoading ? 'กำลังโหลด...' : `<input style="width:60px;border:1px solid var(--line);border-radius:10px;padding:3px" type="number" value="${it.discountPercent||0}" onchange="changeDiscount('${it.lineId}', Number(this.value))">%`;
+    const discountText = it.discountLoading ? '<span class="loading-text">กำลังโหลดส่วนลด...</span>' : `<input style="width:60px;border:1px solid var(--line);border-radius:10px;padding:3px" type="number" value="${it.discountPercent||0}" onchange="changeDiscount('${it.lineId}', Number(this.value))">%`;
     return `<div class="row item-card quote-line"><div class="quote-line-main"><b>${it.productName||'-'}</b><br><small>${it.unit||'-'}</small><div class="quote-line-prices"><span>ราคาตั้ง ${money(it.listPrice)}</span><span>ส่วนลด ${discountText}</span><span>ราคาสุทธิ ${money(it.unitPrice)}</span><span>รวม ${money(it.lineTotal)}</span></div></div><div class="qty"><button onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button><b>${it.qty}</b><button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button></div><button class="ghost" onclick="removeProduct('${it.lineId}')">ลบ</button></div>`;
   }).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
   calcCart();
@@ -799,7 +827,17 @@ async function addProduct(productId, qty) {
   if (!CURRENT_QUOTE.customerId) {
     const customerId = getSelectedCustomerIdForPricing();
     if (customerId) {
-      await newQuotation(customerId);
+      const customer = DB.customers.find(c => String(c.customerId || '').trim() === String(customerId).trim()) || {};
+      CURRENT_QUOTE = {
+        quoteId: CURRENT_QUOTE.quoteId || '',
+        quoteNo: CURRENT_QUOTE.quoteNo || '',
+        customerId: String(customerId).trim(),
+        customerName: String(customer.customerName || '').trim(),
+        shipping: Number(document.getElementById('shipping')?.value || 0),
+        specialDiscount: Number(document.getElementById('specialDiscount')?.value || 0),
+        status: 'DRAFT'
+      };
+      renderQuoteMeta();
     } else {
       toast('กรุณาเลือกลูกค้าก่อนเพิ่มสินค้า');
       return;
@@ -816,12 +854,23 @@ async function addProduct(productId, qty) {
   line.discountLoading = true;
   CART.push(line);
   renderCart();
-  const discountPercent = await getDiscountPercentForProduct(CURRENT_QUOTE.customerId, product);
-  line.discountLoading = false;
-  line.discountPercent = Number(discountPercent || 0);
-  line.discount = line.discountPercent;
-  recalcLineItem(line);
-  renderCart();
+  toast('กำลังโหลดส่วนลด...');
+  getDiscountPercentForProduct(CURRENT_QUOTE.customerId, product).then(discountPercent => {
+    const target = CART.find(item => item.lineId === line.lineId);
+    if (!target) return;
+    target.discountLoading = false;
+    target.discountPercent = Number(discountPercent || 0);
+    target.discount = target.discountPercent;
+    recalcLineItem(target);
+    renderCart();
+  }).catch(error => {
+    console.error(error);
+    const target = CART.find(item => item.lineId === line.lineId);
+    if (!target) return;
+    target.discountLoading = false;
+    recalcLineItem(target);
+    renderCart();
+  });
 }
 
 async function saveQuotationWithStatus(status) {
@@ -843,11 +892,17 @@ async function saveQuotationWithStatus(status) {
   CURRENT_QUOTE.quoteId = response.data?.quoteId || CURRENT_QUOTE.quoteId;
   CURRENT_QUOTE.quoteNo = response.data?.quoteNo || CURRENT_QUOTE.quoteNo || CURRENT_QUOTE.quoteId;
   CURRENT_QUOTE.status = response.data?.status || status || CURRENT_QUOTE.status;
+  if (typeof clearQuotationCache === 'function') {
+    clearQuotationCache(CURRENT_QUOTE.quoteId);
+  }
+  if (typeof clearCache === 'function') {
+    clearCache('sg_quote_history_cache');
+  }
   renderQuoteMeta();
   renderCart();
   toast((status === 'DRAFT' ? 'บันทึกแบบร่างแล้ว' : 'อัปเดตใบเสนอราคาแล้ว') + (CURRENT_QUOTE.quoteNo ? ': ' + CURRENT_QUOTE.quoteNo : ''));
-  if (typeof refreshQuotationHistory === 'function') {
-    await refreshQuotationHistory();
+  if (typeof refreshQuotationHistory === 'function' && (typeof isQuotationHistoryLoaded !== 'function' || isQuotationHistoryLoaded())) {
+    await refreshQuotationHistory({force:true});
   }
   return response;
 }

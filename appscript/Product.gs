@@ -1,13 +1,18 @@
 function getProducts() {
+  const timer = startPerformanceTimer('products');
   try {
     const result = getSheetData(PRODUCT_SHEET);
     if (!result.ok) {
       logWarning('getProducts', 'Unable to read Products sheet');
+      endPerformanceTimer(timer, 'ok=false');
       return success([]);
     }
     const products = Array.isArray(result.data) ? result.data.map(normalizeProductObject) : [];
-    return success(filterActiveProducts(products));
+    const activeProducts = filterActiveProducts(products);
+    endPerformanceTimer(timer, 'count=' + activeProducts.length);
+    return success(activeProducts);
   } catch (error) {
+    endPerformanceTimer(timer, 'error=true');
     logError('getProducts', error);
     return fail(error && error.message ? error.message : 'Failed to load products');
   }

@@ -1,14 +1,18 @@
 function getCustomers() {
+  const timer = startPerformanceTimer('customers');
   try {
     const result = getSheetData(CUSTOMERS_SHEET);
     if (!result.ok) {
       logWarning('getCustomers', 'Unable to read Customers sheet');
+      endPerformanceTimer(timer, 'ok=false');
       return success([]);
     }
     const customers = Array.isArray(result.data) ? result.data.map(normalizeCustomerObject) : [];
     const activeCustomers = customers.filter(isActiveCustomer);
+    endPerformanceTimer(timer, 'count=' + activeCustomers.length);
     return success(activeCustomers);
   } catch (error) {
+    endPerformanceTimer(timer, 'error=true');
     logError('getCustomers', error);
     return fail(error && error.message ? error.message : 'Failed to load customers');
   }
