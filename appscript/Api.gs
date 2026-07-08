@@ -44,7 +44,10 @@ function api(action, payload) {
         return authorizeAction(cancelQuotation, [payload]);
       case 'getQuotationHistory':
         return authorizeAction(getQuotationHistory, [payload]);
+      case 'updateQuotation':
+        return authorizeAction(saveQuotation, [payload]);
       case 'quotation':
+      case 'saveQuotation':
         return authorizeAction(saveQuotation, [payload]);
       case 'bootstrap':
         return authorizeAction(getBootstrapData, []);

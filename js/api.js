@@ -39,34 +39,56 @@ function fetchApi(action, payload) {
 }
 
 function jsonpApi(action, payload) {
-  return new Promise(function (resolve, reject) {
+  return new Promise(function (resolve) {
     const callbackName = '__sgApiCallback_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
     const script = document.createElement('script');
+    let settled = false;
+    let timedOut = false;
+
     const timeout = window.setTimeout(function () {
-      cleanup();
-      reject({ ok: false, message: 'API request timeout' });
+      timedOut = true;
+      settled = true;
+      removeScript();
+      scheduleCallbackDelete();
+      resolve({ ok: false, message: 'API request timeout' });
     }, 30000);
 
-    function cleanup() {
-      window.clearTimeout(timeout);
-      try {
-        delete window[callbackName];
-      } catch (error) {
-        window[callbackName] = undefined;
-      }
+    function removeScript() {
       if (script.parentNode) {
         script.parentNode.removeChild(script);
       }
     }
 
-    window[callbackName] = function (response) {
-      cleanup();
+    function scheduleCallbackDelete() {
+      window.setTimeout(function () {
+        try {
+          delete window[callbackName];
+        } catch (error) {
+          window[callbackName] = undefined;
+        }
+      }, 30000);
+    }
+
+    function finish(response) {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      window.clearTimeout(timeout);
+      removeScript();
+      scheduleCallbackDelete();
       resolve(response);
+    }
+
+    window[callbackName] = function (response) {
+      if (timedOut) {
+        return;
+      }
+      finish(response || { ok: false, message: 'Empty API response' });
     };
 
     script.onerror = function () {
-      cleanup();
-      reject({ ok: false, message: 'API request failed' });
+      finish({ ok: false, message: 'API request failed' });
     };
 
     script.src = GAS_WEB_APP_URL
@@ -92,7 +114,7 @@ function mockApi(action, payload) {
     case 'products':
       return { ok: true, data: [] };
     case 'discount':
-      return { ok: true, data: { discountPercent: 0, discountGroup: '', groupCode: data.groupCode || '', customerId: data.customerId || '' } };
+      return { ok: true, data: { customerId: data.customerId || '', groupCode: data.groupCode || '', discountGroup: '', discountPercent: 0, source: 'mock' }, message: 'Mock discount' };
     case 'quotation':
       return { ok: true, message: 'Mock quotation saved', data: { quoteNo: 'QT-MOCK-' + Date.now() } };
     case 'register':

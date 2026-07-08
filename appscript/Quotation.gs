@@ -235,75 +235,7 @@ function calculateQuotation(quoteId) {
 function saveQuotation(payload) {
   try {
     if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
-      const quoteId = String(payload.quoteId || '').trim();
-      const customerId = String(payload.customerId || '').trim();
-      if (!customerId) {
-        return validationError('customerId is required');
-      }
-      const shipping = parseNumericValue(payload.shipping);
-      const specialDiscount = parseNumericValue(payload.specialDiscount);
-      const items = Array.isArray(payload.items) ? payload.items : [];
-      let workingQuote = null;
-      if (quoteId) {
-        const quoteResult = getQuotationRow(quoteId);
-        if (!quoteResult.ok) {
-          return quoteResult;
-        }
-        workingQuote = quoteResult.data;
-      } else {
-        const createResult = createQuotation(customerId);
-        if (!createResult.ok) {
-          return createResult;
-        }
-        workingQuote = createResult.data;
-      }
-      const id = String(workingQuote.quoteId || quoteId).trim();
-      if (!id) {
-        return fail('Quote ID missing');
-      }
-      ensureQuotationSheets();
-      const existingLinesResult = getQuoteLines(id);
-      if (!existingLinesResult.ok) {
-        return existingLinesResult;
-      }
-      const existingLines = Array.isArray(existingLinesResult.data) ? existingLinesResult.data : [];
-      existingLines.forEach(function (line) {
-        if (normalizeString(line.status) !== normalizeString(LINE_STATUSES.REMOVED)) {
-          updateRowById(QUOTE_LINES_SHEET, 'lineId', line.lineId, {
-            status: LINE_STATUSES.REMOVED,
-            updatedAt: new Date().toISOString()
-          });
-        }
-      });
-      items.forEach(function (item) {
-        addQuotationItem(id, item.productId, item.qty);
-      });
-      updateRowById(QUOTE_HISTORY_SHEET, 'quoteId', id, {
-        customerId: customerId,
-        shipping: shipping,
-        specialDiscount: specialDiscount,
-        updatedAt: new Date().toISOString()
-      });
-      const calculateResult = calculateQuotation(id);
-      if (!calculateResult.ok) {
-        return calculateResult;
-      }
-      const totals = calculateResult.data.totals || {};
-      const updateTotals = {
-        subtotal: totals.subtotal,
-        vat: totals.vat,
-        shipping: totals.shipping,
-        specialDiscount: totals.specialDiscount,
-        grandTotal: totals.grandTotal,
-        status: QUOTE_STATUSES.SAVED,
-        updatedAt: new Date().toISOString()
-      };
-      const result = updateRowById(QUOTE_HISTORY_SHEET, 'quoteId', id, updateTotals);
-      if (!result.ok) {
-        return result;
-      }
-      logInfo('saveQuotation', 'Saved quotation ' + id);
-      return success({ quoteId: id, totals: totals }, 'Quotation saved');
+      return saveQuotationPayload(payload);
     }
     const quoteId = String(payload || '').trim();
     const calculateResult = calculateQuotation(quoteId);
@@ -333,103 +265,459 @@ function saveQuotation(payload) {
   }
 }
 
-function loadQuotation(quoteId) {
+function saveQuotationPayload(payload) {
   try {
+    const data = payload || {};
+    const customerId = String(data.customerId || '').trim();
+    const customerName = String(data.customerName || '').trim();
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (!customerId) {
+      return validationError('customerId is required');
+    }
+    if (!items.length) {
+      return validationError('items is required');
+    }
+
+    ensureQuotationSheets();
+    const now = new Date().toISOString();
+    const requestedQuoteId = String(data.quoteId || '').trim();
+    const existingResult = requestedQuoteId ? getQuotationRow(requestedQuoteId) : null;
+    const existingQuote = existingResult && existingResult.ok ? existingResult.data || {} : null;
+    const quoteNo = String(existingQuote && existingQuote.quoteNo || data.quoteNo || generateQuoteNo()).trim();
+    const quoteId = String(existingQuote && existingQuote.quoteId || requestedQuoteId || quoteNo).trim();
+    const subtotal = roundCurrency(data.subtotal !== undefined ? parseQuotationNumericValue(data.subtotal) : sumQuotationItems(items, 'lineTotal'));
+    const vat = roundCurrency(data.vat !== undefined ? parseQuotationNumericValue(data.vat) : sumQuotationItems(items, 'vat'));
+    const shipping = roundCurrency(parseQuotationNumericValue(data.shipping));
+    const specialDiscount = roundCurrency(parseQuotationNumericValue(data.specialDiscount));
+    const grandTotal = roundCurrency(data.grandTotal !== undefined ? parseQuotationNumericValue(data.grandTotal) : subtotal + vat + shipping - specialDiscount);
+    const status = normalizeQuotationStatus(data.status, QUOTE_STATUSES.SAVED);
+    const createdBy = String(data.createdBy || data.sales || '').trim();
+    const headerObject = {
+      quoteId: quoteId,
+      quoteNo: quoteNo,
+      customerId: customerId,
+      customerName: customerName,
+      subtotal: subtotal,
+      vat: vat,
+      shipping: shipping,
+      specialDiscount: specialDiscount,
+      grandTotal: grandTotal,
+      status: status,
+      createdBy: createdBy,
+      createdAt: String(existingQuote && existingQuote.createdAt || data.createdAt || now).trim(),
+      updatedAt: now
+    };
+    const headerResult = existingQuote
+      ? updateQuotationObject(QUOTE_HISTORY_SHEET, getQuoteHistoryHeaders(), 'quoteId', quoteId, headerObject)
+      : appendQuotationObject(QUOTE_HISTORY_SHEET, getQuoteHistoryHeaders(), headerObject);
+    if (!headerResult.ok) {
+      return headerResult;
+    }
+
+    if (existingQuote) {
+      const deleteResult = deleteQuotationLines(quoteId);
+      if (!deleteResult.ok) {
+        return deleteResult;
+      }
+    }
+
+    for (var i = 0; i < items.length; i++) {
+      const item = normalizeQuotationPayloadItem(items[i], i + 1);
+      const lineResult = appendQuotationObject(QUOTE_LINES_SHEET, getQuoteLineHeaders(), {
+        quoteId: quoteId,
+        lineNo: item.lineNo,
+        productId: item.productId,
+        productName: item.productName,
+        unit: item.unit,
+        qty: item.qty,
+        listPrice: item.listPrice,
+        discountPercent: item.discountPercent,
+        unitPrice: item.unitPrice,
+        lineTotal: item.lineTotal,
+        vat: item.vat,
+        grandTotal: item.grandTotal,
+        status: item.status
+      });
+      if (!lineResult.ok) {
+        return lineResult;
+      }
+    }
+
+    logInfo('saveQuotation', 'Saved quotation ' + quoteNo);
+    return success({
+      quoteId: quoteId,
+      quoteNo: quoteNo,
+      subtotal: subtotal,
+      vat: vat,
+      shipping: shipping,
+      specialDiscount: specialDiscount,
+      grandTotal: grandTotal,
+      status: status
+    }, 'Quotation saved');
+  } catch (error) {
+    logError('saveQuotationPayload', error);
+    return fail(error && error.message ? error.message : 'Failed to save quotation');
+  }
+}
+
+function normalizeQuotationPayloadItem(item, lineNo) {
+  const data = item || {};
+  const qty = roundCurrency(parseQuotationNumericValue(data.qty || 1));
+  const listPrice = roundCurrency(parseQuotationNumericValue(data.listPrice));
+  const discountPercent = roundCurrency(parseQuotationNumericValue(data.discountPercent || data.discount));
+  const unitPrice = roundCurrency(data.unitPrice !== undefined ? parseQuotationNumericValue(data.unitPrice) : listPrice * (1 - discountPercent / 100));
+  const lineTotal = roundCurrency(data.lineTotal !== undefined ? parseQuotationNumericValue(data.lineTotal) : unitPrice * qty);
+  const vat = roundCurrency(data.vat !== undefined ? parseQuotationNumericValue(data.vat) : lineTotal * 0.07);
+  const grandTotal = roundCurrency(data.grandTotal !== undefined ? parseQuotationNumericValue(data.grandTotal) : lineTotal + vat);
+  return {
+    lineNo: lineNo,
+    productId: String(data.productId || '').trim(),
+    productName: String(data.productName || '').trim(),
+    unit: String(data.unit || '').trim(),
+    qty: qty,
+    listPrice: listPrice,
+    discountPercent: discountPercent,
+    unitPrice: unitPrice,
+    lineTotal: lineTotal,
+    vat: vat,
+    grandTotal: grandTotal,
+    status: String(data.status || LINE_STATUSES.ACTIVE).trim() || LINE_STATUSES.ACTIVE
+  };
+}
+
+function sumQuotationItems(items, field) {
+  return roundCurrency((Array.isArray(items) ? items : []).reduce(function (sum, item) {
+    return sum + parseQuotationNumericValue(item && item[field]);
+  }, 0));
+}
+
+function parseQuotationNumericValue(value) {
+  if (typeof value === 'number') {
+    return isNaN(value) ? 0 : value;
+  }
+  const text = String(value || '').replace(/,/g, '').replace(/%/g, '').trim();
+  const numericValue = Number(text);
+  return isNaN(numericValue) ? 0 : numericValue;
+}
+
+function normalizeQuotationStatus(value, fallback) {
+  const status = String(value || fallback || QUOTE_STATUSES.SAVED).trim().toUpperCase();
+  if (status === QUOTE_STATUSES.DRAFT || status === QUOTE_STATUSES.SAVED || status === QUOTE_STATUSES.CANCELLED) {
+    return status;
+  }
+  return fallback || QUOTE_STATUSES.SAVED;
+}
+
+function generateQuoteNo() {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = ('0' + (now.getMonth() + 1)).slice(-2);
+  const dd = ('0' + now.getDate()).slice(-2);
+  const datePart = '' + yyyy + mm + dd;
+  const prefix = 'QT-' + datePart + '-';
+  const result = getSheetData(QUOTE_HISTORY_SHEET);
+  const rows = result.ok && Array.isArray(result.data) ? result.data : [];
+  var maxNo = 0;
+  rows.forEach(function (row) {
+    const quoteNo = String(row.quoteNo || row.quoteId || '').trim();
+    if (quoteNo.indexOf(prefix) === 0) {
+      const running = parseInt(quoteNo.slice(prefix.length), 10);
+      if (!isNaN(running) && running > maxNo) {
+        maxNo = running;
+      }
+    }
+  });
+  return prefix + ('0000' + (maxNo + 1)).slice(-4);
+}
+
+function appendQuotationObject(sheetName, headers, object) {
+  try {
+    const sheet = ensureSheet(sheetName, headers);
+    if (!sheet) {
+      return fail('Unable to access sheet: ' + sheetName);
+    }
+    const existingHeaders = ensureQuotationSheetColumns(sheet, headers);
+    const activeHeaders = existingHeaders.length ? existingHeaders : headers;
+    const row = activeHeaders.map(function (header) {
+      return object[header] !== undefined ? object[header] : '';
+    });
+    sheet.appendRow(row);
+    return success({ sheetName: sheetName, row: row });
+  } catch (error) {
+    logError('appendQuotationObject', error);
+    return fail(error && error.message ? error.message : 'Failed to append quotation row');
+  }
+}
+
+function updateQuotationObject(sheetName, headers, idColumn, idValue, object) {
+  try {
+    const sheet = ensureSheet(sheetName, headers);
+    if (!sheet) {
+      return fail('Unable to access sheet: ' + sheetName);
+    }
+    const activeHeaders = ensureQuotationSheetColumns(sheet, headers);
+    const idIndex = activeHeaders.indexOf(idColumn);
+    if (idIndex < 0) {
+      return fail('ID column not found');
+    }
+    const values = sheet.getDataRange().getDisplayValues();
+    const targetRowIndex = values.slice(1).findIndex(function (row) {
+      return normalizeString(row[idIndex]) === normalizeString(idValue);
+    });
+    if (targetRowIndex < 0) {
+      return fail('Record not found');
+    }
+    const actualRowIndex = targetRowIndex + 2;
+    activeHeaders.forEach(function (header, index) {
+      if (object[header] !== undefined) {
+        sheet.getRange(actualRowIndex, index + 1).setValue(object[header]);
+      }
+    });
+    return success({ sheetName: sheetName, idColumn: idColumn, idValue: idValue });
+  } catch (error) {
+    logError('updateQuotationObject', error);
+    return fail(error && error.message ? error.message : 'Failed to update quotation row');
+  }
+}
+
+function deleteQuotationLines(quoteId) {
+  try {
+    const sheet = ensureSheet(QUOTE_LINES_SHEET, getQuoteLineHeaders());
+    if (!sheet) {
+      return fail('Unable to access sheet: ' + QUOTE_LINES_SHEET);
+    }
+    const headers = ensureQuotationSheetColumns(sheet, getQuoteLineHeaders());
+    const quoteIdIndex = headers.indexOf('quoteId');
+    if (quoteIdIndex < 0) {
+      return fail('quoteId column not found');
+    }
+    const lastRow = sheet.getLastRow();
+    if (lastRow <= 1) {
+      return success({ deleted: 0 });
+    }
+    const values = sheet.getRange(2, 1, lastRow - 1, Math.max(sheet.getLastColumn(), headers.length)).getDisplayValues();
+    var deleted = 0;
+    for (var i = values.length - 1; i >= 0; i--) {
+      if (normalizeString(values[i][quoteIdIndex]) === normalizeString(quoteId)) {
+        sheet.deleteRow(i + 2);
+        deleted += 1;
+      }
+    }
+    return success({ deleted: deleted });
+  } catch (error) {
+    logError('deleteQuotationLines', error);
+    return fail(error && error.message ? error.message : 'Failed to replace quotation lines');
+  }
+}
+
+function ensureQuotationSheetColumns(sheet, requiredHeaders) {
+  try {
+    var headers = getQuotationSheetHeaders(sheet);
+    if (!headers.length) {
+      sheet.getRange(1, 1, 1, requiredHeaders.length).setValues([requiredHeaders]);
+      return requiredHeaders.slice();
+    }
+    var changed = false;
+    requiredHeaders.forEach(function (header) {
+      if (headers.indexOf(header) < 0) {
+        headers.push(header);
+        changed = true;
+      }
+    });
+    if (changed) {
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    }
+    return headers;
+  } catch (error) {
+    logError('ensureQuotationSheetColumns', error);
+    return requiredHeaders || [];
+  }
+}
+
+function getQuotationSheetHeaders(sheet) {
+  try {
+    if (!sheet || sheet.getLastRow() < 1) {
+      return [];
+    }
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0] || [];
+    return headers.filter(function (header) {
+      return String(header || '').trim() !== '';
+    }).map(function (header) {
+      return String(header || '').trim();
+    });
+  } catch (error) {
+    logError('getQuotationSheetHeaders', error);
+    return [];
+  }
+}
+
+function getQuoteHistoryHeaders() {
+  return ['quoteId', 'quoteNo', 'customerId', 'customerName', 'subtotal', 'vat', 'shipping', 'specialDiscount', 'grandTotal', 'status', 'createdBy', 'createdAt', 'updatedAt'];
+}
+
+function getQuoteLineHeaders() {
+  return ['quoteId', 'lineNo', 'productId', 'productName', 'unit', 'qty', 'listPrice', 'discountPercent', 'unitPrice', 'lineTotal', 'vat', 'grandTotal', 'status'];
+}
+
+function extractQuoteId(payload) {
+  if (payload && typeof payload === 'object') {
+    return String(payload.quoteId || payload.quoteNo || '').trim();
+  }
+  return String(payload || '').trim();
+}
+
+function normalizeLoadedQuotationLine(line) {
+  const item = line || {};
+  const qty = roundCurrency(parseQuotationNumericValue(item.qty || 0));
+  const listPrice = roundCurrency(parseQuotationNumericValue(item.listPrice || 0));
+  const discountPercent = roundCurrency(parseQuotationNumericValue(item.discountPercent || item.discount || 0));
+  const unitPrice = roundCurrency(parseQuotationNumericValue(item.unitPrice || item.netPrice || (listPrice * (1 - discountPercent / 100))));
+  const lineTotal = roundCurrency(parseQuotationNumericValue(item.lineTotal || unitPrice * qty));
+  const vat = roundCurrency(parseQuotationNumericValue(item.vat || lineTotal * 0.07));
+  const grandTotal = roundCurrency(parseQuotationNumericValue(item.grandTotal || lineTotal + vat));
+  return Object.assign({}, item, {
+    lineNo: String(item.lineNo || '').trim(),
+    productId: String(item.productId || '').trim(),
+    productName: String(item.productName || '').trim(),
+    unit: String(item.unit || '').trim(),
+    qty: qty,
+    listPrice: listPrice,
+    discountPercent: discountPercent,
+    unitPrice: unitPrice,
+    netPrice: unitPrice,
+    lineTotal: lineTotal,
+    vat: vat,
+    grandTotal: grandTotal,
+    status: String(item.status || LINE_STATUSES.ACTIVE).trim() || LINE_STATUSES.ACTIVE
+  });
+}
+
+function parseQuotationDate(value) {
+  if (!value) {
+    return null;
+  }
+  const date = new Date(value);
+  if (isNaN(date.getTime())) {
+    return null;
+  }
+  return date;
+}
+
+function loadQuotation(payload) {
+  try {
+    const quoteId = extractQuoteId(payload);
     const quoteResult = getQuotationRow(quoteId);
     if (!quoteResult.ok) {
       return quoteResult;
     }
     const quote = quoteResult.data;
-    const linesResult = getQuoteLines(quoteId);
+    const targetQuoteId = String(quote.quoteId || quoteId).trim();
+    const linesResult = getQuoteLines(targetQuoteId);
     if (!linesResult.ok) {
       return linesResult;
     }
-    const lines = Array.isArray(linesResult.data) ? linesResult.data : [];
+    const lines = Array.isArray(linesResult.data) ? linesResult.data.map(normalizeLoadedQuotationLine) : [];
     const activeLines = lines.filter(function (item) {
       return normalizeString(item.status) !== normalizeString(LINE_STATUSES.REMOVED);
     });
-    const totalsResult = calculateQuotation(quoteId);
-    if (!totalsResult.ok) {
-      return totalsResult;
-    }
-    return success({ quote: quote, lines: activeLines, totals: totalsResult.data.totals });
+    const subtotal = roundCurrency(parseQuotationNumericValue(quote.subtotal || sumQuotationItems(activeLines, 'lineTotal')));
+    const vat = roundCurrency(parseQuotationNumericValue(quote.vat || sumQuotationItems(activeLines, 'vat')));
+    const shipping = roundCurrency(parseQuotationNumericValue(quote.shipping || 0));
+    const specialDiscount = roundCurrency(parseQuotationNumericValue(quote.specialDiscount || 0));
+    const grandTotal = roundCurrency(parseQuotationNumericValue(quote.grandTotal || subtotal + vat + shipping - specialDiscount));
+    return success({ quote: quote, lines: activeLines, totals: {
+      subtotal: subtotal,
+      vat: vat,
+      shipping: shipping,
+      specialDiscount: specialDiscount,
+      grandTotal: grandTotal
+    } });
   } catch (error) {
     logError('loadQuotation', error);
     return fail(error && error.message ? error.message : 'Failed to load quotation');
   }
 }
 
-function duplicateQuotation(quoteId) {
+function duplicateQuotation(payload) {
   try {
+    const quoteId = extractQuoteId(payload);
     const originalResult = loadQuotation(quoteId);
     if (!originalResult.ok) {
       return originalResult;
     }
     const original = originalResult.data;
     const quote = original.quote || {};
-    const newQuoteId = generateId('QUOTE');
-    const now = new Date().toISOString();
-    const newQuoteRow = {
-      quoteId: newQuoteId,
+    const totals = original.totals || {};
+    const duplicatePayload = {
       customerId: String(quote.customerId || '').trim(),
+      customerName: String(quote.customerName || '').trim(),
+      items: Array.isArray(original.lines) ? original.lines.map(function (line) {
+        return {
+          productId: line.productId,
+          productName: line.productName,
+          unit: line.unit,
+          qty: line.qty,
+          listPrice: line.listPrice,
+          discountPercent: line.discountPercent,
+          unitPrice: line.unitPrice,
+          lineTotal: line.lineTotal,
+          vat: line.vat,
+          grandTotal: line.grandTotal,
+          status: LINE_STATUSES.ACTIVE
+        };
+      }) : [],
+      subtotal: totals.subtotal,
+      vat: totals.vat,
+      shipping: totals.shipping,
+      specialDiscount: totals.specialDiscount,
+      grandTotal: totals.grandTotal,
       status: QUOTE_STATUSES.DRAFT,
-      shipping: parseNumericValue(quote.shipping || 0),
-      specialDiscount: parseNumericValue(quote.specialDiscount || 0),
-      subtotal: 0,
-      vat: 0,
-      grandTotal: 0,
-      createdAt: now,
-      updatedAt: now
+      createdBy: String(quote.createdBy || '').trim()
     };
-    ensureQuotationSheets();
-    const insertResult = appendRow(QUOTE_HISTORY_SHEET, newQuoteRow);
-    if (!insertResult.ok) {
-      return insertResult;
-    }
-    const addLines = Array.isArray(original.lines) ? original.lines : [];
-    addLines.forEach(function (line) {
-      addQuotationItem(newQuoteId, line.productId, line.qty);
-    });
-    const saveResult = saveQuotation(newQuoteId);
+    const saveResult = saveQuotationPayload(duplicatePayload);
     if (!saveResult.ok) {
       return saveResult;
     }
-    logInfo('duplicateQuotation', 'Duplicated quote ' + quoteId + ' to ' + newQuoteId);
-    return success({ originalQuoteId: quoteId, newQuoteId: newQuoteId }, 'Quotation duplicated');
+    logInfo('duplicateQuotation', 'Duplicated quote ' + quoteId + ' to ' + saveResult.data.quoteId);
+    return success(Object.assign({ originalQuoteId: quoteId, newQuoteId: saveResult.data.quoteId }, saveResult.data), 'Quotation duplicated');
   } catch (error) {
     logError('duplicateQuotation', error);
     return fail(error && error.message ? error.message : 'Failed to duplicate quotation');
   }
 }
 
-function cancelQuotation(quoteId) {
+function cancelQuotation(payload) {
   try {
+    const quoteId = extractQuoteId(payload);
     const quoteResult = getQuotationRow(quoteId);
     if (!quoteResult.ok) {
       return quoteResult;
     }
+    const targetQuoteId = String(quoteResult.data && quoteResult.data.quoteId || quoteId).trim();
     const updateObject = {
       status: QUOTE_STATUSES.CANCELLED,
       updatedAt: new Date().toISOString()
     };
-    const result = updateRowById(QUOTE_HISTORY_SHEET, 'quoteId', quoteId, updateObject);
+    const result = updateRowById(QUOTE_HISTORY_SHEET, 'quoteId', targetQuoteId, updateObject);
     if (!result.ok) {
       return result;
     }
-    logInfo('cancelQuotation', 'Cancelled quotation ' + quoteId);
-    return success({ quoteId: quoteId, status: QUOTE_STATUSES.CANCELLED }, 'Quotation cancelled');
+    logInfo('cancelQuotation', 'Cancelled quotation ' + targetQuoteId);
+    return success({ quoteId: targetQuoteId, quoteNo: quoteResult.data.quoteNo || targetQuoteId, status: QUOTE_STATUSES.CANCELLED }, 'Quotation cancelled');
   } catch (error) {
     logError('cancelQuotation', error);
     return fail(error && error.message ? error.message : 'Failed to cancel quotation');
   }
 }
 
-function getQuotationHistory(customerId) {
+function getQuotationHistory(payload) {
   try {
-    const idCheck = requireValue(customerId, 'customerId');
-    if (!idCheck.ok) {
-      return idCheck;
-    }
+    const filter = payload && typeof payload === 'object' ? payload : { customerId: payload };
+    const customerId = String(filter.customerId || '').trim();
+    const keyword = normalizeString(filter.keyword || '');
+    const status = normalizeString(filter.status || '');
+    const dateFrom = parseQuotationDate(filter.dateFrom);
+    const dateTo = parseQuotationDate(filter.dateTo);
     ensureQuotationSheets();
     const result = getSheetData(QUOTE_HISTORY_SHEET);
     if (!result.ok) {
@@ -437,9 +725,44 @@ function getQuotationHistory(customerId) {
     }
     const quotes = Array.isArray(result.data) ? result.data : [];
     const matches = quotes.filter(function (item) {
-      return normalizeString(item.customerId) === normalizeString(customerId);
+      const quoteDate = parseQuotationDate(item.createdAt || item.updatedAt);
+      const haystack = normalizeString([
+        item.quoteNo,
+        item.quoteId,
+        item.customerName,
+        item.customerId,
+        item.status
+      ].join(' '));
+      if (customerId && normalizeString(item.customerId) !== normalizeString(customerId)) {
+        return false;
+      }
+      if (status && normalizeString(item.status) !== status) {
+        return false;
+      }
+      if (keyword && haystack.indexOf(keyword) < 0) {
+        return false;
+      }
+      if (dateFrom && (!quoteDate || quoteDate < dateFrom)) {
+        return false;
+      }
+      if (dateTo && (!quoteDate || quoteDate > dateTo)) {
+        return false;
+      }
+      return true;
     }).sort(function (a, b) {
       return new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0);
+    }).map(function (item) {
+      return Object.assign({}, item, {
+        quoteNo: String(item.quoteNo || item.quoteId || '').trim(),
+        customerName: String(item.customerName || '').trim(),
+        subtotal: roundCurrency(parseQuotationNumericValue(item.subtotal || 0)),
+        vat: roundCurrency(parseQuotationNumericValue(item.vat || 0)),
+        shipping: roundCurrency(parseQuotationNumericValue(item.shipping || 0)),
+        specialDiscount: roundCurrency(parseQuotationNumericValue(item.specialDiscount || 0)),
+        grandTotal: roundCurrency(parseQuotationNumericValue(item.grandTotal || item.total || 0)),
+        total: roundCurrency(parseQuotationNumericValue(item.grandTotal || item.total || 0)),
+        status: String(item.status || '').trim()
+      });
     });
     return success(matches);
   } catch (error) {
@@ -461,7 +784,7 @@ function getQuotationRow(quoteId) {
     }
     const quotes = Array.isArray(historyResult.data) ? historyResult.data : [];
     const match = quotes.find(function (item) {
-      return normalizeString(item.quoteId) === normalizeString(quoteId);
+      return normalizeString(item.quoteId) === normalizeString(quoteId) || normalizeString(item.quoteNo) === normalizeString(quoteId);
     });
     if (!match) {
       return notFound('Quotation not found');
@@ -555,8 +878,8 @@ function getProductGroupCode(product) {
 
 function ensureQuotationSheets() {
   try {
-    ensureSheet(QUOTE_HISTORY_SHEET, ['quoteId', 'customerId', 'status', 'shipping', 'specialDiscount', 'subtotal', 'vat', 'grandTotal', 'createdAt', 'updatedAt']);
-    ensureSheet(QUOTE_LINES_SHEET, ['quoteId', 'lineId', 'productId', 'productName', 'qty', 'listPrice', 'discountPercent', 'netPrice', 'lineTotal', 'status', 'createdAt', 'updatedAt']);
+    ensureSheet(QUOTE_HISTORY_SHEET, getQuoteHistoryHeaders());
+    ensureSheet(QUOTE_LINES_SHEET, getQuoteLineHeaders());
     return success(true);
   } catch (error) {
     logError('ensureQuotationSheets', error);

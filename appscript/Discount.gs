@@ -7,85 +7,110 @@ function getDiscount(customerId, groupCode) {
       return validationError('customerId and groupCode are required');
     }
 
-    const matrixResult = getSheetData(SHEET_NAMES.DISCOUNT_MATRIX);
-    if (!matrixResult.ok) {
-      logWarning('getDiscount', 'Unable to read DiscountMatrix');
-      return success({
-        discountPercent: 0,
-        discountGroup: '',
-        groupCode: normalizedGroupCode,
-        customerId: normalizedCustomerId,
-        warning: true,
-        message: 'DiscountMatrix unavailable'
-      });
+    const matrix = readDiscountMatrixValues();
+    if (!matrix.ok) {
+      return createDiscountResult(normalizedCustomerId, normalizedGroupCode, '', 0, 'not_found', matrix.message || 'DiscountMatrix unavailable');
     }
 
-    const rows = Array.isArray(matrixResult.data) ? matrixResult.data : [];
-    if (!rows.length) {
-      logWarning('getDiscount', 'DiscountMatrix has no data');
-      return success({
-        discountPercent: 0,
-        discountGroup: '',
-        groupCode: normalizedGroupCode,
-        customerId: normalizedCustomerId,
-        warning: true,
-        message: 'DiscountMatrix has no data'
-      });
+    const values = matrix.data || [];
+    if (values.length < 3) {
+      return createDiscountResult(normalizedCustomerId, normalizedGroupCode, '', 0, 'not_found', 'DiscountMatrix has no discount rows');
     }
 
-    const rowKeyField = findDiscountRowKeyField(rows);
-    if (!rowKeyField) {
-      logWarning('getDiscount', 'Unable to determine DiscountMatrix row key');
-      return success({
-        discountPercent: 0,
-        discountGroup: '',
-        groupCode: normalizedGroupCode,
-        customerId: normalizedCustomerId,
-        warning: true,
-        message: 'Unable to determine DiscountMatrix row key'
-      });
+    const customerColumnIndex = findDiscountCustomerColumn(values[0], normalizedCustomerId);
+    if (customerColumnIndex < 0) {
+      return createDiscountResult(normalizedCustomerId, normalizedGroupCode, '', 0, 'not_found', 'Discount customer not found');
     }
 
-    const rowRecord = rows.find(function (record) {
-      return String(record[rowKeyField] || '').trim().toLowerCase() === normalizedGroupCode.toLowerCase();
-    });
-
-    if (!rowRecord) {
-      logWarning('getDiscount', 'No matching discount row for groupCode ' + normalizedGroupCode);
-      return success({
-        discountPercent: 0,
-        discountGroup: '',
-        groupCode: normalizedGroupCode,
-        customerId: normalizedCustomerId,
-        warning: true,
-        message: 'No discount row found'
-      });
+    const rowIndex = findDiscountGroupRow(values, normalizedGroupCode);
+    if (rowIndex < 0) {
+      return createDiscountResult(normalizedCustomerId, normalizedGroupCode, '', 0, 'not_found', 'Discount group not found');
     }
 
-    const columnKey = findDiscountColumnKey(rowRecord, normalizedCustomerId);
-    if (!columnKey) {
-      logWarning('getDiscount', 'No matching discount column for customerId ' + normalizedCustomerId);
-      return success({
-        discountPercent: 0,
-        discountGroup: normalizedGroupCode,
-        groupCode: normalizedGroupCode,
-        customerId: normalizedCustomerId,
-        warning: true,
-        message: 'No discount column found'
-      });
-    }
-
-    const discountPercent = roundCurrency(parseNumericValue(rowRecord[columnKey]));
+    const row = values[rowIndex] || [];
+    const discountGroup = String(row[1] || '').trim();
+    const rawDiscount = row[customerColumnIndex];
+    const hasDiscountValue = String(rawDiscount || '').trim() !== '';
+    const discountPercent = parseDiscountPercent(rawDiscount);
     return success({
-      discountPercent: discountPercent,
-      discountGroup: normalizedGroupCode,
+      customerId: normalizedCustomerId,
       groupCode: normalizedGroupCode,
-      customerId: normalizedCustomerId
-    });
+      discountGroup: discountGroup,
+      discountPercent: discountPercent,
+      source: hasDiscountValue ? 'discount_matrix' : 'not_found'
+    }, hasDiscountValue ? 'Discount found' : 'Discount not found');
   } catch (error) {
     logError('getDiscount', error);
     return fail(error && error.message ? error.message : 'Discount lookup failed');
   }
+}
+
+function readDiscountMatrixValues() {
+  try {
+    const sheet = getSheetByName(SHEET_NAMES.DISCOUNT_MATRIX);
+    if (!sheet) {
+      return fail('DiscountMatrix sheet not found');
+    }
+    const values = sheet.getDataRange().getDisplayValues();
+    return success(values || []);
+  } catch (error) {
+    logError('readDiscountMatrixValues', error);
+    return fail(error && error.message ? error.message : 'Unable to read DiscountMatrix');
+  }
+}
+
+function findDiscountCustomerColumn(headerRow, customerId) {
+  const normalizedCustomerId = normalizeDiscountKey(customerId);
+  const headers = Array.isArray(headerRow) ? headerRow : [];
+  for (var i = 2; i < headers.length; i++) {
+    if (normalizeDiscountKey(headers[i]) === normalizedCustomerId) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function findDiscountGroupRow(values, groupCode) {
+  const normalizedGroupCode = normalizeDiscountKey(groupCode);
+  for (var i = 2; i < values.length; i++) {
+    const row = values[i] || [];
+    if (normalizeDiscountKey(row[0]) === normalizedGroupCode) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function parseDiscountPercent(value) {
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return 0;
+  }
+  const numericValue = Number(raw.replace(/%/g, '').replace(/,/g, '').trim());
+  if (isNaN(numericValue)) {
+    return 0;
+  }
+  if (raw.indexOf('%') >= 0) {
+    return roundCurrency(numericValue);
+  }
+  if (numericValue > 0 && numericValue < 1) {
+    return roundCurrency(numericValue * 100);
+  }
+  return roundCurrency(numericValue);
+}
+
+function createDiscountResult(customerId, groupCode, discountGroup, discountPercent, source, message) {
+  return success({
+    customerId: customerId,
+    groupCode: groupCode,
+    discountGroup: discountGroup || '',
+    discountPercent: discountPercent || 0,
+    source: source || 'not_found'
+  }, message || 'Discount not found');
+}
+
+function normalizeDiscountKey(value) {
+  return String(value || '').trim().toLowerCase();
 }
 
 function calculateNetPrice(listPrice, discountPercent) {

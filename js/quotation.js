@@ -75,6 +75,62 @@ function createLineId() {
   return QUOTE_LINE_PREFIX + Date.now() + '_' + Math.floor(Math.random() * 10000);
 }
 
+function toPriceNumber(value) {
+  const numericValue = Number(String(value || '').replace(/,/g, ''));
+  return isNaN(numericValue) ? 0 : numericValue;
+}
+
+function getSelectedCustomerIdForPricing() {
+  return String(window.selectedCustomerId || document.getElementById('quoteCustomer')?.value || CURRENT_QUOTE.customerId || '').trim();
+}
+
+async function getDiscountPercentForProduct(customerId, product) {
+  const groupCode = String(product && product.groupCode || '').trim();
+  if (!customerId || !groupCode) {
+    return 0;
+  }
+  try {
+    const response = await callApi('discount', { customerId: customerId, groupCode: groupCode });
+    return response && response.ok ? Number(response.data?.discountPercent || 0) : 0;
+  } catch (error) {
+    console.error(error);
+    return 0;
+  }
+}
+
+function recalcLineItem(item) {
+  const qty = Math.max(0, Number(item.qty || 0));
+  const listPrice = roundValue(toPriceNumber(item.listPrice));
+  const discountPercent = roundValue(Number(item.discountPercent ?? item.discount ?? 0));
+  const unitPrice = roundValue(listPrice * (1 - discountPercent / 100));
+  const lineTotal = roundValue(unitPrice * qty);
+  const vat = roundValue(lineTotal * 0.07);
+  const grandTotal = roundValue(lineTotal + vat);
+
+  item.qty = qty;
+  item.listPrice = listPrice;
+  item.discountPercent = discountPercent;
+  item.discount = discountPercent;
+  item.unitPrice = unitPrice;
+  item.netPrice = unitPrice;
+  item.lineTotal = lineTotal;
+  item.vat = vat;
+  item.grandTotal = grandTotal;
+  return item;
+}
+
+function createCartLine(product, qty, discountPercent) {
+  return recalcLineItem({
+    lineId: createLineId(),
+    productId: getProductId(product),
+    productName: String(product.productName || product.name || '').trim(),
+    unit: String(product.unit || '').trim(),
+    qty: Number(qty || 1),
+    listPrice: roundValue(toPriceNumber(product.listPrice || product.price || 0)),
+    discountPercent: Number(discountPercent || 0)
+  });
+}
+
 async function saveQuote() {
   return saveQuotation();
 }
@@ -270,11 +326,15 @@ async function saveQuotation() {
     items: CART.map(item => ({
       productId: item.productId,
       productName: item.productName,
+      unit: item.unit,
       qty: item.qty,
       listPrice: item.listPrice,
-      discountPercent: item.discount,
+      discountPercent: item.discountPercent,
+      unitPrice: item.unitPrice,
       netPrice: item.netPrice,
-      lineTotal: item.lineTotal
+      lineTotal: item.lineTotal,
+      vat: item.vat,
+      grandTotal: item.grandTotal
     })),
     shipping: Number(document.getElementById('shipping')?.value || 0),
     specialDiscount: Number(document.getElementById('specialDiscount')?.value || 0)
@@ -318,11 +378,16 @@ async function loadQuotation(quoteId) {
       lineId: String(line.lineId || createLineId()),
       productId: String(line.productId || '').trim(),
       productName: String(line.productName || '').trim(),
+      unit: String(line.unit || '').trim(),
       qty: Number(line.qty || 0),
       listPrice: roundValue(Number(line.listPrice || 0)),
       discount: Number(line.discountPercent || line.discount || 0),
-      netPrice: roundValue(Number(line.netPrice || 0)),
-      lineTotal: roundValue(Number(line.lineTotal || 0))
+      discountPercent: Number(line.discountPercent || line.discount || 0),
+      unitPrice: roundValue(Number(line.unitPrice || line.netPrice || 0)),
+      netPrice: roundValue(Number(line.netPrice || line.unitPrice || 0)),
+      lineTotal: roundValue(Number(line.lineTotal || 0)),
+      vat: roundValue(Number(line.vat || 0)),
+      grandTotal: roundValue(Number(line.grandTotal || 0))
     });
   });
   const select = document.getElementById('quoteCustomer');
@@ -367,6 +432,317 @@ async function cancelQuotation(quoteId) {
   return response;
 }
 
+function renderCart() {
+  const cartList = document.getElementById('cartList');
+  if (!cartList) {
+    calcCart();
+    return;
+  }
+  CART.forEach(recalcLineItem);
+  cartList.innerHTML = CART.length ? CART.map(it => `<div class="row item-card quote-line"><div class="quote-line-main"><b>${it.productName||'-'}</b><br><small>${it.unit||'-'}</small><div class="quote-line-prices"><span>ราคาตั้ง ${money(it.listPrice)}</span><span>ส่วนลด <input style="width:60px;border:1px solid var(--line);border-radius:10px;padding:3px" type="number" value="${it.discountPercent||0}" onchange="changeDiscount('${it.lineId}', Number(this.value))">%</span><span>ราคาสุทธิ ${money(it.unitPrice)}</span><span>รวม ${money(it.lineTotal)}</span></div></div><div class="qty"><button onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button><b>${it.qty}</b><button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button></div><button class="ghost" onclick="removeProduct('${it.lineId}')">ลบ</button></div>`).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
+  calcCart();
+}
+
+function calcCart() {
+  const shipping = Number(document.getElementById('shipping')?.value || 0);
+  const specialDiscount = Number(document.getElementById('specialDiscount')?.value || 0);
+  CART.forEach(recalcLineItem);
+  let subtotal = CART.reduce((sum, it) => sum + Number(it.lineTotal || 0), 0);
+  subtotal = roundValue(subtotal);
+  const vat = roundValue(CART.reduce((sum, it) => sum + Number(it.vat || 0), 0));
+  const total = roundValue(subtotal + vat + shipping - specialDiscount);
+  const subtotalEl = document.getElementById('sumSubtotal');
+  if (subtotalEl) subtotalEl.textContent = money(subtotal);
+  const vatEl = document.getElementById('sumVat');
+  if (vatEl) vatEl.textContent = money(vat);
+  const totalEl = document.getElementById('sumTotal');
+  if (totalEl) totalEl.textContent = money(total);
+  return { subtotal, vat, shipping, specialDiscount, total, grandTotal: total };
+}
+
+async function addProduct(productId, qty) {
+  const normalizedQty = Number(qty || 1);
+  if (normalizedQty <= 0) {
+    toast('จำนวนสินค้าต้องมากกว่า 0');
+    return;
+  }
+  const product = getProductById(productId);
+  if (!product) {
+    toast('ไม่พบสินค้า');
+    return;
+  }
+  if (!CURRENT_QUOTE.customerId) {
+    const customerId = getSelectedCustomerIdForPricing();
+    if (customerId) {
+      await newQuotation(customerId);
+    } else {
+      toast('กรุณาเลือกลูกค้าก่อนเพิ่มสินค้า');
+      return;
+    }
+  }
+  const existing = CART.find(item => getProductId(item) === getProductId(product));
+  if (existing) {
+    existing.qty = Number(existing.qty || 0) + normalizedQty;
+    recalcLineItem(existing);
+  } else {
+    const discountPercent = await getDiscountPercentForProduct(CURRENT_QUOTE.customerId, product);
+    CART.push(createCartLine(product, normalizedQty, discountPercent));
+  }
+  renderCart();
+}
+
+async function changeQty(lineId, qty) {
+  const normalizedQty = Number(qty);
+  const line = CART.find(item => item.lineId === lineId);
+  if (!line) {
+    toast('ไม่พบรายการสินค้า');
+    return;
+  }
+  if (normalizedQty <= 0) {
+    await removeProduct(lineId);
+    return;
+  }
+  line.qty = normalizedQty;
+  recalcLineItem(line);
+  renderCart();
+}
+
+async function changeDiscount(lineId, newDiscount) {
+  const line = CART.find(item => item.lineId === lineId);
+  if (!line) {
+    return;
+  }
+  line.discountPercent = Number(newDiscount || 0);
+  line.discount = line.discountPercent;
+  recalcLineItem(line);
+  renderCart();
+}
+
+async function refreshQuotation() {
+  const totals = calcCart();
+  CURRENT_QUOTE.shipping = Number(document.getElementById('shipping')?.value || 0);
+  CURRENT_QUOTE.specialDiscount = Number(document.getElementById('specialDiscount')?.value || 0);
+  renderCart();
+  return totals;
+}
+
+async function saveQuotation() {
+  if (!CURRENT_QUOTE.customerId) {
+    toast('กรุณาเลือกลูกค้าก่อนบันทึกใบเสนอราคา');
+    return;
+  }
+  if (!CART.length) {
+    toast('กรุณาเพิ่มสินค้าในใบเสนอราคาก่อนบันทึก');
+    return;
+  }
+  const totals = calcCart();
+  const payload = {
+    customerId: CURRENT_QUOTE.customerId,
+    customerName: CURRENT_QUOTE.customerName,
+    items: CART.map(item => {
+      recalcLineItem(item);
+      return {
+        productId: item.productId,
+        productName: item.productName,
+        unit: item.unit,
+        qty: item.qty,
+        listPrice: item.listPrice,
+        discountPercent: item.discountPercent,
+        unitPrice: item.unitPrice,
+        lineTotal: item.lineTotal,
+        vat: item.vat,
+        grandTotal: item.grandTotal,
+        status: item.status || 'ACTIVE'
+      };
+    }),
+    subtotal: totals.subtotal,
+    vat: totals.vat,
+    grandTotal: totals.grandTotal,
+    specialDiscount: totals.specialDiscount,
+    shipping: totals.shipping,
+    status: 'SAVED',
+    createdBy: USER?.username || USER?.displayName || ''
+  };
+  const response = await callApi('saveQuotation', payload);
+  if (!response.ok) {
+    toast(response.message || 'บันทึกใบเสนอราคาไม่สำเร็จ');
+    return response;
+  }
+  const quoteNo = response.data?.quoteNo || response.data?.quoteId || '';
+  CURRENT_QUOTE.quoteId = response.data?.quoteId || CURRENT_QUOTE.quoteId;
+  CURRENT_QUOTE.quoteNo = quoteNo;
+  toast('บันทึกใบเสนอราคาแล้ว' + (quoteNo ? ': ' + quoteNo : ''));
+  CART.length = 0;
+  renderCart();
+  await loadData();
+  return response;
+}
+
+function renderQuoteMeta() {
+  const meta = document.getElementById('quoteMeta');
+  if (!meta) return;
+  const quoteNo = CURRENT_QUOTE.quoteNo || CURRENT_QUOTE.quoteId || 'ยังไม่บันทึก';
+  const status = CURRENT_QUOTE.status || 'DRAFT';
+  meta.innerHTML = `<span>เลขที่ใบเสนอราคา: <b>${quoteNo}</b></span><span>สถานะ: <b>${status}</b></span>`;
+}
+
+function buildQuotationPayload(status) {
+  const totals = calcCart();
+  return {
+    quoteId: CURRENT_QUOTE.quoteId || '',
+    quoteNo: CURRENT_QUOTE.quoteNo || '',
+    customerId: CURRENT_QUOTE.customerId,
+    customerName: CURRENT_QUOTE.customerName,
+    items: CART.map(item => {
+      recalcLineItem(item);
+      return {
+        productId: item.productId,
+        productName: item.productName,
+        unit: item.unit,
+        qty: item.qty,
+        listPrice: item.listPrice,
+        discountPercent: item.discountPercent,
+        unitPrice: item.unitPrice,
+        lineTotal: item.lineTotal,
+        vat: item.vat,
+        grandTotal: item.grandTotal,
+        status: item.status || 'ACTIVE'
+      };
+    }),
+    subtotal: totals.subtotal,
+    vat: totals.vat,
+    grandTotal: totals.grandTotal,
+    specialDiscount: totals.specialDiscount,
+    shipping: totals.shipping,
+    status: status || 'SAVED',
+    createdBy: USER?.username || USER?.displayName || ''
+  };
+}
+
+async function saveQuotationWithStatus(status) {
+  if (!CURRENT_QUOTE.customerId) {
+    toast('กรุณาเลือกลูกค้าก่อนบันทึกใบเสนอราคา');
+    return;
+  }
+  if (!CART.length) {
+    toast('กรุณาเพิ่มสินค้าในใบเสนอราคาก่อนบันทึก');
+    return;
+  }
+  const payload = buildQuotationPayload(status);
+  const response = await callApi(payload.quoteId ? 'updateQuotation' : 'saveQuotation', payload);
+  if (!response.ok) {
+    toast(response.message || 'บันทึกใบเสนอราคาไม่สำเร็จ');
+    return response;
+  }
+  CURRENT_QUOTE.quoteId = response.data?.quoteId || CURRENT_QUOTE.quoteId;
+  CURRENT_QUOTE.quoteNo = response.data?.quoteNo || CURRENT_QUOTE.quoteNo || CURRENT_QUOTE.quoteId;
+  CURRENT_QUOTE.status = response.data?.status || status || CURRENT_QUOTE.status;
+  renderQuoteMeta();
+  renderCart();
+  toast((status === 'DRAFT' ? 'บันทึกแบบร่างแล้ว' : 'อัปเดตใบเสนอราคาแล้ว') + (CURRENT_QUOTE.quoteNo ? ': ' + CURRENT_QUOTE.quoteNo : ''));
+  await loadData();
+  return response;
+}
+
+async function saveDraftQuotation() {
+  return saveQuotationWithStatus('DRAFT');
+}
+
+async function updateQuotation() {
+  return saveQuotationWithStatus('SAVED');
+}
+
+async function saveQuotation() {
+  return saveQuotationWithStatus('SAVED');
+}
+
+async function loadQuotation(quoteId) {
+  const id = String(quoteId || '').trim();
+  if (!id) {
+    toast('ต้องระบุเลขที่ใบเสนอราคา');
+    return;
+  }
+  const response = await callApi('loadQuotation', { quoteId: id });
+  if (!response.ok) {
+    toast(response.message || 'โหลดใบเสนอราคาไม่สำเร็จ');
+    return response;
+  }
+  const data = response.data || {};
+  const quote = data.quote || {};
+  const lines = Array.isArray(data.lines) ? data.lines : [];
+  CURRENT_QUOTE = {
+    quoteId: String(quote.quoteId || id).trim(),
+    quoteNo: String(quote.quoteNo || quote.quoteId || id).trim(),
+    customerId: String(quote.customerId || '').trim(),
+    customerName: String(quote.customerName || '').trim(),
+    shipping: Number(String(quote.shipping || 0).replace(/,/g, '')),
+    specialDiscount: Number(String(quote.specialDiscount || 0).replace(/,/g, '')),
+    status: String(quote.status || 'DRAFT').trim() || 'DRAFT'
+  };
+  CART.length = 0;
+  lines.forEach(line => {
+    CART.push(recalcLineItem({
+      lineId: String(line.lineId || line.lineNo || createLineId()),
+      productId: String(line.productId || '').trim(),
+      productName: String(line.productName || '').trim(),
+      unit: String(line.unit || '').trim(),
+      qty: Number(String(line.qty || 0).replace(/,/g, '')),
+      listPrice: roundValue(toPriceNumber(line.listPrice || 0)),
+      discountPercent: Number(String(line.discountPercent || line.discount || 0).replace(/,/g, '')),
+      unitPrice: roundValue(toPriceNumber(line.unitPrice || line.netPrice || 0)),
+      lineTotal: roundValue(toPriceNumber(line.lineTotal || 0)),
+      vat: roundValue(toPriceNumber(line.vat || 0)),
+      grandTotal: roundValue(toPriceNumber(line.grandTotal || 0)),
+      status: String(line.status || 'ACTIVE')
+    }));
+  });
+  const hidden = document.getElementById('quoteCustomer');
+  if (hidden) hidden.value = CURRENT_QUOTE.customerId;
+  if (window.selectedCustomerId !== undefined) window.selectedCustomerId = CURRENT_QUOTE.customerId;
+  const input = document.getElementById('quoteCustomerSearch');
+  if (input) input.value = CURRENT_QUOTE.customerName || CURRENT_QUOTE.customerId;
+  const shipping = document.getElementById('shipping');
+  if (shipping) shipping.value = CURRENT_QUOTE.shipping;
+  const specialDiscount = document.getElementById('specialDiscount');
+  if (specialDiscount) specialDiscount.value = CURRENT_QUOTE.specialDiscount;
+  renderQuoteMeta();
+  renderCart();
+  return response;
+}
+
+async function duplicateCurrentQuotation() {
+  const id = String(CURRENT_QUOTE.quoteId || '').trim();
+  if (!id) {
+    toast('ต้องเปิดใบเสนอราคาก่อน Duplicate');
+    return;
+  }
+  const response = await duplicateQuotation(id);
+  if (response && response.ok) {
+    toast('สร้างสำเนาใบเสนอราคาแล้ว');
+  }
+  return response;
+}
+
+async function cancelCurrentQuotation() {
+  const id = String(CURRENT_QUOTE.quoteId || '').trim();
+  if (!id) {
+    toast('ต้องเปิดใบเสนอราคาก่อน Cancel');
+    return;
+  }
+  const response = await cancelQuotation(id);
+  if (response && response.ok) {
+    CURRENT_QUOTE.status = 'CANCELLED';
+    renderQuoteMeta();
+  }
+  return response;
+}
+
+const baseRenderQuote = renderQuote;
+renderQuote = function () {
+  baseRenderQuote();
+  renderQuoteMeta();
+};
+
 window.renderQuote = renderQuote;
 window.renderProductPicker = renderProductPicker;
 window.addCart = addCart;
@@ -374,6 +750,8 @@ window.renderCart = renderCart;
 window.calcCart = calcCart;
 window.saveQuote = saveQuote;
 window.saveQuotation = saveQuotation;
+window.saveDraftQuotation = saveDraftQuotation;
+window.updateQuotation = updateQuotation;
 window.shareQuote = shareQuote;
 window.selectCustomer = selectCustomer;
 window.newQuotation = newQuotation;
@@ -384,4 +762,7 @@ window.refreshQuotation = refreshQuotation;
 window.loadQuotation = loadQuotation;
 window.duplicateQuotation = duplicateQuotation;
 window.cancelQuotation = cancelQuotation;
+window.duplicateCurrentQuotation = duplicateCurrentQuotation;
+window.cancelCurrentQuotation = cancelCurrentQuotation;
+window.renderQuoteMeta = renderQuoteMeta;
 window.changeDiscount = changeDiscount;

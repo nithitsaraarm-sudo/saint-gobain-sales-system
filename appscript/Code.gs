@@ -39,8 +39,9 @@ function getBootstrapData() {
         return String(c.customerId || '').trim() === String(row.customerId || '').trim();
       }) || {};
       return Object.assign({}, row, {
+        quoteNo: String(row.quoteNo || row.quoteId || '').trim(),
         total: parseNumericValue(row.grandTotal || row.total || row.subtotal),
-        customerName: String(customer.customerName || '').trim()
+        customerName: String(row.customerName || customer.customerName || '').trim()
       });
     });
 
