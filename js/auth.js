@@ -60,6 +60,9 @@ function extractAuthData(response) {
 
 async function loadBootstrap() {
   try {
+    if (typeof loadData === 'function') {
+      return loadData();
+    }
     const response = await callApi('bootstrap', {});
     if (!response.ok) {
       toastMessage(response.message || 'โหลดข้อมูลไม่สำเร็จ');
@@ -93,8 +96,8 @@ async function login() {
     const sessionToken = auth.sessionToken;
     saveSession(user, sessionToken);
     USER = user;
-    await loadBootstrap();
     showApp();
+    await loadBootstrap();
     return response;
   } catch (error) {
     console.error(error);
@@ -115,8 +118,8 @@ async function startTestMode() {
     const sessionToken = auth.sessionToken;
     saveSession(user, sessionToken);
     USER = user;
-    await loadBootstrap();
     showApp();
+    await loadBootstrap();
     toastMessage('เข้าสู่โหมดทดลองใช้งานแล้ว');
     return response;
   } catch (error) {
@@ -158,8 +161,8 @@ async function register() {
     const sessionToken = auth.sessionToken;
     saveSession(user, sessionToken);
     USER = user;
-    await loadBootstrap();
     showApp();
+    await loadBootstrap();
     return response;
   } catch (error) {
     console.error(error);

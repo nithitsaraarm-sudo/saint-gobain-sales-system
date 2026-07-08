@@ -22,47 +22,50 @@ function doGet(e) {
 }
 
 function getBootstrapData() {
+  const timer = startPerformanceTimer('bootstrap');
   try {
-    const initResult = createDefaultSheets();
+    const cacheKey = 'bootstrap:lightweight';
+    const cached = getServerCache(cacheKey);
+    if (cached) {
+      endPerformanceTimer(timer, 'cache=hit');
+      return success(cached);
+    }
     const env = getCurrentEnvironment();
-    const usersResult = getSheetData(getUsersSheetName());
-    const customersResult = getSheetData(CUSTOMERS_SHEET);
-    const productsResult = getSheetData(SHEET_NAMES.PRODUCTS);
-    ensureQuotationSheets();
-    const quotesResult = getSheetData(QUOTE_HISTORY_SHEET);
-    const quotesData = quotesResult.ok && Array.isArray(quotesResult.data) ? quotesResult.data : [];
 
-    const customers = customersResult.ok && Array.isArray(customersResult.data) ? customersResult.data.map(normalizeCustomerObject).filter(isActiveCustomer) : [];
-    const products = productsResult.ok && Array.isArray(productsResult.data) ? productsResult.data.map(normalizeProductObject).filter(filterActiveProductObject) : [];
-    const quotes = quotesData.map(function (row) {
-      const customer = customers.find(function (c) {
-        return String(c.customerId || '').trim() === String(row.customerId || '').trim();
-      }) || {};
-      return Object.assign({}, row, {
-        quoteNo: String(row.quoteNo || row.quoteId || '').trim(),
-        total: parseNumericValue(row.grandTotal || row.total || row.subtotal),
-        customerName: String(row.customerName || customer.customerName || '').trim()
-      });
-    });
-
-    return success({
+    const data = {
       environment: env,
-      users: usersResult.ok && Array.isArray(usersResult.data) ? usersResult.data : [],
-      sheetInitialized: initResult.ok,
+      sheetInitialized: true,
       settings: {
         companyName: 'SAINT-GOBAIN',
         appName: 'SALES SYSTEM',
         welcomeText: 'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ',
         vatRate: 7
       },
-      customers: customers,
-      products: products,
-      promotions: [],
-      quotes: quotes
-    });
+      counts: {
+        customers: countSheetDataRows(CUSTOMERS_SHEET),
+        products: countSheetDataRows(SHEET_NAMES.PRODUCTS)
+      }
+    };
+    setServerCache(cacheKey, data, 300);
+    endPerformanceTimer(timer, 'cache=miss');
+    return success(data);
   } catch (error) {
+    endPerformanceTimer(timer, 'error=true');
     logError('getBootstrapData', error);
     return fail(error && error.message ? error.message : 'Bootstrap failed');
+  }
+}
+
+function countSheetDataRows(sheetName) {
+  try {
+    const sheet = getSheet(sheetName);
+    if (!sheet) {
+      return 0;
+    }
+    return Math.max(0, sheet.getLastRow() - 1);
+  } catch (error) {
+    logError('countSheetDataRows', error);
+    return 0;
   }
 }
 

@@ -1,11 +1,38 @@
 // Database helpers for Google Sheets.
+var SG_SPREADSHEET_CACHE = null;
+var SG_SHEET_CACHE = {};
+
+function startPerformanceTimer(label) {
+  return {
+    label: String(label || 'operation').trim(),
+    startedAt: Date.now()
+  };
+}
+
+function endPerformanceTimer(timer, detail) {
+  try {
+    if (!timer || !timer.label) {
+      return;
+    }
+    const elapsed = Date.now() - timer.startedAt;
+    Logger.log('[PERF] ' + timer.label + ' ' + elapsed + 'ms' + (detail ? ' ' + detail : ''));
+  } catch (error) {
+    // Timing logs are diagnostic only.
+  }
+}
+
 function getSpreadsheet() {
   try {
+    if (SG_SPREADSHEET_CACHE) {
+      return SG_SPREADSHEET_CACHE;
+    }
     const spreadsheetId = getSpreadsheetId();
     if (spreadsheetId) {
-      return SpreadsheetApp.openById(spreadsheetId);
+      SG_SPREADSHEET_CACHE = SpreadsheetApp.openById(spreadsheetId);
+      return SG_SPREADSHEET_CACHE;
     }
-    return SpreadsheetApp.getActiveSpreadsheet();
+    SG_SPREADSHEET_CACHE = SpreadsheetApp.getActiveSpreadsheet();
+    return SG_SPREADSHEET_CACHE;
   } catch (error) {
     logError('getSpreadsheet', error);
     return null;
@@ -14,14 +41,118 @@ function getSpreadsheet() {
 
 function getSheet(sheetName) {
   try {
+    const name = String(sheetName || '').trim();
+    if (!name) {
+      return null;
+    }
+    if (SG_SHEET_CACHE[name]) {
+      return SG_SHEET_CACHE[name];
+    }
     const ss = getSpreadsheet();
     if (!ss) {
       return null;
     }
-    return ss.getSheetByName(sheetName) || null;
+    SG_SHEET_CACHE[name] = ss.getSheetByName(name) || null;
+    return SG_SHEET_CACHE[name];
   } catch (error) {
     logError('getSheet', error);
     return null;
+  }
+}
+
+function getServerCache(key) {
+  try {
+    const cacheKey = String(key || '').trim();
+    if (!cacheKey) {
+      return null;
+    }
+    const cached = CacheService.getScriptCache().get(cacheKey);
+    if (!cached) {
+      return null;
+    }
+    const parsed = JSON.parse(cached);
+    if (parsed && parsed.__cacheChunks) {
+      var combined = '';
+      for (var i = 0; i < parsed.__cacheChunks; i++) {
+        const chunk = CacheService.getScriptCache().get(cacheKey + ':chunk:' + i);
+        if (!chunk) {
+          return null;
+        }
+        combined += chunk;
+      }
+      return JSON.parse(combined);
+    }
+    return parsed;
+  } catch (error) {
+    return null;
+  }
+}
+
+function setServerCache(key, data, seconds) {
+  try {
+    const cacheKey = String(key || '').trim();
+    if (!cacheKey) {
+      return false;
+    }
+    const ttl = Math.max(1, Math.min(parseInt(seconds || 300, 10) || 300, 21600));
+    const json = JSON.stringify(data);
+    const chunkSize = 90000;
+    if (json.length <= chunkSize) {
+      CacheService.getScriptCache().put(cacheKey, json, ttl);
+      return true;
+    }
+    const chunks = [];
+    for (var i = 0; i < json.length; i += chunkSize) {
+      chunks.push(json.slice(i, i + chunkSize));
+    }
+    chunks.forEach(function (chunk, index) {
+      CacheService.getScriptCache().put(cacheKey + ':chunk:' + index, chunk, ttl);
+    });
+    CacheService.getScriptCache().put(cacheKey, JSON.stringify({ __cacheChunks: chunks.length }), ttl);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function clearServerCache(key) {
+  try {
+    const cacheKey = String(key || '').trim();
+    if (cacheKey) {
+      const cache = CacheService.getScriptCache();
+      const cached = cache.get(cacheKey);
+      const keys = [cacheKey];
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.__cacheChunks) {
+          for (var i = 0; i < parsed.__cacheChunks; i++) {
+            keys.push(cacheKey + ':chunk:' + i);
+          }
+        }
+      }
+      cache.removeAll(keys);
+    }
+  } catch (error) {
+    // Cache is optional; ignore cache clear failures.
+  }
+}
+
+function getSheetDataCacheKey(sheetName) {
+  const name = String(sheetName || '').trim();
+  if (name === String(SHEET_NAMES.CUSTOMERS || '') || name === String(typeof CUSTOMERS_SHEET !== 'undefined' ? CUSTOMERS_SHEET : '')) {
+    return 'sheetData:customers';
+  }
+  if (name === String(SHEET_NAMES.PRODUCTS || '') || name === String(typeof PRODUCT_SHEET !== 'undefined' ? PRODUCT_SHEET : '')) {
+    return 'sheetData:products';
+  }
+  return '';
+}
+
+function clearSheetDataCache(sheetName) {
+  const cacheKey = getSheetDataCacheKey(sheetName);
+  if (cacheKey) {
+    clearServerCache(cacheKey);
+    clearServerCache('bootstrap:lightweight');
   }
 }
 
@@ -30,8 +161,11 @@ function getHeaders(sheet) {
     if (!sheet) {
       return [];
     }
-    const values = sheet.getDataRange().getDisplayValues();
-    const headers = values && values.length > 0 ? values[0] : [];
+    const lastColumn = sheet.getLastColumn();
+    if (lastColumn < 1) {
+      return [];
+    }
+    const headers = sheet.getRange(1, 1, 1, lastColumn).getDisplayValues()[0] || [];
     return headers.some(function (header) { return String(header || '').trim() !== ''; }) ? headers : [];
   } catch (error) {
     logError('getHeaders', error);
@@ -45,9 +179,11 @@ function ensureSheet(sheetName, headers) {
     if (!ss) {
       return null;
     }
-    let sheet = ss.getSheetByName(sheetName);
+    const name = String(sheetName || '').trim();
+    let sheet = getSheet(name);
     if (!sheet) {
-      sheet = ss.insertSheet(sheetName);
+      sheet = ss.insertSheet(name);
+      SG_SHEET_CACHE[name] = sheet;
     }
     if (headers && headers.length > 0) {
       const existingHeaders = getHeaders(sheet);
@@ -64,15 +200,31 @@ function ensureSheet(sheetName, headers) {
 
 function getSheetData(sheetName) {
   try {
-    const sheet = ensureSheet(sheetName, getHeadersForSheet(sheetName));
-    if (!sheet) {
-      return fail('Unable to access spreadsheet');
+    const cacheKey = getSheetDataCacheKey(sheetName);
+    if (cacheKey) {
+      const cached = getServerCache(cacheKey);
+      if (cached) {
+        return success(cached);
+      }
     }
-    const values = sheet.getDataRange().getDisplayValues();
+    const sheet = getSheet(sheetName);
+    if (!sheet) {
+      return success([]);
+    }
+    const lastRow = sheet.getLastRow();
+    const lastColumn = sheet.getLastColumn();
+    if (lastRow < 1 || lastColumn < 1) {
+      return success([]);
+    }
+    const values = sheet.getRange(1, 1, lastRow, lastColumn).getDisplayValues();
     if (!values || values.length === 0) {
       return success([]);
     }
-    return success(sheetToObjects(values));
+    const rows = sheetToObjects(values);
+    if (cacheKey) {
+      setServerCache(cacheKey, rows, 300);
+    }
+    return success(rows);
   } catch (error) {
     logError('getSheetData', error);
     return fail(error && error.message ? error.message : 'Failed to read sheet data');
@@ -93,6 +245,7 @@ function appendRow(sheetName, object) {
       return object[header] !== undefined ? object[header] : '';
     });
     sheet.appendRow(row);
+    clearSheetDataCache(sheetName);
     return success({ sheetName: sheetName, row: row });
   } catch (error) {
     logError('appendRow', error);
@@ -147,7 +300,12 @@ function updateRowById(sheetName, idColumn, idValue, object) {
     if (!sheet) {
       return fail('Unable to access spreadsheet');
     }
-    const values = sheet.getDataRange().getDisplayValues();
+    const lastRow = sheet.getLastRow();
+    const lastColumn = sheet.getLastColumn();
+    if (lastRow < 1 || lastColumn < 1) {
+      return fail('No data found');
+    }
+    const values = sheet.getRange(1, 1, lastRow, lastColumn).getDisplayValues();
     if (!values || values.length === 0) {
       return fail('No data found');
     }
@@ -168,6 +326,7 @@ function updateRowById(sheetName, idColumn, idValue, object) {
         sheet.getRange(actualRowIndex, index + 1).setValue(object[header]);
       }
     });
+    clearSheetDataCache(sheetName);
     return success({ sheetName: sheetName, idColumn: idColumn, idValue: idValue });
   } catch (error) {
     logError('updateRowById', error);

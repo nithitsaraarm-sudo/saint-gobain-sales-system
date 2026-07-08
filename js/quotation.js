@@ -1,5 +1,7 @@
 let CURRENT_QUOTE = { quoteId: '', customerId: '', customerName: '', shipping: 0, specialDiscount: 0, status: 'DRAFT' };
 const QUOTE_LINE_PREFIX = 'LINE_';
+const DISCOUNT_CACHE = {};
+const DISCOUNT_PROMISES = {};
 
 function renderQuote() {
   const customerSelect = document.getElementById('quoteCustomer');
@@ -89,11 +91,37 @@ async function getDiscountPercentForProduct(customerId, product) {
   if (!customerId || !groupCode) {
     return 0;
   }
+  const cacheKey = customerId + '|' + groupCode;
+  if (DISCOUNT_CACHE[cacheKey] !== undefined) {
+    return Number(DISCOUNT_CACHE[cacheKey] || 0);
+  }
+  if (typeof getCache === 'function') {
+    const cachedDiscounts = getCache('sg_discount_cache') || {};
+    if (cachedDiscounts[cacheKey] !== undefined) {
+      DISCOUNT_CACHE[cacheKey] = Number(cachedDiscounts[cacheKey] || 0);
+      return Number(DISCOUNT_CACHE[cacheKey] || 0);
+    }
+  }
+  if (DISCOUNT_PROMISES[cacheKey]) {
+    return DISCOUNT_PROMISES[cacheKey];
+  }
   try {
-    const response = await callApi('discount', { customerId: customerId, groupCode: groupCode });
-    return response && response.ok ? Number(response.data?.discountPercent || 0) : 0;
+    DISCOUNT_PROMISES[cacheKey] = callApi('discount', { customerId: customerId, groupCode: groupCode }).then(response => {
+    const discountPercent = response && response.ok ? Number(response.data?.discountPercent || 0) : 0;
+    DISCOUNT_CACHE[cacheKey] = discountPercent;
+      if (typeof getCache === 'function' && typeof setCache === 'function') {
+        const cachedDiscounts = getCache('sg_discount_cache') || {};
+        cachedDiscounts[cacheKey] = discountPercent;
+        setCache('sg_discount_cache', cachedDiscounts, 60);
+      }
+    return discountPercent;
+    }).finally(() => {
+      delete DISCOUNT_PROMISES[cacheKey];
+    });
+    return DISCOUNT_PROMISES[cacheKey];
   } catch (error) {
     console.error(error);
+    delete DISCOUNT_PROMISES[cacheKey];
     return 0;
   }
 }
@@ -101,7 +129,7 @@ async function getDiscountPercentForProduct(customerId, product) {
 function recalcLineItem(item) {
   const qty = Math.max(0, Number(item.qty || 0));
   const listPrice = roundValue(toPriceNumber(item.listPrice));
-  const discountPercent = roundValue(Number(item.discountPercent ?? item.discount ?? 0));
+  const discountPercent = item.discountLoading ? 0 : roundValue(Number(item.discountPercent ?? item.discount ?? 0));
   const unitPrice = roundValue(listPrice * (1 - discountPercent / 100));
   const lineTotal = roundValue(unitPrice * qty);
   const vat = roundValue(lineTotal * 0.07);
@@ -662,6 +690,7 @@ async function loadQuotation(quoteId) {
     toast('ต้องระบุเลขที่ใบเสนอราคา');
     return;
   }
+  toast('กำลังโหลดข้อมูล...');
   const response = await callApi('loadQuotation', { quoteId: id });
   if (!response.ok) {
     toast(response.message || 'โหลดใบเสนอราคาไม่สำเร็จ');
@@ -737,11 +766,146 @@ async function cancelCurrentQuotation() {
   return response;
 }
 
+async function cancelQuotation(quoteId) {
+  const id = String(quoteId || CURRENT_QUOTE.quoteId || '').trim();
+  if (!id) {
+    toast('ต้องระบุเลขที่ใบเสนอราคา');
+    return;
+  }
+  toast('กำลังบันทึก...');
+  const response = await callApi('cancelQuotation', { quoteId: id });
+  toast(response.message || (response.ok ? 'ยกเลิกใบเสนอราคาแล้ว' : 'ยกเลิกไม่สำเร็จ'));
+  if (response.ok) {
+    if (CURRENT_QUOTE.quoteId === id) {
+      CURRENT_QUOTE.status = 'CANCELLED';
+      renderQuoteMeta();
+    }
+    if (typeof clearQuotationCache === 'function') {
+      clearQuotationCache(id);
+    }
+    if (typeof clearCache === 'function') {
+      clearCache('sg_quote_history_cache');
+    }
+    if (typeof refreshQuotationHistory === 'function') {
+      await refreshQuotationHistory({force:true});
+    }
+  }
+  return response;
+}
+
 const baseRenderQuote = renderQuote;
 renderQuote = function () {
   baseRenderQuote();
   renderQuoteMeta();
 };
+
+function renderCart() {
+  const cartList = document.getElementById('cartList');
+  if (!cartList) {
+    calcCart();
+    return;
+  }
+  CART.forEach(recalcLineItem);
+  cartList.innerHTML = CART.length ? CART.map(it => {
+    const discountText = it.discountLoading ? '<span class="loading-text">กำลังโหลดส่วนลด...</span>' : `<input style="width:60px;border:1px solid var(--line);border-radius:10px;padding:3px" type="number" value="${it.discountPercent||0}" onchange="changeDiscount('${it.lineId}', Number(this.value))">%`;
+    return `<div class="row item-card quote-line"><div class="quote-line-main"><b>${it.productName||'-'}</b><br><small>${it.unit||'-'}</small><div class="quote-line-prices"><span>ราคาตั้ง ${money(it.listPrice)}</span><span>ส่วนลด ${discountText}</span><span>ราคาสุทธิ ${money(it.unitPrice)}</span><span>รวม ${money(it.lineTotal)}</span></div></div><div class="qty"><button onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button><b>${it.qty}</b><button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button></div><button class="ghost" onclick="removeProduct('${it.lineId}')">ลบ</button></div>`;
+  }).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
+  calcCart();
+}
+
+async function addProduct(productId, qty) {
+  const normalizedQty = Number(qty || 1);
+  if (normalizedQty <= 0) {
+    toast('จำนวนสินค้าต้องมากกว่า 0');
+    return;
+  }
+  const product = getProductById(productId);
+  if (!product) {
+    toast('ไม่พบสินค้า');
+    return;
+  }
+  if (!CURRENT_QUOTE.customerId) {
+    const customerId = getSelectedCustomerIdForPricing();
+    if (customerId) {
+      const customer = DB.customers.find(c => String(c.customerId || '').trim() === String(customerId).trim()) || {};
+      CURRENT_QUOTE = {
+        quoteId: CURRENT_QUOTE.quoteId || '',
+        quoteNo: CURRENT_QUOTE.quoteNo || '',
+        customerId: String(customerId).trim(),
+        customerName: String(customer.customerName || '').trim(),
+        shipping: Number(document.getElementById('shipping')?.value || 0),
+        specialDiscount: Number(document.getElementById('specialDiscount')?.value || 0),
+        status: 'DRAFT'
+      };
+      renderQuoteMeta();
+    } else {
+      toast('กรุณาเลือกลูกค้าก่อนเพิ่มสินค้า');
+      return;
+    }
+  }
+  const existing = CART.find(item => getProductId(item) === getProductId(product));
+  if (existing) {
+    existing.qty = Number(existing.qty || 0) + normalizedQty;
+    recalcLineItem(existing);
+    renderCart();
+    return;
+  }
+  const line = createCartLine(product, normalizedQty, 0);
+  line.discountLoading = true;
+  CART.push(line);
+  renderCart();
+  toast('กำลังโหลดส่วนลด...');
+  getDiscountPercentForProduct(CURRENT_QUOTE.customerId, product).then(discountPercent => {
+    const target = CART.find(item => item.lineId === line.lineId);
+    if (!target) return;
+    target.discountLoading = false;
+    target.discountPercent = Number(discountPercent || 0);
+    target.discount = target.discountPercent;
+    recalcLineItem(target);
+    renderCart();
+  }).catch(error => {
+    console.error(error);
+    const target = CART.find(item => item.lineId === line.lineId);
+    if (!target) return;
+    target.discountLoading = false;
+    recalcLineItem(target);
+    renderCart();
+  });
+}
+
+async function saveQuotationWithStatus(status) {
+  if (!CURRENT_QUOTE.customerId) {
+    toast('กรุณาเลือกลูกค้าก่อนบันทึกใบเสนอราคา');
+    return;
+  }
+  if (!CART.length) {
+    toast('กรุณาเพิ่มสินค้าในใบเสนอราคาก่อนบันทึก');
+    return;
+  }
+  toast('กำลังบันทึก...');
+  const payload = buildQuotationPayload(status);
+  const response = await callApi(payload.quoteId ? 'updateQuotation' : 'saveQuotation', payload);
+  if (!response.ok) {
+    toast(response.message || 'บันทึกใบเสนอราคาไม่สำเร็จ');
+    return response;
+  }
+  CURRENT_QUOTE.quoteId = response.data?.quoteId || CURRENT_QUOTE.quoteId;
+  CURRENT_QUOTE.quoteNo = response.data?.quoteNo || CURRENT_QUOTE.quoteNo || CURRENT_QUOTE.quoteId;
+  CURRENT_QUOTE.status = response.data?.status || status || CURRENT_QUOTE.status;
+  if (typeof clearQuotationCache === 'function') {
+    clearQuotationCache(CURRENT_QUOTE.quoteId);
+  }
+  if (typeof clearCache === 'function') {
+    clearCache('sg_quote_history_cache');
+  }
+  renderQuoteMeta();
+  renderCart();
+  toast((status === 'DRAFT' ? 'บันทึกแบบร่างแล้ว' : 'อัปเดตใบเสนอราคาแล้ว') + (CURRENT_QUOTE.quoteNo ? ': ' + CURRENT_QUOTE.quoteNo : ''));
+  if (typeof refreshQuotationHistory === 'function' && (typeof isQuotationHistoryLoaded !== 'function' || isQuotationHistoryLoaded())) {
+    await refreshQuotationHistory({force:true});
+  }
+  return response;
+}
 
 window.renderQuote = renderQuote;
 window.renderProductPicker = renderProductPicker;

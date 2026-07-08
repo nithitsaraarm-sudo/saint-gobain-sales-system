@@ -8,7 +8,6 @@ function createQuotation(customerId) {
     if (!customerResult.ok) {
       return customerResult;
     }
-    ensureQuotationSheets();
     const quoteId = generateId('QUOTE');
     const now = new Date().toISOString();
     const row = {
@@ -27,6 +26,7 @@ function createQuotation(customerId) {
     if (!insertResult.ok) {
       return insertResult;
     }
+    clearQuotationCaches(quoteId, '');
     logInfo('createQuotation', 'Quotation created ' + quoteId);
     return success(row, 'Quotation created');
   } catch (error) {
@@ -62,16 +62,11 @@ function addQuotationItem(quoteId, productId, qty) {
       return productResult;
     }
     const product = productResult.data || {};
-    const priceResult = calculateListPrice(productId);
-    if (!priceResult.ok) {
-      return priceResult;
-    }
     const discountResult = getDiscount(quote.customerId, getProductGroupCode(product));
-    const listPrice = roundCurrency(parseNumericValue(priceResult.data && priceResult.data.listPrice));
+    const listPrice = roundCurrency(parseNumericValue(product.listPrice || product.price || 0));
     const discountPercent = discountResult.ok ? roundCurrency(parseNumericValue(discountResult.data && discountResult.data.discountPercent)) : 0;
     const netPrice = roundCurrency(listPrice * (1 - discountPercent / 100));
     const lineTotal = roundCurrency(netPrice * quantity);
-    ensureQuotationSheets();
     const lineId = generateId('LINE');
     const now = new Date().toISOString();
     const row = {
@@ -92,6 +87,7 @@ function addQuotationItem(quoteId, productId, qty) {
     if (!insertResult.ok) {
       return insertResult;
     }
+    clearQuotationCaches(quoteId, quote.quoteNo);
     logInfo('addQuotationItem', 'Added line ' + lineId + ' to quote ' + quoteId);
     return success(row, 'Quotation item added');
   } catch (error) {
@@ -132,12 +128,8 @@ function updateQuotationItem(quoteId, lineId, qty) {
       return productResult;
     }
     const product = productResult.data || {};
-    const priceResult = calculateListPrice(line.productId);
-    if (!priceResult.ok) {
-      return priceResult;
-    }
     const discountResult = getDiscount(quote.customerId, getProductGroupCode(product));
-    const listPrice = roundCurrency(parseNumericValue(priceResult.data && priceResult.data.listPrice));
+    const listPrice = roundCurrency(parseNumericValue(product.listPrice || product.price || line.listPrice || 0));
     const discountPercent = discountResult.ok ? roundCurrency(parseNumericValue(discountResult.data && discountResult.data.discountPercent)) : 0;
     const netPrice = roundCurrency(listPrice * (1 - discountPercent / 100));
     const lineTotal = roundCurrency(netPrice * quantity);
@@ -153,6 +145,7 @@ function updateQuotationItem(quoteId, lineId, qty) {
     if (!result.ok) {
       return result;
     }
+    clearQuotationCaches(quoteId, quote.quoteNo);
     logInfo('updateQuotationItem', 'Updated line ' + lineId + ' for quote ' + quoteId);
     return success(updateObject, 'Quotation item updated');
   } catch (error) {
@@ -171,6 +164,11 @@ function removeQuotationItem(quoteId, lineId) {
     if (!lineCheck.ok) {
       return lineCheck;
     }
+    const quoteResult = getQuotationRow(quoteId);
+    if (!quoteResult.ok) {
+      return quoteResult;
+    }
+    const quote = quoteResult.data || {};
     const lineResult = findQuoteLine(quoteId, lineId);
     if (!lineResult.ok) {
       return lineResult;
@@ -187,6 +185,7 @@ function removeQuotationItem(quoteId, lineId) {
     if (!result.ok) {
       return result;
     }
+    clearQuotationCaches(quoteId, quote.quoteNo);
     logInfo('removeQuotationItem', 'Removed line ' + lineId + ' from quote ' + quoteId);
     return success({ quoteId: quoteId, lineId: lineId }, 'Quotation item removed');
   } catch (error) {
@@ -257,6 +256,7 @@ function saveQuotation(payload) {
     if (!result.ok) {
       return result;
     }
+    clearQuotationCaches(quoteId, quote.quoteNo);
     logInfo('saveQuotation', 'Saved quotation ' + quoteId);
     return success({ quoteId: quoteId, totals: totals }, 'Quotation saved');
   } catch (error) {
@@ -278,7 +278,6 @@ function saveQuotationPayload(payload) {
       return validationError('items is required');
     }
 
-    ensureQuotationSheets();
     const now = new Date().toISOString();
     const requestedQuoteId = String(data.quoteId || '').trim();
     const existingResult = requestedQuoteId ? getQuotationRow(requestedQuoteId) : null;
@@ -343,6 +342,7 @@ function saveQuotationPayload(payload) {
       }
     }
 
+    clearQuotationCaches(quoteId, quoteNo);
     logInfo('saveQuotation', 'Saved quotation ' + quoteNo);
     return success({
       quoteId: quoteId,
@@ -460,7 +460,9 @@ function updateQuotationObject(sheetName, headers, idColumn, idValue, object) {
     if (idIndex < 0) {
       return fail('ID column not found');
     }
-    const values = sheet.getDataRange().getDisplayValues();
+    const lastRow = sheet.getLastRow();
+    const lastColumn = Math.max(sheet.getLastColumn(), activeHeaders.length);
+    const values = lastRow > 0 ? sheet.getRange(1, 1, lastRow, lastColumn).getDisplayValues() : [];
     const targetRowIndex = values.slice(1).findIndex(function (row) {
       return normalizeString(row[idIndex]) === normalizeString(idValue);
     });
@@ -603,17 +605,67 @@ function parseQuotationDate(value) {
   return date;
 }
 
+function getQuotationHistoryCacheKey(filter, limit) {
+  const data = filter || {};
+  const normalizedLimit = limit || 50;
+  if (isDefaultQuotationHistoryRequest(data, normalizedLimit)) {
+    return 'quotationHistory:default:50';
+  }
+  return [
+    'quotationHistory',
+    normalizedLimit,
+    normalizeString(data.customerId || '').slice(0, 40),
+    normalizeString(data.keyword || '').slice(0, 40),
+    normalizeString(data.status || '').slice(0, 20),
+    String(data.dateFrom || '').slice(0, 24),
+    String(data.dateTo || '').slice(0, 24)
+  ].join(':');
+}
+
+function isDefaultQuotationHistoryRequest(filter, limit) {
+  const data = filter || {};
+  return limit === 50
+    && !String(data.customerId || '').trim()
+    && !String(data.keyword || '').trim()
+    && !String(data.status || '').trim()
+    && !String(data.dateFrom || '').trim()
+    && !String(data.dateTo || '').trim();
+}
+
+function getLoadQuotationCacheKey(quoteId) {
+  return 'loadQuotation:' + normalizeString(quoteId);
+}
+
+function clearQuotationCaches(quoteId, quoteNo) {
+  clearServerCache(getQuotationHistoryCacheKey(null, 50));
+  if (quoteId) {
+    clearServerCache(getLoadQuotationCacheKey(quoteId));
+  }
+  if (quoteNo) {
+    clearServerCache(getLoadQuotationCacheKey(quoteNo));
+  }
+}
+
 function loadQuotation(payload) {
+  const timer = startPerformanceTimer('quotation.load');
   try {
     const quoteId = extractQuoteId(payload);
+    const cacheKey = getLoadQuotationCacheKey(quoteId);
+    const cached = getServerCache(cacheKey);
+    if (cached) {
+      endPerformanceTimer(timer, 'cache=hit');
+      return success(cached);
+    }
     const quoteResult = getQuotationRow(quoteId);
     if (!quoteResult.ok) {
+      endPerformanceTimer(timer, 'quote=false');
       return quoteResult;
     }
     const quote = quoteResult.data;
     const targetQuoteId = String(quote.quoteId || quoteId).trim();
     const linesResult = getQuoteLines(targetQuoteId);
     if (!linesResult.ok) {
+      endPerformanceTimer(timer, 'lines=false');
       return linesResult;
     }
     const lines = Array.isArray(linesResult.data) ? linesResult.data.map(normalizeLoadedQuotationLine) : [];
@@ -625,14 +677,24 @@ function loadQuotation(payload) {
     const shipping = roundCurrency(parseQuotationNumericValue(quote.shipping || 0));
     const specialDiscount = roundCurrency(parseQuotationNumericValue(quote.specialDiscount || 0));
     const grandTotal = roundCurrency(parseQuotationNumericValue(quote.grandTotal || subtotal + vat + shipping - specialDiscount));
-    return success({ quote: quote, lines: activeLines, totals: {
+    const data = { quote: quote, lines: activeLines, totals: {
       subtotal: subtotal,
       vat: vat,
       shipping: shipping,
       specialDiscount: specialDiscount,
       grandTotal: grandTotal
-    } });
+    } };
+    setServerCache(cacheKey, data, 600);
+    if (targetQuoteId && normalizeString(targetQuoteId) !== normalizeString(quoteId)) {
+      setServerCache(getLoadQuotationCacheKey(targetQuoteId), data, 600);
+    }
+    if (quote.quoteNo && normalizeString(quote.quoteNo) !== normalizeString(quoteId)) {
+      setServerCache(getLoadQuotationCacheKey(quote.quoteNo), data, 600);
+    }
+    endPerformanceTimer(timer, 'cache=miss lines=' + activeLines.length);
+    return success(data);
   } catch (error) {
+    endPerformanceTimer(timer, 'error=true');
     logError('loadQuotation', error);
     return fail(error && error.message ? error.message : 'Failed to load quotation');
   }
@@ -702,6 +764,7 @@ function cancelQuotation(payload) {
     if (!result.ok) {
       return result;
     }
+    clearQuotationCaches(targetQuoteId, quoteResult.data && quoteResult.data.quoteNo);
     logInfo('cancelQuotation', 'Cancelled quotation ' + targetQuoteId);
     return success({ quoteId: targetQuoteId, quoteNo: quoteResult.data.quoteNo || targetQuoteId, status: QUOTE_STATUSES.CANCELLED }, 'Quotation cancelled');
   } catch (error) {
@@ -711,6 +774,7 @@ function cancelQuotation(payload) {
 }
 
 function getQuotationHistory(payload) {
+  const timer = startPerformanceTimer('quotation.history');
   try {
     const filter = payload && typeof payload === 'object' ? payload : { customerId: payload };
     const customerId = String(filter.customerId || '').trim();
@@ -718,25 +782,47 @@ function getQuotationHistory(payload) {
     const status = normalizeString(filter.status || '');
     const dateFrom = parseQuotationDate(filter.dateFrom);
     const dateTo = parseQuotationDate(filter.dateTo);
-    ensureQuotationSheets();
-    const result = getSheetData(QUOTE_HISTORY_SHEET);
-    if (!result.ok) {
-      return result;
+    const limit = Math.max(1, Math.min(parseInt(filter.limit || 50, 10) || 50, 200));
+    const historyCacheKey = getQuotationHistoryCacheKey(filter, limit);
+    const cached = getServerCache(historyCacheKey);
+    if (cached) {
+      endPerformanceTimer(timer, 'cache=hit count=' + (Array.isArray(cached) ? cached.length : 0));
+      return success(cached);
     }
-    const quotes = Array.isArray(result.data) ? result.data : [];
-    const matches = quotes.filter(function (item) {
-      const quoteDate = parseQuotationDate(item.createdAt || item.updatedAt);
+    const sheet = getSheet(QUOTE_HISTORY_SHEET);
+    if (!sheet || sheet.getLastRow() < 2) {
+      endPerformanceTimer(timer, 'count=0');
+      return success([]);
+    }
+    const headers = getQuotationSheetHeaders(sheet);
+    const lastRow = sheet.getLastRow();
+    const values = sheet.getRange(2, 1, lastRow - 1, Math.max(sheet.getLastColumn(), headers.length)).getDisplayValues();
+    const quoteIdIndex = headers.indexOf('quoteId');
+    const quoteNoIndex = headers.indexOf('quoteNo');
+    const customerIdIndex = headers.indexOf('customerId');
+    const customerNameIndex = headers.indexOf('customerName');
+    const statusIndex = headers.indexOf('status');
+    const createdAtIndex = headers.indexOf('createdAt');
+    const updatedAtIndex = headers.indexOf('updatedAt');
+    const subtotalIndex = headers.indexOf('subtotal');
+    const vatIndex = headers.indexOf('vat');
+    const shippingIndex = headers.indexOf('shipping');
+    const specialDiscountIndex = headers.indexOf('specialDiscount');
+    const grandTotalIndex = headers.indexOf('grandTotal');
+
+    const matches = values.filter(function (row) {
+      const quoteDate = parseQuotationDate((createdAtIndex >= 0 ? row[createdAtIndex] : '') || (updatedAtIndex >= 0 ? row[updatedAtIndex] : ''));
       const haystack = normalizeString([
-        item.quoteNo,
-        item.quoteId,
-        item.customerName,
-        item.customerId,
-        item.status
+        quoteNoIndex >= 0 ? row[quoteNoIndex] : '',
+        quoteIdIndex >= 0 ? row[quoteIdIndex] : '',
+        customerNameIndex >= 0 ? row[customerNameIndex] : '',
+        customerIdIndex >= 0 ? row[customerIdIndex] : '',
+        statusIndex >= 0 ? row[statusIndex] : ''
       ].join(' '));
-      if (customerId && normalizeString(item.customerId) !== normalizeString(customerId)) {
+      if (customerId && normalizeString(customerIdIndex >= 0 ? row[customerIdIndex] : '') !== normalizeString(customerId)) {
         return false;
       }
-      if (status && normalizeString(item.status) !== status) {
+      if (status && normalizeString(statusIndex >= 0 ? row[statusIndex] : '') !== status) {
         return false;
       }
       if (keyword && haystack.indexOf(keyword) < 0) {
@@ -750,22 +836,34 @@ function getQuotationHistory(payload) {
       }
       return true;
     }).sort(function (a, b) {
-      return new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0);
-    }).map(function (item) {
-      return Object.assign({}, item, {
-        quoteNo: String(item.quoteNo || item.quoteId || '').trim(),
-        customerName: String(item.customerName || '').trim(),
-        subtotal: roundCurrency(parseQuotationNumericValue(item.subtotal || 0)),
-        vat: roundCurrency(parseQuotationNumericValue(item.vat || 0)),
-        shipping: roundCurrency(parseQuotationNumericValue(item.shipping || 0)),
-        specialDiscount: roundCurrency(parseQuotationNumericValue(item.specialDiscount || 0)),
-        grandTotal: roundCurrency(parseQuotationNumericValue(item.grandTotal || item.total || 0)),
-        total: roundCurrency(parseQuotationNumericValue(item.grandTotal || item.total || 0)),
-        status: String(item.status || '').trim()
-      });
+      const bDate = new Date((updatedAtIndex >= 0 ? b[updatedAtIndex] : '') || (createdAtIndex >= 0 ? b[createdAtIndex] : '') || 0);
+      const aDate = new Date((updatedAtIndex >= 0 ? a[updatedAtIndex] : '') || (createdAtIndex >= 0 ? a[createdAtIndex] : '') || 0);
+      return bDate - aDate;
+    }).slice(0, limit).map(function (row) {
+      const quoteIdValue = quoteIdIndex >= 0 ? row[quoteIdIndex] : '';
+      const quoteNoValue = quoteNoIndex >= 0 ? row[quoteNoIndex] : quoteIdValue;
+      const grandTotal = roundCurrency(parseQuotationNumericValue(grandTotalIndex >= 0 ? row[grandTotalIndex] : 0));
+      return {
+        quoteId: String(quoteIdValue || '').trim(),
+        quoteNo: String(quoteNoValue || quoteIdValue || '').trim(),
+        customerId: String(customerIdIndex >= 0 ? row[customerIdIndex] || '' : '').trim(),
+        customerName: String(customerNameIndex >= 0 ? row[customerNameIndex] || '' : '').trim(),
+        subtotal: roundCurrency(parseQuotationNumericValue(subtotalIndex >= 0 ? row[subtotalIndex] : 0)),
+        vat: roundCurrency(parseQuotationNumericValue(vatIndex >= 0 ? row[vatIndex] : 0)),
+        shipping: roundCurrency(parseQuotationNumericValue(shippingIndex >= 0 ? row[shippingIndex] : 0)),
+        specialDiscount: roundCurrency(parseQuotationNumericValue(specialDiscountIndex >= 0 ? row[specialDiscountIndex] : 0)),
+        grandTotal: grandTotal,
+        total: grandTotal,
+        status: String(statusIndex >= 0 ? row[statusIndex] || '' : '').trim(),
+        createdAt: String(createdAtIndex >= 0 ? row[createdAtIndex] || '' : '').trim(),
+        updatedAt: String(updatedAtIndex >= 0 ? row[updatedAtIndex] || '' : '').trim()
+      };
     });
+    setServerCache(historyCacheKey, matches, 120);
+    endPerformanceTimer(timer, 'cache=miss count=' + matches.length);
     return success(matches);
   } catch (error) {
+    endPerformanceTimer(timer, 'error=true');
     logError('getQuotationHistory', error);
     return fail(error && error.message ? error.message : 'Failed to load quotation history');
   }
@@ -777,15 +875,16 @@ function getQuotationRow(quoteId) {
     if (!idCheck.ok) {
       return idCheck;
     }
-    ensureQuotationSheets();
-    const historyResult = getSheetData(QUOTE_HISTORY_SHEET);
-    if (!historyResult.ok) {
-      return historyResult;
+    const sheet = getSheet(QUOTE_HISTORY_SHEET);
+    if (!sheet || sheet.getLastRow() < 2) {
+      return notFound('Quotation not found');
     }
-    const quotes = Array.isArray(historyResult.data) ? historyResult.data : [];
-    const match = quotes.find(function (item) {
-      return normalizeString(item.quoteId) === normalizeString(quoteId) || normalizeString(item.quoteNo) === normalizeString(quoteId);
-    });
+    const headers = getQuotationSheetHeaders(sheet);
+    const quoteIdIndex = headers.indexOf('quoteId');
+    const quoteNoIndex = headers.indexOf('quoteNo');
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), headers.length)).getDisplayValues();
+    const match = findQuotationRecordInValues(values, headers, quoteIdIndex, quoteId)
+      || findQuotationRecordInValues(values, headers, quoteNoIndex, quoteId);
     if (!match) {
       return notFound('Quotation not found');
     }
@@ -796,20 +895,78 @@ function getQuotationRow(quoteId) {
   }
 }
 
+function findQuotationRecordInValues(values, headers, columnIndex, value) {
+  if (columnIndex < 0) {
+    return null;
+  }
+  const normalizedValue = normalizeString(value);
+  const rows = Array.isArray(values) ? values : [];
+  for (var i = 0; i < rows.length; i++) {
+    if (normalizeString(rows[i][columnIndex]) === normalizedValue) {
+      const record = {};
+      headers.forEach(function (header, index) {
+        if (header) {
+          record[header] = rows[i][index] || '';
+        }
+      });
+      return record;
+    }
+  }
+  return null;
+}
+
+function quotationRowToObject(headers, rowValues) {
+  const record = {};
+  headers.forEach(function (header, index) {
+    if (header) {
+      record[header] = rowValues[index] || '';
+    }
+  });
+  return record;
+}
+
+function findQuotationRecordInSheet(sheet, headers, columnIndex, value) {
+  if (columnIndex < 0) {
+    return null;
+  }
+  const finder = sheet.getRange(2, columnIndex + 1, sheet.getLastRow() - 1, 1)
+    .createTextFinder(String(value))
+    .matchEntireCell(true);
+  const range = finder.findNext();
+  if (!range) {
+    return null;
+  }
+  const rowValues = sheet.getRange(range.getRow(), 1, 1, headers.length).getDisplayValues()[0] || [];
+  const record = {};
+  headers.forEach(function (header, index) {
+    if (header) {
+      record[header] = rowValues[index] || '';
+    }
+  });
+  return record;
+}
+
 function getQuoteLines(quoteId) {
   try {
     const idCheck = requireValue(quoteId, 'quoteId');
     if (!idCheck.ok) {
       return idCheck;
     }
-    ensureQuotationSheets();
-    const result = getSheetData(QUOTE_LINES_SHEET);
-    if (!result.ok) {
-      return result;
+    const sheet = getSheet(QUOTE_LINES_SHEET);
+    if (!sheet || sheet.getLastRow() < 2) {
+      return success([]);
     }
-    const lines = Array.isArray(result.data) ? result.data : [];
-    const matches = lines.filter(function (item) {
-      return normalizeString(item.quoteId) === normalizeString(quoteId);
+    const headers = getQuotationSheetHeaders(sheet);
+    const quoteIdIndex = headers.indexOf('quoteId');
+    if (quoteIdIndex < 0) {
+      return fail('quoteId column not found');
+    }
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), headers.length)).getDisplayValues();
+    const normalizedQuoteId = normalizeString(quoteId);
+    const matches = values.filter(function (row) {
+      return normalizeString(row[quoteIdIndex]) === normalizedQuoteId;
+    }).map(function (rowValues) {
+      return quotationRowToObject(headers, rowValues);
     });
     return success(matches);
   } catch (error) {
@@ -845,13 +1002,12 @@ function recalcQuotationLine(line, customerId) {
     if (!productId || quantity <= 0) {
       return Object.assign({}, line, { qty: quantity, netPrice: 0, lineTotal: 0 });
     }
-    const priceResult = calculateListPrice(productId);
     const productResult = getProduct(productId);
     var product = {};
     if (productResult.ok) {
       product = productResult.data || {};
     }
-    const listPrice = priceResult.ok ? roundCurrency(parseNumericValue(priceResult.data && priceResult.data.listPrice)) : roundCurrency(parseNumericValue(line.listPrice || 0));
+    const listPrice = roundCurrency(parseNumericValue(product.listPrice || product.price || line.listPrice || 0));
     const discountResult = getDiscount(customerId, getProductGroupCode(product));
     const discountPercent = discountResult.ok ? roundCurrency(parseNumericValue(discountResult.data && discountResult.data.discountPercent)) : roundCurrency(parseNumericValue(line.discountPercent || 0));
     const netPrice = roundCurrency(listPrice * (1 - discountPercent / 100));

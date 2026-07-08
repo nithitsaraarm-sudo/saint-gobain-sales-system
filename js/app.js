@@ -1,4 +1,8 @@
 let DB=normalizeDb(), USER=null, CART=[], selectedCustomerId='';
+let bootstrapLoaded=false, bootstrapPromise=null;
+let quoteHistoryLoaded=false, quoteHistoryPromise=null;
+let customersLoaded=false, productsLoaded=false, customersPromise=null, productsPromise=null;
+const LIST_RENDER_LIMIT=50, QUOTE_PICKER_LIMIT=30, SEARCH_DEBOUNCE_MS=300;
 const $=id=>document.getElementById(id); const money=n=>Number(n||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
 function parseClientNumber(value){const n=Number(String(value||'').replace(/,/g,'')); return Number.isFinite(n)?n:0}
 function normalizeSearchText(value){return String(value??'').toLowerCase().trim().replace(/[\s\-_\/.,()]+/g,'')}
@@ -11,27 +15,65 @@ function smartMatch(record, keyword, fields){
   const combined=normalizeSearchText(fields.map(field=>record&&record[field]).join(' '));
   return words.every(word=>values.some(value=>value.includes(word))||combined.includes(word));
 }
+
+function debounce(fn, delay){
+  let timer=null;
+  return function(){
+    const context=this,args=arguments;
+    window.clearTimeout(timer);
+    timer=window.setTimeout(function(){fn.apply(context,args)},delay||SEARCH_DEBOUNCE_MS);
+  };
+}
+
+function limitList(items, limit){
+  const list=Array.isArray(items)?items:[];
+  return {items:list.slice(0,limit),limited:list.length>limit,total:list.length};
+}
+
+function renderLimitNotice(limited, limit){
+  return limited?`<div class="list-limit">แสดง ${limit} รายการแรก กรุณาค้นหาเพิ่มเติม</div>`:'';
+}
+
+function setupDebouncedSearchInputs(){
+  const bind=(id,fn)=>{
+    const el=$(id);
+    if(el)el.oninput=debounce(fn,SEARCH_DEBOUNCE_MS);
+  };
+  bind('searchProducts',renderProducts);
+  bind('customerSearch',renderCustomers);
+  bind('productSearch',function(){ if(typeof renderProductPicker==='function')renderProductPicker(); });
+  bind('quoteCustomerSearch',function(){ renderQuoteCustomerPicker(true); });
+}
 window.addEventListener('load',()=>{
   setupQuoteSearchEnhancements();
+  setupDebouncedSearchInputs();
   const u=localStorage.getItem('currentUser');
   if(u){
     try {
       USER=JSON.parse(u);
+      hydrateBootstrapFromCache();
       showApp();
+      loadData({silent:true});
     } catch (e) {
       localStorage.removeItem('currentUser');
     }
   }
-  loadData();
 });
 
 function normalizeDb(data){
   const source=data&&typeof data==='object'?data:{};
+  var existing={};
+  try {
+    existing=DB||{};
+  } catch (error) {
+    existing={};
+  }
   return {
     ...source,
     settings:source.settings&&typeof source.settings==='object'?source.settings:{},
-    customers:Array.isArray(source.customers)?source.customers.map(normalizeCustomer):[],
-    products:Array.isArray(source.products)?source.products.map(normalizeProduct):[],
+    counts:source.counts&&typeof source.counts==='object'?source.counts:(existing.counts&&typeof existing.counts==='object'?existing.counts:{}),
+    customers:Array.isArray(source.customers)?source.customers.map(normalizeCustomer):(Array.isArray(existing.customers)?existing.customers:[]),
+    products:Array.isArray(source.products)?source.products.map(normalizeProduct):(Array.isArray(existing.products)?existing.products:[]),
     promotions:Array.isArray(source.promotions)?source.promotions:[],
     quotes:Array.isArray(source.quotes)?source.quotes:[]
   };
@@ -98,26 +140,65 @@ function showApp(){
   renderAll();
 }
 
-async function loadData(){
-  try {
-    let r = await callApi('bootstrap', {});
-    if (!r.ok) {
-      toast('โหลดข้อมูลไม่สำเร็จ: ' + r.message);
-      return;
-    }
-    DB = normalizeDb(r.data);
-    renderAll();
-  } catch (e) {
-    toast('โหลดข้อมูลไม่สำเร็จ: ' + (e && e.message ? e.message : e));
+function hydrateBootstrapFromCache(){
+  if(typeof getCache!=='function'){
+    return false;
   }
+  const cachedBootstrap=getCache('sg_bootstrap_cache');
+  if(!cachedBootstrap){
+    return false;
+  }
+  DB=normalizeDb(cachedBootstrap);
+  bootstrapLoaded=true;
+  return true;
+}
+
+async function loadData(options){
+  const force=!!(options&&options.force);
+  const silent=!!(options&&options.silent);
+  if(bootstrapLoaded&&!force){
+    return {ok:true,data:DB,cached:true};
+  }
+  if(bootstrapPromise&&!force){
+    return bootstrapPromise;
+  }
+  if(!force&&typeof getCache==='function'){
+    if(hydrateBootstrapFromCache()){
+      renderAll();
+      return {ok:true,data:DB,cached:true};
+    }
+  }
+  bootstrapPromise=(async()=>{
+    try {
+      if(!silent)toast('กำลังโหลดข้อมูล...');
+      let r = await callApi('bootstrap', force ? { force: true } : {});
+      if (!r.ok) {
+        toast('โหลดข้อมูลไม่สำเร็จ: ' + r.message);
+        return r;
+      }
+      DB = normalizeDb(r.data);
+      if(typeof setCache==='function'){
+        setCache('sg_bootstrap_cache', r.data || {}, 15);
+      }
+      bootstrapLoaded=true;
+      renderAll();
+      return r;
+    } catch (e) {
+      toast('โหลดข้อมูลไม่สำเร็จ: ' + (e && e.message ? e.message : e));
+      return {ok:false,message:e&&e.message?e.message:String(e)};
+    } finally {
+      bootstrapPromise=null;
+    }
+  })();
+  return bootstrapPromise;
 }
 function toggleMenu(open){document.getElementById('sidebar').classList.toggle('open',open); document.getElementById('overlay').classList.toggle('show',open)}
-function go(page,btn){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active')); document.getElementById('page-'+page).classList.add('active'); document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('active')); if(btn)btn.classList.add('active'); toggleMenu(false); window.scrollTo({top:0,behavior:'smooth'});}
-function renderAll(){renderBrand();renderProfile();renderHome();renderCustomers();renderProducts();renderPromos();renderQuote();renderHistory();renderSettings();}
+function go(page,btn){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active')); document.getElementById('page-'+page).classList.add('active'); document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('active')); if(btn)btn.classList.add('active'); toggleMenu(false); window.scrollTo({top:0,behavior:'smooth'}); ensurePageData(page); if(page==='quotes')ensureQuotationHistoryLoaded();}
+function renderAll(){renderBrand();renderProfile();renderHome();renderPromos();renderSettings();}
 function renderBrand(){let s=DB.settings||{}; document.getElementById('brandCompany').textContent=s.companyName||'SAINT-GOBAIN'; document.getElementById('brandApp').textContent=s.appName||'SALES SYSTEM'; document.title=(s.companyName||'Saint-Gobain')+' Sales System';}
 function greeting(){let h=new Date().getHours(),s=DB.settings||{}; if(h<12)return s.greetingMorning||'สวัสดีตอนเช้า'; if(h<17)return s.greetingAfternoon||'สวัสดีตอนบ่าย'; if(h<21)return s.greetingEvening||'สวัสดีตอนเย็น'; return s.greetingNight||'สวัสดีตอนดึก';}
 function renderProfile(){if(!USER)return; document.getElementById('sideName').textContent=USER.displayName||USER.username; document.getElementById('sidePosition').textContent=USER.position||'Sales Executive'; document.getElementById('sideAvatar').innerHTML=USER.photoUrl?`<img src="${USER.photoUrl}">`:'👩🏻';}
-function renderHome(){let name=(USER?.displayName||'ก้อย').split(' ')[0]; document.getElementById('greetingText').textContent=`${greeting()}, ${name} 👋`; document.getElementById('welcomeText').textContent=DB.settings?.welcomeText||'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ'; document.getElementById('statQuotes').textContent=DB.quotes.length; document.getElementById('statSales').textContent=Number(DB.quotes.reduce((s,q)=>s+Number(q.total||0),0)).toLocaleString('th-TH'); document.getElementById('statCustomers').textContent=DB.customers.length; document.getElementById('statPending').textContent=DB.quotes.filter(q=>q.status==='รออนุมัติ').length; document.getElementById('latestCustomers').innerHTML=DB.customers.slice(0,4).map(c=>`<div class="row">🏪 <b>${c.customerName||'-'}</b><span style="margin-left:auto;color:var(--muted)">${c.province||''}</span></div>`).join(''); document.getElementById('activePromos').innerHTML=DB.promotions.slice(0,4).map(p=>`<div class="row"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${p.brand||'-'}</span><div><b>${p.productName||'-'}</b><br><small>${p.description||p.discountText||''}</small></div></div>`).join(''); document.getElementById('bestProducts').innerHTML=DB.products.slice(0,3).map((p,i)=>`<div><div class="product-img">${p.brand==='Weber'?'🟨':'🟦'}</div><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${i+1}</span><h3>${p.productName||'-'}</h3><p style="color:var(--muted)">${p.brand||''}</p></div>`).join(''); document.getElementById('rProducts').textContent=DB.products.length; document.getElementById('rCustomers').textContent=DB.customers.length; document.getElementById('rPromos').textContent=DB.promotions.length; document.getElementById('rQuotes').textContent=DB.quotes.length;}
+function renderHome(){let name=(USER?.displayName||'ก้อย').split(' ')[0];const customerCount=DB.customers.length||parseClientNumber(DB.counts?.customers);const productCount=DB.products.length||parseClientNumber(DB.counts?.products); document.getElementById('greetingText').textContent=`${greeting()}, ${name} 👋`; document.getElementById('welcomeText').textContent=DB.settings?.welcomeText||'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ'; document.getElementById('statQuotes').textContent=DB.quotes.length; document.getElementById('statSales').textContent=Number(DB.quotes.reduce((s,q)=>s+Number(q.total||0),0)).toLocaleString('th-TH'); document.getElementById('statCustomers').textContent=customerCount; document.getElementById('statPending').textContent=DB.quotes.filter(q=>q.status==='รออนุมัติ').length; document.getElementById('latestCustomers').innerHTML=DB.customers.slice(0,4).map(c=>`<div class="row">🏪 <b>${c.customerName||'-'}</b><span style="margin-left:auto;color:var(--muted)">${c.province||''}</span></div>`).join(''); document.getElementById('activePromos').innerHTML=DB.promotions.slice(0,4).map(p=>`<div class="row"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${p.brand||'-'}</span><div><b>${p.productName||'-'}</b><br><small>${p.description||p.discountText||''}</small></div></div>`).join(''); document.getElementById('bestProducts').innerHTML=DB.products.slice(0,3).map((p,i)=>`<div><div class="product-img">${p.brand==='Weber'?'🟨':'🟦'}</div><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${i+1}</span><h3>${p.productName||'-'}</h3><p style="color:var(--muted)">${p.brand||''}</p></div>`).join(''); document.getElementById('rProducts').textContent=productCount; document.getElementById('rCustomers').textContent=customerCount; document.getElementById('rPromos').textContent=DB.promotions.length; document.getElementById('rQuotes').textContent=DB.quotes.length;}
 function ensureCustomerCrmUi(){
   const page=document.getElementById('page-customers');
   const toolbar=page?.querySelector('.toolbar');
@@ -139,13 +220,121 @@ function ensureCustomerCrmUi(){
 }
 function customerSearchText(c){return [c.customerId,c.customerCode,c.customerName,c.province,c.customerType,c.phone,c.notes,c.address].join(' ').toLowerCase()}
 function renderCustomerSummary(customers){let counts={all:customers.length,gyro:0,weber:0,both:0}; customers.forEach(c=>{if(c.customerType==='Gyproc')counts.gyro++; if(c.customerType==='Weber')counts.weber++; if(c.customerType==='Gyproc/Weber')counts.both++;}); let el=$('customerSummary'); if(el)el.innerHTML=`<div class="crm-stat"><small>ร้านค้าทั้งหมด</small><b>${counts.all}</b></div><div class="crm-stat"><small>Gyproc</small><b>${counts.gyro}</b></div><div class="crm-stat"><small>Weber</small><b>${counts.weber}</b></div><div class="crm-stat"><small>Gyproc/Weber</small><b>${counts.both}</b></div>`}
-function renderCustomers(){ensureCustomerCrmUi();let q=$('customerSearch')?.value||'';let type=($('customerTypeFilter')?.value||'');let fields=['customerId','customerCode','customerName','province','customerType','phone','notes','address'];let customers=DB.customers.filter(c=>smartMatch(c,q,fields)&&(!type||c.customerType===type));renderCustomerSummary(DB.customers);let grid=$('customerGrid'); if(!grid)return; grid.innerHTML=customers.map(c=>`<div class="card"><h3>${c.customerName||'-'}</h3><p>รหัสร้านค้า: ${c.customerCode||c.customerId||c.id||'-'}</p><p>ประเภท: ${c.customerType||'-'}</p><p>จังหวัด: ${c.province||'-'}</p><p>โทร: ${c.phone||'-'}</p><p>ที่อยู่: ${c.address||'-'}</p><p>หมายเหตุ: ${c.notes||'-'}</p><button class="ghost" onclick="selectCustomer('${c.customerId}')">ออกใบเสนอราคา</button></div>`).join('')}
+function renderCustomers(){ensureCustomerCrmUi();let q=$('customerSearch')?.value||'';let type=($('customerTypeFilter')?.value||'');let fields=['customerId','customerCode','customerName','province','customerType','phone','notes','address'];let customers=DB.customers.filter(c=>smartMatch(c,q,fields)&&(!type||c.customerType===type));let limited=limitList(customers,LIST_RENDER_LIMIT);renderCustomerSummary(DB.customers);let grid=$('customerGrid'); if(!grid)return; grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(c=>`<div class="card"><h3>${c.customerName||'-'}</h3><p>รหัสร้านค้า: ${c.customerCode||c.customerId||c.id||'-'}</p><p>ประเภท: ${c.customerType||'-'}</p><p>จังหวัด: ${c.province||'-'}</p><p>โทร: ${c.phone||'-'}</p><p>ที่อยู่: ${c.address||'-'}</p><p>หมายเหตุ: ${c.notes||'-'}</p><button class="ghost" onclick="selectCustomer('${c.customerId}')">ออกใบเสนอราคา</button></div>`).join('')}
 function productSearchText(p){return [p.productId,p.sku,p.productName,p.description,p.brand,p.discountGroup,p.groupCode,p.unit,p.notes,p.promoText].join(' ').toLowerCase()}
 function getProductDiscount(customerId, product){
   const groupCode=String(product&&product.groupCode||'').trim();
-  return callApi('discount',{customerId:customerId,groupCode:groupCode});
+  const cacheKey=String(customerId||'').trim()+'|'+groupCode;
+  if(typeof getCache==='function'&&cacheKey!=='|'){
+    const cachedDiscounts=getCache('sg_discount_cache')||{};
+    if(cachedDiscounts[cacheKey]!==undefined){
+      return Promise.resolve({ok:true,data:{customerId:customerId,groupCode:groupCode,discountPercent:Number(cachedDiscounts[cacheKey]||0),source:'local_cache'}});
+    }
+  }
+  return callApi('discount',{customerId:customerId,groupCode:groupCode}).then(function(response){
+    if(response&&response.ok&&typeof getCache==='function'&&typeof setCache==='function'){
+      const cachedDiscounts=getCache('sg_discount_cache')||{};
+      cachedDiscounts[cacheKey]=Number(response.data&&response.data.discountPercent||0);
+      setCache('sg_discount_cache',cachedDiscounts,60);
+    }
+    return response;
+  });
 }
-function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; grid.innerHTML=DB.products.filter(p=>smartMatch(p,q,fields)).map(p=>`<div class="card"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${p.brand||'-'}</span><h3>${p.productName||'-'}</h3><p>รหัสสินค้า: ${p.sku||p.productId||p.id||'-'}</p><p>${p.unit||'-'}</p><b>${money(p.listPrice)}</b><br><button class="ghost" onclick='addCart(${JSON.stringify(p)})'>เพิ่มลงใบเสนอราคา</button></div>`).join('')}
+function setCustomersData(items){
+  DB.customers=Array.isArray(items)?items.map(normalizeCustomer):[];
+  customersLoaded=true;
+  if(typeof setCache==='function')setCache('sg_customers_cache',DB.customers,15);
+}
+function setProductsData(items){
+  DB.products=Array.isArray(items)?items.map(normalizeProduct):[];
+  productsLoaded=true;
+  if(typeof setCache==='function')setCache('sg_products_cache',DB.products,15);
+}
+function renderCustomerViews(){
+  renderHome();
+  renderCustomers();
+  syncQuoteCustomerSearch();
+  renderQuoteCustomerPicker(false);
+}
+function renderProductViews(){
+  renderHome();
+  renderProducts();
+  renderQuoteProductPicker();
+}
+async function loadCustomers(options){
+  const force=!!(options&&options.force);
+  const background=!!(options&&options.background);
+  if(customersLoaded&&!force)return {ok:true,data:DB.customers,cached:true};
+  if(customersPromise&&!force)return customersPromise;
+  if(!force&&typeof getCache==='function'){
+    const cached=getCache('sg_customers_cache');
+    if(Array.isArray(cached)){
+      setCustomersData(cached);
+      renderCustomerViews();
+      return {ok:true,data:DB.customers,cached:true};
+    }
+  }
+  customersPromise=(async()=>{
+    try{
+      if(!background)toast('กำลังโหลดข้อมูล...');
+      const response=await callApi('customers',{});
+      if(response&&response.ok){
+        setCustomersData(response.data||[]);
+        renderCustomerViews();
+      }
+      return response;
+    }catch(error){
+      console.error(error);
+      if(!background)toast('โหลดข้อมูลร้านค้าไม่สำเร็จ');
+      return {ok:false,message:String(error&&error.message?error.message:error)};
+    }finally{
+      customersPromise=null;
+    }
+  })();
+  return customersPromise;
+}
+async function loadProducts(options){
+  const force=!!(options&&options.force);
+  const background=!!(options&&options.background);
+  if(productsLoaded&&!force)return {ok:true,data:DB.products,cached:true};
+  if(productsPromise&&!force)return productsPromise;
+  if(!force&&typeof getCache==='function'){
+    const cached=getCache('sg_products_cache');
+    if(Array.isArray(cached)){
+      setProductsData(cached);
+      renderProductViews();
+      return {ok:true,data:DB.products,cached:true};
+    }
+  }
+  productsPromise=(async()=>{
+    try{
+      if(!background)toast('กำลังโหลดข้อมูล...');
+      const response=await callApi('products',{});
+      if(response&&response.ok){
+        setProductsData(response.data||[]);
+        renderProductViews();
+      }
+      return response;
+    }catch(error){
+      console.error(error);
+      if(!background)toast('โหลดข้อมูลสินค้าไม่สำเร็จ');
+      return {ok:false,message:String(error&&error.message?error.message:error)};
+    }finally{
+      productsPromise=null;
+    }
+  })();
+  return productsPromise;
+}
+function ensurePageData(page){
+  if(page==='customers'){renderCustomers();return loadCustomers();}
+  if(page==='products'){renderProducts();return loadProducts();}
+  if(page==='quote'){
+    renderQuote();
+    return Promise.resolve({ok:true});
+  }
+  return Promise.resolve({ok:true});
+}
+function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>`<div class="card"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${p.brand||'-'}</span><h3>${p.productName||'-'}</h3><p>รหัสสินค้า: ${p.sku||p.productId||p.id||'-'}</p><p>${p.unit||'-'}</p><b>${money(p.listPrice)}</b><br><button class="ghost" onclick='addCart(${JSON.stringify(p)})'>เพิ่มลงใบเสนอราคา</button></div>`).join('')}
 function setupQuoteSearchEnhancements(){
   const originalRenderQuote=window.renderQuote;
   const originalSelectCustomer=window.selectCustomer;
@@ -249,26 +438,61 @@ function formatDateTime(value){
 function renderHistory(){
   const history=$('quoteHistory');
   if(!history)return;
+  if(!quoteHistoryLoaded&&!(Array.isArray(DB.quotes)&&DB.quotes.length)){
+    history.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';
+    return;
+  }
   const keyword=$('quoteHistorySearch')?.value||'';
   const quotes=(Array.isArray(DB.quotes)?DB.quotes:[]).map(normalizeQuoteRecord).filter(q=>smartMatch(q,keyword,getQuoteSearchFields())).sort((a,b)=>new Date(b.createdAt||b.updatedAt||0)-new Date(a.createdAt||a.updatedAt||0));
   history.innerHTML=quotes.length?quotes.map(q=>`<div class="row quote-history-row"><div><b>${q.quoteNo||'-'}</b><br><small>${q.customerName||'-'} · ${q.customerId||'-'}</small></div><span class="pill ${q.status==='CANCELLED'?'yellow':'blue'}">${q.status||'-'}</span><span>${formatDateTime(q.createdAt)}</span><b style="margin-left:auto">${money(q.grandTotal||q.total)}</b><button class="tiny" onclick="openQuotationDetail('${q.quoteId}')">เปิดดู</button><button class="tiny" onclick="editQuotationFromHistory('${q.quoteId}')">แก้ไข</button></div>`).join(''):'<p style="color:var(--muted)">ยังไม่มีใบเสนอราคา</p>';
 }
-async function refreshQuotationHistory(){
+async function refreshQuotationHistory(options){
+  const force=!!(options&&options.force);
+  if(quoteHistoryPromise){
+    return quoteHistoryPromise;
+  }
+  if(!force&&typeof getCache==='function'){
+    const cachedHistory=getCache('sg_quote_history_cache');
+    if(Array.isArray(cachedHistory)){
+      DB.quotes=cachedHistory.map(normalizeQuoteRecord);
+      quoteHistoryLoaded=true;
+      renderHistory();
+      renderHome();
+      return Promise.resolve({ok:true,data:DB.quotes,cached:true});
+    }
+  }
+  quoteHistoryPromise=(async()=>{
   try{
-    const response=await callApi('getQuotationHistory',{});
+    const history=$('quoteHistory');
+    if(history)history.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';
+    const response=await callApi('getQuotationHistory',{limit:50});
     if(!response.ok){
       toast(response.message||'โหลดประวัติใบเสนอราคาไม่สำเร็จ');
       return response;
     }
     DB.quotes=Array.isArray(response.data)?response.data.map(normalizeQuoteRecord):[];
+    quoteHistoryLoaded=true;
+    if(typeof setCache==='function')setCache('sg_quote_history_cache',DB.quotes,2);
     renderHistory();
     renderHome();
     return response;
   }catch(error){
     console.error(error);
     toast('โหลดประวัติใบเสนอราคาไม่สำเร็จ');
+  } finally {
+    quoteHistoryPromise=null;
   }
+  })();
+  return quoteHistoryPromise;
 }
+function ensureQuotationHistoryLoaded(){
+  if(quoteHistoryLoaded){
+    renderHistory();
+    return Promise.resolve({ok:true,data:DB.quotes,cached:true});
+  }
+  return refreshQuotationHistory();
+}
+function isQuotationHistoryLoaded(){return quoteHistoryLoaded;}
 function renderQuotationDetail(data){
   const box=$('quoteDetail');
   if(!box)return;
@@ -305,8 +529,9 @@ async function duplicateQuotationFromHistory(quoteId){
       return response;
     }
     toast('สร้างสำเนาใบเสนอราคาแล้ว');
-    await refreshQuotationHistory();
     const newQuoteId=response.data?.newQuoteId||response.data?.quoteId;
+    if(typeof clearCache==='function')clearCache('sg_quote_history_cache');
+    await refreshQuotationHistory({force:true});
     if(newQuoteId)await openQuotationDetail(newQuoteId);
     return response;
   }catch(error){
@@ -333,8 +558,12 @@ async function cancelQuotationFromHistory(quoteId){
       return response;
     }
     toast('ยกเลิกใบเสนอราคาแล้ว');
-    await refreshQuotationHistory();
+    if(typeof clearQuotationCache==='function'){
+      clearQuotationCache(quoteId);
+    }
     await openQuotationDetail(quoteId);
+    if(typeof clearCache==='function')clearCache('sg_quote_history_cache');
+    await refreshQuotationHistory({force:true});
     return response;
   }catch(error){
     console.error(error);
@@ -404,7 +633,58 @@ async function saveModal(type){
   });
   closeModal();
   toast('บันทึกแล้ว');
-  await loadData();
+  if(type==='customer'){
+    if(typeof clearCache==='function')clearCache('sg_customers_cache');
+    customersLoaded=false;
+    await loadCustomers({force:true});
+    return;
+  }
+  if(type==='product'){
+    if(typeof clearCache==='function')clearCache('sg_products_cache');
+    productsLoaded=false;
+    await loadProducts({force:true});
+    return;
+  }
+  await loadData({force:true});
 }
 function toast(msg){const el=document.getElementById('toast'); if(!el)return; el.textContent=msg; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),2600)}
-window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.loadData=loadData; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.openQuotationDetail=openQuotationDetail; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.toast=toast;
+
+function renderCustomers(){ensureCustomerCrmUi();let q=$('customerSearch')?.value||'';let type=($('customerTypeFilter')?.value||'');let fields=['customerId','customerCode','customerName','province','customerType','phone','notes','address'];let customers=DB.customers.filter(c=>smartMatch(c,q,fields)&&(!type||c.customerType===type));let limited=limitList(customers,LIST_RENDER_LIMIT);renderCustomerSummary(DB.customers);let grid=$('customerGrid'); if(!grid)return; if(!customersLoaded&&!DB.customers.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(c=>`<div class="card"><h3>${c.customerName||'-'}</h3><p>รหัสร้านค้า: ${c.customerCode||c.customerId||c.id||'-'}</p><p>ประเภท: ${c.customerType||'-'}</p><p>จังหวัด: ${c.province||'-'}</p><p>โทร: ${c.phone||'-'}</p><p>ที่อยู่: ${c.address||'-'}</p><p>หมายเหตุ: ${c.notes||'-'}</p><button class="ghost" onclick="selectCustomer('${c.customerId}')">ออกใบเสนอราคา</button></div>`).join('')}
+
+function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); if(!productsLoaded&&!DB.products.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>`<div class="card"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${p.brand||'-'}</span><h3>${p.productName||'-'}</h3><p>รหัสสินค้า: ${p.sku||p.productId||p.id||'-'}</p><p>${p.unit||'-'}</p><b>${money(p.listPrice)}</b><br><button class="ghost" onclick='addCart(${JSON.stringify(p)})'>เพิ่มลงใบเสนอราคา</button></div>`).join('')}
+
+function renderQuoteCustomerPicker(forceShow){
+  const picker=$('quoteCustomerPicker'),input=$('quoteCustomerSearch');
+  if(!picker||!input)return;
+  const q=input.value||'';
+  const shouldShow=forceShow||document.activeElement===input;
+  if(!shouldShow){picker.classList.remove('show');picker.innerHTML='';return;}
+  if(!customersLoaded&&!DB.customers.length){
+    picker.classList.add('show');
+    picker.innerHTML='<div class="quote-empty">กำลังโหลดข้อมูล...</div>';
+    loadCustomers();
+    return;
+  }
+  const matchesAll=DB.customers.filter(c=>smartMatch(c,q,getQuoteCustomerFields()));
+  const limited=limitList(matchesAll,QUOTE_PICKER_LIMIT);
+  picker.classList.add('show');
+  picker.innerHTML=limited.items.length?renderLimitNotice(limited.limited,QUOTE_PICKER_LIMIT)+limited.items.map(c=>`<button type="button" class="quote-option" onclick="chooseQuoteCustomer('${c.customerId}')"><b>${c.customerName||'-'}</b><small>รหัสร้านค้า: ${c.customerCode||c.customerId||'-'} · ${c.province||'-'} · ${c.customerType||'-'}</small></button>`).join(''):'<div class="quote-empty">ไม่พบรายการที่ค้นหา</div>';
+}
+
+function renderQuoteProductPicker(){
+  const q=$('productSearch')?.value||'';
+  const picker=$('productPicker');
+  if(!picker)return;
+  if(!productsLoaded&&!DB.products.length){
+    picker.innerHTML='<div class="row quote-empty">กำลังโหลดข้อมูล...</div>';
+    if(document.activeElement===$('productSearch')){
+      loadProducts();
+    }
+    return;
+  }
+  const matchesAll=DB.products.filter(p=>smartMatch(p,q,getQuoteProductFields()));
+  const limited=limitList(matchesAll,QUOTE_PICKER_LIMIT);
+  picker.innerHTML=limited.items.length?renderLimitNotice(limited.limited,QUOTE_PICKER_LIMIT)+limited.items.map(p=>`<div class="row"><div class="product-img">${p.brand==='Weber'?'🟨':'🟦'}</div><div><b>${p.productName||'-'}</b><br><small>${p.brand||'-'} · รหัสสินค้า: ${p.sku||p.productId||p.id||'-'} · ${p.unit||'-'} · ${money(p.listPrice)}</small></div><button class="tiny" style="margin-left:auto" onclick='addCart(${JSON.stringify(p)})'>+ เพิ่ม</button></div>`).join(''):'<div class="row quote-empty">ไม่พบรายการที่ค้นหา</div>';
+}
+
+window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.toast=toast;
