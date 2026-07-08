@@ -718,6 +718,7 @@ function getQuotationHistory(payload) {
     const status = normalizeString(filter.status || '');
     const dateFrom = parseQuotationDate(filter.dateFrom);
     const dateTo = parseQuotationDate(filter.dateTo);
+    const limit = Math.max(1, Math.min(parseInt(filter.limit || 50, 10) || 50, 200));
     ensureQuotationSheets();
     const result = getSheetData(QUOTE_HISTORY_SHEET);
     if (!result.ok) {
@@ -751,7 +752,7 @@ function getQuotationHistory(payload) {
       return true;
     }).sort(function (a, b) {
       return new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0);
-    }).map(function (item) {
+    }).slice(0, limit).map(function (item) {
       return Object.assign({}, item, {
         quoteNo: String(item.quoteNo || item.quoteId || '').trim(),
         customerName: String(item.customerName || '').trim(),
@@ -778,14 +779,15 @@ function getQuotationRow(quoteId) {
       return idCheck;
     }
     ensureQuotationSheets();
-    const historyResult = getSheetData(QUOTE_HISTORY_SHEET);
-    if (!historyResult.ok) {
-      return historyResult;
+    const sheet = ensureSheet(QUOTE_HISTORY_SHEET, getQuoteHistoryHeaders());
+    if (!sheet || sheet.getLastRow() < 2) {
+      return notFound('Quotation not found');
     }
-    const quotes = Array.isArray(historyResult.data) ? historyResult.data : [];
-    const match = quotes.find(function (item) {
-      return normalizeString(item.quoteId) === normalizeString(quoteId) || normalizeString(item.quoteNo) === normalizeString(quoteId);
-    });
+    const headers = getQuotationSheetHeaders(sheet);
+    const quoteIdIndex = headers.indexOf('quoteId');
+    const quoteNoIndex = headers.indexOf('quoteNo');
+    const match = findQuotationRecordInSheet(sheet, headers, quoteIdIndex, quoteId)
+      || findQuotationRecordInSheet(sheet, headers, quoteNoIndex, quoteId);
     if (!match) {
       return notFound('Quotation not found');
     }
@@ -796,6 +798,27 @@ function getQuotationRow(quoteId) {
   }
 }
 
+function findQuotationRecordInSheet(sheet, headers, columnIndex, value) {
+  if (columnIndex < 0) {
+    return null;
+  }
+  const finder = sheet.getRange(2, columnIndex + 1, sheet.getLastRow() - 1, 1)
+    .createTextFinder(String(value))
+    .matchEntireCell(true);
+  const range = finder.findNext();
+  if (!range) {
+    return null;
+  }
+  const rowValues = sheet.getRange(range.getRow(), 1, 1, headers.length).getDisplayValues()[0] || [];
+  const record = {};
+  headers.forEach(function (header, index) {
+    if (header) {
+      record[header] = rowValues[index] || '';
+    }
+  });
+  return record;
+}
+
 function getQuoteLines(quoteId) {
   try {
     const idCheck = requireValue(quoteId, 'quoteId');
@@ -803,13 +826,28 @@ function getQuoteLines(quoteId) {
       return idCheck;
     }
     ensureQuotationSheets();
-    const result = getSheetData(QUOTE_LINES_SHEET);
-    if (!result.ok) {
-      return result;
+    const sheet = ensureSheet(QUOTE_LINES_SHEET, getQuoteLineHeaders());
+    if (!sheet || sheet.getLastRow() < 2) {
+      return success([]);
     }
-    const lines = Array.isArray(result.data) ? result.data : [];
-    const matches = lines.filter(function (item) {
-      return normalizeString(item.quoteId) === normalizeString(quoteId);
+    const headers = getQuotationSheetHeaders(sheet);
+    const quoteIdIndex = headers.indexOf('quoteId');
+    if (quoteIdIndex < 0) {
+      return fail('quoteId column not found');
+    }
+    const finder = sheet.getRange(2, quoteIdIndex + 1, sheet.getLastRow() - 1, 1)
+      .createTextFinder(String(quoteId))
+      .matchEntireCell(true);
+    const matchesFound = finder.findAll() || [];
+    const matches = matchesFound.map(function (range) {
+      const rowValues = sheet.getRange(range.getRow(), 1, 1, headers.length).getDisplayValues()[0] || [];
+      const record = {};
+      headers.forEach(function (header, index) {
+        if (header) {
+          record[header] = rowValues[index] || '';
+        }
+      });
+      return record;
     });
     return success(matches);
   } catch (error) {

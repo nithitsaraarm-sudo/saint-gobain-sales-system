@@ -2,6 +2,8 @@ const APP_ENV = String(window.APP_ENV || 'production').trim().toLowerCase();
 const API_MOCK_MODE = APP_ENV === 'development';
 const GAS_WEB_APP_URL =
 'https://script.google.com/macros/s/AKfycbyuhRP2aIYI11vzMsIzGr2ncuhrflHb1u9flm_OwjpjZOJOTXvAg1HQu4iq62ZwjJn3RQ/exec';
+let bootstrapApiPromise = null;
+let bootstrapApiCache = null;
 
 function callApi(action, payload) {
   const normalizedAction = String(action || '').trim();
@@ -9,6 +11,30 @@ function callApi(action, payload) {
 
   if (API_MOCK_MODE) {
     return Promise.resolve(mockApi(normalizedAction, body));
+  }
+
+  if (normalizedAction === 'bootstrap') {
+    if (body.force) {
+      bootstrapApiCache = null;
+      bootstrapApiPromise = null;
+    }
+    if (bootstrapApiCache) {
+      return Promise.resolve(bootstrapApiCache);
+    }
+    if (bootstrapApiPromise) {
+      return bootstrapApiPromise;
+    }
+    bootstrapApiPromise = fetchApi(normalizedAction, body).catch(function () {
+      return jsonpApi(normalizedAction, body);
+    }).then(function (response) {
+      if (response && response.ok) {
+        bootstrapApiCache = response;
+      }
+      return response;
+    }).finally(function () {
+      bootstrapApiPromise = null;
+    });
+    return bootstrapApiPromise;
   }
 
   return fetchApi(normalizedAction, body).catch(function () {

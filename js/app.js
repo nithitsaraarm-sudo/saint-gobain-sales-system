@@ -1,4 +1,6 @@
 let DB=normalizeDb(), USER=null, CART=[], selectedCustomerId='';
+let bootstrapLoaded=false, bootstrapPromise=null;
+const LIST_RENDER_LIMIT=50, QUOTE_PICKER_LIMIT=30, SEARCH_DEBOUNCE_MS=300;
 const $=id=>document.getElementById(id); const money=n=>Number(n||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
 function parseClientNumber(value){const n=Number(String(value||'').replace(/,/g,'')); return Number.isFinite(n)?n:0}
 function normalizeSearchText(value){return String(value??'').toLowerCase().trim().replace(/[\s\-_\/.,()]+/g,'')}
@@ -11,8 +13,38 @@ function smartMatch(record, keyword, fields){
   const combined=normalizeSearchText(fields.map(field=>record&&record[field]).join(' '));
   return words.every(word=>values.some(value=>value.includes(word))||combined.includes(word));
 }
+
+function debounce(fn, delay){
+  let timer=null;
+  return function(){
+    const context=this,args=arguments;
+    window.clearTimeout(timer);
+    timer=window.setTimeout(function(){fn.apply(context,args)},delay||SEARCH_DEBOUNCE_MS);
+  };
+}
+
+function limitList(items, limit){
+  const list=Array.isArray(items)?items:[];
+  return {items:list.slice(0,limit),limited:list.length>limit,total:list.length};
+}
+
+function renderLimitNotice(limited, limit){
+  return limited?`<div class="list-limit">แสดง ${limit} รายการแรก กรุณาค้นหาเพิ่มเติม</div>`:'';
+}
+
+function setupDebouncedSearchInputs(){
+  const bind=(id,fn)=>{
+    const el=$(id);
+    if(el)el.oninput=debounce(fn,SEARCH_DEBOUNCE_MS);
+  };
+  bind('searchProducts',renderProducts);
+  bind('customerSearch',renderCustomers);
+  bind('productSearch',function(){ if(typeof renderProductPicker==='function')renderProductPicker(); });
+  bind('quoteCustomerSearch',function(){ renderQuoteCustomerPicker(true); });
+}
 window.addEventListener('load',()=>{
   setupQuoteSearchEnhancements();
+  setupDebouncedSearchInputs();
   const u=localStorage.getItem('currentUser');
   if(u){
     try {
@@ -98,18 +130,34 @@ function showApp(){
   renderAll();
 }
 
-async function loadData(){
-  try {
-    let r = await callApi('bootstrap', {});
-    if (!r.ok) {
-      toast('โหลดข้อมูลไม่สำเร็จ: ' + r.message);
-      return;
-    }
-    DB = normalizeDb(r.data);
-    renderAll();
-  } catch (e) {
-    toast('โหลดข้อมูลไม่สำเร็จ: ' + (e && e.message ? e.message : e));
+async function loadData(options){
+  const force=!!(options&&options.force);
+  if(bootstrapLoaded&&!force){
+    return {ok:true,data:DB,cached:true};
   }
+  if(bootstrapPromise&&!force){
+    return bootstrapPromise;
+  }
+  bootstrapPromise=(async()=>{
+    try {
+      toast('กำลังโหลด...');
+      let r = await callApi('bootstrap', force ? { force: true } : {});
+      if (!r.ok) {
+        toast('โหลดข้อมูลไม่สำเร็จ: ' + r.message);
+        return r;
+      }
+      DB = normalizeDb(r.data);
+      bootstrapLoaded=true;
+      renderAll();
+      return r;
+    } catch (e) {
+      toast('โหลดข้อมูลไม่สำเร็จ: ' + (e && e.message ? e.message : e));
+      return {ok:false,message:e&&e.message?e.message:String(e)};
+    } finally {
+      bootstrapPromise=null;
+    }
+  })();
+  return bootstrapPromise;
 }
 function toggleMenu(open){document.getElementById('sidebar').classList.toggle('open',open); document.getElementById('overlay').classList.toggle('show',open)}
 function go(page,btn){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active')); document.getElementById('page-'+page).classList.add('active'); document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('active')); if(btn)btn.classList.add('active'); toggleMenu(false); window.scrollTo({top:0,behavior:'smooth'});}
@@ -139,13 +187,13 @@ function ensureCustomerCrmUi(){
 }
 function customerSearchText(c){return [c.customerId,c.customerCode,c.customerName,c.province,c.customerType,c.phone,c.notes,c.address].join(' ').toLowerCase()}
 function renderCustomerSummary(customers){let counts={all:customers.length,gyro:0,weber:0,both:0}; customers.forEach(c=>{if(c.customerType==='Gyproc')counts.gyro++; if(c.customerType==='Weber')counts.weber++; if(c.customerType==='Gyproc/Weber')counts.both++;}); let el=$('customerSummary'); if(el)el.innerHTML=`<div class="crm-stat"><small>ร้านค้าทั้งหมด</small><b>${counts.all}</b></div><div class="crm-stat"><small>Gyproc</small><b>${counts.gyro}</b></div><div class="crm-stat"><small>Weber</small><b>${counts.weber}</b></div><div class="crm-stat"><small>Gyproc/Weber</small><b>${counts.both}</b></div>`}
-function renderCustomers(){ensureCustomerCrmUi();let q=$('customerSearch')?.value||'';let type=($('customerTypeFilter')?.value||'');let fields=['customerId','customerCode','customerName','province','customerType','phone','notes','address'];let customers=DB.customers.filter(c=>smartMatch(c,q,fields)&&(!type||c.customerType===type));renderCustomerSummary(DB.customers);let grid=$('customerGrid'); if(!grid)return; grid.innerHTML=customers.map(c=>`<div class="card"><h3>${c.customerName||'-'}</h3><p>รหัสร้านค้า: ${c.customerCode||c.customerId||c.id||'-'}</p><p>ประเภท: ${c.customerType||'-'}</p><p>จังหวัด: ${c.province||'-'}</p><p>โทร: ${c.phone||'-'}</p><p>ที่อยู่: ${c.address||'-'}</p><p>หมายเหตุ: ${c.notes||'-'}</p><button class="ghost" onclick="selectCustomer('${c.customerId}')">ออกใบเสนอราคา</button></div>`).join('')}
+function renderCustomers(){ensureCustomerCrmUi();let q=$('customerSearch')?.value||'';let type=($('customerTypeFilter')?.value||'');let fields=['customerId','customerCode','customerName','province','customerType','phone','notes','address'];let customers=DB.customers.filter(c=>smartMatch(c,q,fields)&&(!type||c.customerType===type));let limited=limitList(customers,LIST_RENDER_LIMIT);renderCustomerSummary(DB.customers);let grid=$('customerGrid'); if(!grid)return; grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(c=>`<div class="card"><h3>${c.customerName||'-'}</h3><p>รหัสร้านค้า: ${c.customerCode||c.customerId||c.id||'-'}</p><p>ประเภท: ${c.customerType||'-'}</p><p>จังหวัด: ${c.province||'-'}</p><p>โทร: ${c.phone||'-'}</p><p>ที่อยู่: ${c.address||'-'}</p><p>หมายเหตุ: ${c.notes||'-'}</p><button class="ghost" onclick="selectCustomer('${c.customerId}')">ออกใบเสนอราคา</button></div>`).join('')}
 function productSearchText(p){return [p.productId,p.sku,p.productName,p.description,p.brand,p.discountGroup,p.groupCode,p.unit,p.notes,p.promoText].join(' ').toLowerCase()}
 function getProductDiscount(customerId, product){
   const groupCode=String(product&&product.groupCode||'').trim();
   return callApi('discount',{customerId:customerId,groupCode:groupCode});
 }
-function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; grid.innerHTML=DB.products.filter(p=>smartMatch(p,q,fields)).map(p=>`<div class="card"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${p.brand||'-'}</span><h3>${p.productName||'-'}</h3><p>รหัสสินค้า: ${p.sku||p.productId||p.id||'-'}</p><p>${p.unit||'-'}</p><b>${money(p.listPrice)}</b><br><button class="ghost" onclick='addCart(${JSON.stringify(p)})'>เพิ่มลงใบเสนอราคา</button></div>`).join('')}
+function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>`<div class="card"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${p.brand||'-'}</span><h3>${p.productName||'-'}</h3><p>รหัสสินค้า: ${p.sku||p.productId||p.id||'-'}</p><p>${p.unit||'-'}</p><b>${money(p.listPrice)}</b><br><button class="ghost" onclick='addCart(${JSON.stringify(p)})'>เพิ่มลงใบเสนอราคา</button></div>`).join('')}
 function setupQuoteSearchEnhancements(){
   const originalRenderQuote=window.renderQuote;
   const originalSelectCustomer=window.selectCustomer;
@@ -404,7 +452,33 @@ async function saveModal(type){
   });
   closeModal();
   toast('บันทึกแล้ว');
-  await loadData();
+  await loadData({force:true});
 }
 function toast(msg){const el=document.getElementById('toast'); if(!el)return; el.textContent=msg; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),2600)}
+
+function renderCustomers(){ensureCustomerCrmUi();let q=$('customerSearch')?.value||'';let type=($('customerTypeFilter')?.value||'');let fields=['customerId','customerCode','customerName','province','customerType','phone','notes','address'];let customers=DB.customers.filter(c=>smartMatch(c,q,fields)&&(!type||c.customerType===type));let limited=limitList(customers,LIST_RENDER_LIMIT);renderCustomerSummary(DB.customers);let grid=$('customerGrid'); if(!grid)return; grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(c=>`<div class="card"><h3>${c.customerName||'-'}</h3><p>รหัสร้านค้า: ${c.customerCode||c.customerId||c.id||'-'}</p><p>ประเภท: ${c.customerType||'-'}</p><p>จังหวัด: ${c.province||'-'}</p><p>โทร: ${c.phone||'-'}</p><p>ที่อยู่: ${c.address||'-'}</p><p>หมายเหตุ: ${c.notes||'-'}</p><button class="ghost" onclick="selectCustomer('${c.customerId}')">ออกใบเสนอราคา</button></div>`).join('')}
+
+function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>`<div class="card"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${p.brand||'-'}</span><h3>${p.productName||'-'}</h3><p>รหัสสินค้า: ${p.sku||p.productId||p.id||'-'}</p><p>${p.unit||'-'}</p><b>${money(p.listPrice)}</b><br><button class="ghost" onclick='addCart(${JSON.stringify(p)})'>เพิ่มลงใบเสนอราคา</button></div>`).join('')}
+
+function renderQuoteCustomerPicker(forceShow){
+  const picker=$('quoteCustomerPicker'),input=$('quoteCustomerSearch');
+  if(!picker||!input)return;
+  const q=input.value||'';
+  const shouldShow=forceShow||document.activeElement===input;
+  if(!shouldShow){picker.classList.remove('show');picker.innerHTML='';return;}
+  const matchesAll=DB.customers.filter(c=>smartMatch(c,q,getQuoteCustomerFields()));
+  const limited=limitList(matchesAll,QUOTE_PICKER_LIMIT);
+  picker.classList.add('show');
+  picker.innerHTML=limited.items.length?renderLimitNotice(limited.limited,QUOTE_PICKER_LIMIT)+limited.items.map(c=>`<button type="button" class="quote-option" onclick="chooseQuoteCustomer('${c.customerId}')"><b>${c.customerName||'-'}</b><small>รหัสร้านค้า: ${c.customerCode||c.customerId||'-'} · ${c.province||'-'} · ${c.customerType||'-'}</small></button>`).join(''):'<div class="quote-empty">ไม่พบรายการที่ค้นหา</div>';
+}
+
+function renderQuoteProductPicker(){
+  const q=$('productSearch')?.value||'';
+  const picker=$('productPicker');
+  if(!picker)return;
+  const matchesAll=DB.products.filter(p=>smartMatch(p,q,getQuoteProductFields()));
+  const limited=limitList(matchesAll,QUOTE_PICKER_LIMIT);
+  picker.innerHTML=limited.items.length?renderLimitNotice(limited.limited,QUOTE_PICKER_LIMIT)+limited.items.map(p=>`<div class="row"><div class="product-img">${p.brand==='Weber'?'🟨':'🟦'}</div><div><b>${p.productName||'-'}</b><br><small>${p.brand||'-'} · รหัสสินค้า: ${p.sku||p.productId||p.id||'-'} · ${p.unit||'-'} · ${money(p.listPrice)}</small></div><button class="tiny" style="margin-left:auto" onclick='addCart(${JSON.stringify(p)})'>+ เพิ่ม</button></div>`).join(''):'<div class="row quote-empty">ไม่พบรายการที่ค้นหา</div>';
+}
+
 window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.loadData=loadData; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.openQuotationDetail=openQuotationDetail; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.toast=toast;

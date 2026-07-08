@@ -1,5 +1,6 @@
 let CURRENT_QUOTE = { quoteId: '', customerId: '', customerName: '', shipping: 0, specialDiscount: 0, status: 'DRAFT' };
 const QUOTE_LINE_PREFIX = 'LINE_';
+const DISCOUNT_CACHE = {};
 
 function renderQuote() {
   const customerSelect = document.getElementById('quoteCustomer');
@@ -89,9 +90,15 @@ async function getDiscountPercentForProduct(customerId, product) {
   if (!customerId || !groupCode) {
     return 0;
   }
+  const cacheKey = customerId + '|' + groupCode;
+  if (DISCOUNT_CACHE[cacheKey] !== undefined) {
+    return Number(DISCOUNT_CACHE[cacheKey] || 0);
+  }
   try {
     const response = await callApi('discount', { customerId: customerId, groupCode: groupCode });
-    return response && response.ok ? Number(response.data?.discountPercent || 0) : 0;
+    const discountPercent = response && response.ok ? Number(response.data?.discountPercent || 0) : 0;
+    DISCOUNT_CACHE[cacheKey] = discountPercent;
+    return discountPercent;
   } catch (error) {
     console.error(error);
     return 0;
@@ -101,7 +108,7 @@ async function getDiscountPercentForProduct(customerId, product) {
 function recalcLineItem(item) {
   const qty = Math.max(0, Number(item.qty || 0));
   const listPrice = roundValue(toPriceNumber(item.listPrice));
-  const discountPercent = roundValue(Number(item.discountPercent ?? item.discount ?? 0));
+  const discountPercent = item.discountLoading ? 0 : roundValue(Number(item.discountPercent ?? item.discount ?? 0));
   const unitPrice = roundValue(listPrice * (1 - discountPercent / 100));
   const lineTotal = roundValue(unitPrice * qty);
   const vat = roundValue(lineTotal * 0.07);
@@ -737,11 +744,113 @@ async function cancelCurrentQuotation() {
   return response;
 }
 
+async function cancelQuotation(quoteId) {
+  const id = String(quoteId || CURRENT_QUOTE.quoteId || '').trim();
+  if (!id) {
+    toast('ต้องระบุเลขที่ใบเสนอราคา');
+    return;
+  }
+  toast('กำลังบันทึก...');
+  const response = await callApi('cancelQuotation', { quoteId: id });
+  toast(response.message || (response.ok ? 'ยกเลิกใบเสนอราคาแล้ว' : 'ยกเลิกไม่สำเร็จ'));
+  if (response.ok) {
+    if (CURRENT_QUOTE.quoteId === id) {
+      CURRENT_QUOTE.status = 'CANCELLED';
+      renderQuoteMeta();
+    }
+    if (typeof refreshQuotationHistory === 'function') {
+      await refreshQuotationHistory();
+    }
+  }
+  return response;
+}
+
 const baseRenderQuote = renderQuote;
 renderQuote = function () {
   baseRenderQuote();
   renderQuoteMeta();
 };
+
+function renderCart() {
+  const cartList = document.getElementById('cartList');
+  if (!cartList) {
+    calcCart();
+    return;
+  }
+  CART.forEach(recalcLineItem);
+  cartList.innerHTML = CART.length ? CART.map(it => {
+    const discountText = it.discountLoading ? 'กำลังโหลด...' : `<input style="width:60px;border:1px solid var(--line);border-radius:10px;padding:3px" type="number" value="${it.discountPercent||0}" onchange="changeDiscount('${it.lineId}', Number(this.value))">%`;
+    return `<div class="row item-card quote-line"><div class="quote-line-main"><b>${it.productName||'-'}</b><br><small>${it.unit||'-'}</small><div class="quote-line-prices"><span>ราคาตั้ง ${money(it.listPrice)}</span><span>ส่วนลด ${discountText}</span><span>ราคาสุทธิ ${money(it.unitPrice)}</span><span>รวม ${money(it.lineTotal)}</span></div></div><div class="qty"><button onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button><b>${it.qty}</b><button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button></div><button class="ghost" onclick="removeProduct('${it.lineId}')">ลบ</button></div>`;
+  }).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
+  calcCart();
+}
+
+async function addProduct(productId, qty) {
+  const normalizedQty = Number(qty || 1);
+  if (normalizedQty <= 0) {
+    toast('จำนวนสินค้าต้องมากกว่า 0');
+    return;
+  }
+  const product = getProductById(productId);
+  if (!product) {
+    toast('ไม่พบสินค้า');
+    return;
+  }
+  if (!CURRENT_QUOTE.customerId) {
+    const customerId = getSelectedCustomerIdForPricing();
+    if (customerId) {
+      await newQuotation(customerId);
+    } else {
+      toast('กรุณาเลือกลูกค้าก่อนเพิ่มสินค้า');
+      return;
+    }
+  }
+  const existing = CART.find(item => getProductId(item) === getProductId(product));
+  if (existing) {
+    existing.qty = Number(existing.qty || 0) + normalizedQty;
+    recalcLineItem(existing);
+    renderCart();
+    return;
+  }
+  const line = createCartLine(product, normalizedQty, 0);
+  line.discountLoading = true;
+  CART.push(line);
+  renderCart();
+  const discountPercent = await getDiscountPercentForProduct(CURRENT_QUOTE.customerId, product);
+  line.discountLoading = false;
+  line.discountPercent = Number(discountPercent || 0);
+  line.discount = line.discountPercent;
+  recalcLineItem(line);
+  renderCart();
+}
+
+async function saveQuotationWithStatus(status) {
+  if (!CURRENT_QUOTE.customerId) {
+    toast('กรุณาเลือกลูกค้าก่อนบันทึกใบเสนอราคา');
+    return;
+  }
+  if (!CART.length) {
+    toast('กรุณาเพิ่มสินค้าในใบเสนอราคาก่อนบันทึก');
+    return;
+  }
+  toast('กำลังบันทึก...');
+  const payload = buildQuotationPayload(status);
+  const response = await callApi(payload.quoteId ? 'updateQuotation' : 'saveQuotation', payload);
+  if (!response.ok) {
+    toast(response.message || 'บันทึกใบเสนอราคาไม่สำเร็จ');
+    return response;
+  }
+  CURRENT_QUOTE.quoteId = response.data?.quoteId || CURRENT_QUOTE.quoteId;
+  CURRENT_QUOTE.quoteNo = response.data?.quoteNo || CURRENT_QUOTE.quoteNo || CURRENT_QUOTE.quoteId;
+  CURRENT_QUOTE.status = response.data?.status || status || CURRENT_QUOTE.status;
+  renderQuoteMeta();
+  renderCart();
+  toast((status === 'DRAFT' ? 'บันทึกแบบร่างแล้ว' : 'อัปเดตใบเสนอราคาแล้ว') + (CURRENT_QUOTE.quoteNo ? ': ' + CURRENT_QUOTE.quoteNo : ''));
+  if (typeof refreshQuotationHistory === 'function') {
+    await refreshQuotationHistory();
+  }
+  return response;
+}
 
 window.renderQuote = renderQuote;
 window.renderProductPicker = renderProductPicker;

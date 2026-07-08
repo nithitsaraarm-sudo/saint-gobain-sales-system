@@ -7,6 +7,12 @@ function getDiscount(customerId, groupCode) {
       return validationError('customerId and groupCode are required');
     }
 
+    const cacheKey = 'discount:' + normalizedCustomerId + ':' + normalizedGroupCode;
+    const cached = getDiscountCache(cacheKey);
+    if (cached) {
+      return success(cached, cached.source === 'discount_matrix' ? 'Discount found' : 'Discount not found');
+    }
+
     const matrix = readDiscountMatrixValues();
     if (!matrix.ok) {
       return createDiscountResult(normalizedCustomerId, normalizedGroupCode, '', 0, 'not_found', matrix.message || 'DiscountMatrix unavailable');
@@ -32,16 +38,35 @@ function getDiscount(customerId, groupCode) {
     const rawDiscount = row[customerColumnIndex];
     const hasDiscountValue = String(rawDiscount || '').trim() !== '';
     const discountPercent = parseDiscountPercent(rawDiscount);
-    return success({
+    const result = {
       customerId: normalizedCustomerId,
       groupCode: normalizedGroupCode,
       discountGroup: discountGroup,
       discountPercent: discountPercent,
       source: hasDiscountValue ? 'discount_matrix' : 'not_found'
-    }, hasDiscountValue ? 'Discount found' : 'Discount not found');
+    };
+    setDiscountCache(cacheKey, result);
+    return success(result, hasDiscountValue ? 'Discount found' : 'Discount not found');
   } catch (error) {
     logError('getDiscount', error);
     return fail(error && error.message ? error.message : 'Discount lookup failed');
+  }
+}
+
+function getDiscountCache(cacheKey) {
+  try {
+    const cached = CacheService.getScriptCache().get(cacheKey);
+    return cached ? JSON.parse(cached) : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function setDiscountCache(cacheKey, data) {
+  try {
+    CacheService.getScriptCache().put(cacheKey, JSON.stringify(data), 300);
+  } catch (error) {
+    // Cache is optional; ignore cache write failures.
   }
 }
 

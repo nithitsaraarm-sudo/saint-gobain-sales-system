@@ -43,7 +43,9 @@ function getBootstrapData() {
         total: parseNumericValue(row.grandTotal || row.total || row.subtotal),
         customerName: String(row.customerName || customer.customerName || '').trim()
       });
-    });
+    }).sort(function (a, b) {
+      return new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0);
+    }).slice(0, 50);
 
     return success({
       environment: env,
