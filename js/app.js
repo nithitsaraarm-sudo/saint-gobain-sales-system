@@ -3,8 +3,62 @@ let bootstrapLoaded=false, bootstrapPromise=null;
 let quoteHistoryLoaded=false, quoteHistoryPromise=null;
 let customersLoaded=false, productsLoaded=false, customersPromise=null, productsPromise=null;
 const openQuotationDetailPromises={};
-const LIST_RENDER_LIMIT=50, QUOTE_PICKER_LIMIT=30, SEARCH_DEBOUNCE_MS=300;
+const LIST_RENDER_LIMIT=Number(window.DEFAULT_PAGE_SIZE||50), QUOTE_PICKER_LIMIT=30, SEARCH_DEBOUNCE_MS=300;
+const APP_VERSION_STORAGE_KEY='sg_app_version';
 const $=id=>document.getElementById(id); const money=n=>Number(n||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+function notifyAppVersionUpdate(){
+  if(typeof toast==='function'){
+    toast('มีเวอร์ชันใหม่ กำลังอัปเดต...');
+    return;
+  }
+  const el=document.getElementById('toast');
+  if(el){
+    el.textContent='มีเวอร์ชันใหม่ กำลังอัปเดต...';
+    el.classList.add('show');
+  }
+}
+
+function clearAppCaches(){
+  const cacheKeys=Array.isArray(window.APP_CACHE_KEYS)?window.APP_CACHE_KEYS:[];
+  cacheKeys.forEach(key=>{
+    try{
+      if(typeof clearCache==='function'){
+        clearCache(key);
+      }else{
+        localStorage.removeItem(key);
+      }
+    }catch(error){
+      try{localStorage.removeItem(key)}catch(e){}
+    }
+  });
+  console.log('[CACHE CLEARED]');
+}
+
+function checkAppVersion(){
+  try{
+    const newVersion=String(window.APP_VERSION||'0.4.0').trim();
+    console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
+    const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
+    if(oldVersion===newVersion){
+      return false;
+    }
+    console.log('[APP VERSION]',oldVersion,'→',newVersion);
+    if(!oldVersion){
+      localStorage.setItem(APP_VERSION_STORAGE_KEY,newVersion);
+      return false;
+    }
+    clearAppCaches();
+    localStorage.setItem(APP_VERSION_STORAGE_KEY,newVersion);
+    notifyAppVersionUpdate();
+    window.setTimeout(()=>window.location.reload(),1000);
+    return true;
+  }catch(error){
+    console.warn('[APP VERSION] update check failed',error);
+    return false;
+  }
+}
+
 function parseClientNumber(value){const n=Number(String(value||'').replace(/,/g,'')); return Number.isFinite(n)?n:0}
 function normalizeSearchText(value){return String(value??'').toLowerCase().trim().replace(/[\s\-_\/.,()]+/g,'')}
 function smartMatch(record, keyword, fields){
@@ -46,6 +100,7 @@ function setupDebouncedSearchInputs(){
   bind('quoteCustomerSearch',function(){ renderQuoteCustomerPicker(true); });
 }
 window.addEventListener('load',()=>{
+  if(checkAppVersion())return;
   setupQuoteSearchEnhancements();
   setupDebouncedSearchInputs();
   const u=localStorage.getItem('currentUser');
@@ -708,4 +763,4 @@ function renderQuoteProductPicker(){
   picker.innerHTML=limited.items.length?renderLimitNotice(limited.limited,QUOTE_PICKER_LIMIT)+limited.items.map(p=>`<div class="row"><div class="product-img">${p.brand==='Weber'?'🟨':'🟦'}</div><div><b>${p.productName||'-'}</b><br><small>${p.brand||'-'} · รหัสสินค้า: ${p.sku||p.productId||p.id||'-'} · ${p.unit||'-'} · ${money(p.listPrice)}</small></div><button class="tiny" style="margin-left:auto" onclick='addCart(${JSON.stringify(p)})'>+ เพิ่ม</button></div>`).join(''):'<div class="row quote-empty">ไม่พบรายการที่ค้นหา</div>';
 }
 
-window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.toast=toast;
+window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.checkAppVersion=checkAppVersion; window.toast=toast;

@@ -1,3 +1,4 @@
+window.APP_VERSION = window.APP_VERSION || '0.4.0';
 const APP_ENV = String(window.APP_ENV || 'production').trim().toLowerCase();
 const API_MOCK_MODE = APP_ENV === 'development';
 const GAS_WEB_APP_URL =
@@ -10,7 +11,8 @@ const CACHE_KEYS = {
   products: 'sg_products_cache',
   bootstrap: 'sg_bootstrap_cache',
   discount: 'sg_discount_cache',
-  quotation: 'sg_quotation_cache'
+  quotation: 'sg_quotation_cache',
+  quotationHistory: 'sg_quotation_history_cache'
 };
 
 function isApiDebugEnabled() {
