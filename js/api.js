@@ -1,3 +1,4 @@
+window.APP_VERSION = window.APP_VERSION || '0.4.0';
 const APP_ENV = String(window.APP_ENV || 'production').trim().toLowerCase();
 const API_MOCK_MODE = APP_ENV === 'development';
 const GAS_WEB_APP_URL =
@@ -10,7 +11,8 @@ const CACHE_KEYS = {
   products: 'sg_products_cache',
   bootstrap: 'sg_bootstrap_cache',
   discount: 'sg_discount_cache',
-  quotation: 'sg_quotation_cache'
+  quotation: 'sg_quotation_cache',
+  quotationHistory: 'sg_quotation_history_cache'
 };
 
 function isApiDebugEnabled() {
@@ -66,6 +68,13 @@ function clearCache(key) {
   } catch (error) {
     // Cache is best-effort only.
   }
+}
+
+function isUsableBootstrapCache(data) {
+  return data
+    && typeof data === 'object'
+    && Array.isArray(data.quotes)
+    && Array.isArray(data.quoteLines);
 }
 
 function getRequestKey(action, payload) {
@@ -172,9 +181,14 @@ function callApi(action, payload) {
       delete pendingApiRequests[requestKey];
     }
     const cachedBootstrap = !body.force ? getCache(CACHE_KEYS.bootstrap) : null;
-    if (cachedBootstrap) {
+    if (cachedBootstrap && !isUsableBootstrapCache(cachedBootstrap)) {
+      clearCache(CACHE_KEYS.bootstrap);
+    } else if (cachedBootstrap) {
       logApiDebug(normalizedAction, 'cached');
       return Promise.resolve({ ok: true, data: cachedBootstrap, cached: true });
+    }
+    if (bootstrapApiCache && !isUsableBootstrapCache(bootstrapApiCache.data)) {
+      bootstrapApiCache = null;
     }
     if (bootstrapApiCache) {
       logApiDebug(normalizedAction, 'cached');
@@ -298,7 +312,7 @@ function mockApi(action, payload) {
     case 'demoLogin':
       return { ok: true, data: { username: 'demo', displayName: 'ก้อย Sales', position: 'Sales Executive', phone: '0800000000' } };
     case 'bootstrap':
-      return { ok: true, data: { settings: { companyName: 'SAINT-GOBAIN', appName: 'SALES SYSTEM', welcomeText: 'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ', vatRate: 7 }, counts: { customers: 0, products: 0 }, sheetInitialized: true } };
+      return { ok: true, data: { settings: { companyName: 'SAINT-GOBAIN', appName: 'SALES SYSTEM', welcomeText: 'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ', vatRate: 7 }, counts: { customers: 0, products: 0 }, quotes: [], quoteLines: [], sheetInitialized: true } };
     case 'customers':
       return { ok: true, data: [] };
     case 'products':

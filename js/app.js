@@ -3,8 +3,62 @@ let bootstrapLoaded=false, bootstrapPromise=null;
 let quoteHistoryLoaded=false, quoteHistoryPromise=null;
 let customersLoaded=false, productsLoaded=false, customersPromise=null, productsPromise=null;
 const openQuotationDetailPromises={};
-const LIST_RENDER_LIMIT=50, QUOTE_PICKER_LIMIT=30, SEARCH_DEBOUNCE_MS=300;
+const LIST_RENDER_LIMIT=Number(window.DEFAULT_PAGE_SIZE||50), QUOTE_PICKER_LIMIT=30, SEARCH_DEBOUNCE_MS=300;
+const APP_VERSION_STORAGE_KEY='sg_app_version';
 const $=id=>document.getElementById(id); const money=n=>Number(n||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+function notifyAppVersionUpdate(){
+  if(typeof toast==='function'){
+    toast('มีเวอร์ชันใหม่ กำลังอัปเดต...');
+    return;
+  }
+  const el=document.getElementById('toast');
+  if(el){
+    el.textContent='มีเวอร์ชันใหม่ กำลังอัปเดต...';
+    el.classList.add('show');
+  }
+}
+
+function clearAppCaches(){
+  const cacheKeys=Array.isArray(window.APP_CACHE_KEYS)?window.APP_CACHE_KEYS:[];
+  cacheKeys.forEach(key=>{
+    try{
+      if(typeof clearCache==='function'){
+        clearCache(key);
+      }else{
+        localStorage.removeItem(key);
+      }
+    }catch(error){
+      try{localStorage.removeItem(key)}catch(e){}
+    }
+  });
+  console.log('[CACHE CLEARED]');
+}
+
+function checkAppVersion(){
+  try{
+    const newVersion=String(window.APP_VERSION||'0.4.0').trim();
+    console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
+    const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
+    if(oldVersion===newVersion){
+      return false;
+    }
+    console.log('[APP VERSION]',oldVersion,'→',newVersion);
+    if(!oldVersion){
+      localStorage.setItem(APP_VERSION_STORAGE_KEY,newVersion);
+      return false;
+    }
+    clearAppCaches();
+    localStorage.setItem(APP_VERSION_STORAGE_KEY,newVersion);
+    notifyAppVersionUpdate();
+    window.setTimeout(()=>window.location.reload(),1000);
+    return true;
+  }catch(error){
+    console.warn('[APP VERSION] update check failed',error);
+    return false;
+  }
+}
+
 function parseClientNumber(value){const n=Number(String(value||'').replace(/,/g,'')); return Number.isFinite(n)?n:0}
 function normalizeSearchText(value){return String(value??'').toLowerCase().trim().replace(/[\s\-_\/.,()]+/g,'')}
 function smartMatch(record, keyword, fields){
@@ -46,6 +100,7 @@ function setupDebouncedSearchInputs(){
   bind('quoteCustomerSearch',function(){ renderQuoteCustomerPicker(true); });
 }
 window.addEventListener('load',()=>{
+  if(checkAppVersion())return;
   setupQuoteSearchEnhancements();
   setupDebouncedSearchInputs();
   const u=localStorage.getItem('currentUser');
@@ -76,7 +131,8 @@ function normalizeDb(data){
     customers:Array.isArray(source.customers)?source.customers.map(normalizeCustomer):(Array.isArray(existing.customers)?existing.customers:[]),
     products:Array.isArray(source.products)?source.products.map(normalizeProduct):(Array.isArray(existing.products)?existing.products:[]),
     promotions:Array.isArray(source.promotions)?source.promotions:[],
-    quotes:Array.isArray(source.quotes)?source.quotes:[]
+    quotes:Array.isArray(source.quotes)?source.quotes:[],
+    quoteLines:Array.isArray(source.quoteLines)?source.quoteLines:(Array.isArray(existing.quoteLines)?existing.quoteLines:[])
   };
 }
 
@@ -147,6 +203,9 @@ function hydrateBootstrapFromCache(){
   }
   const cachedBootstrap=getCache('sg_bootstrap_cache');
   if(!cachedBootstrap){
+    return false;
+  }
+  if(!Array.isArray(cachedBootstrap.quotes)||!Array.isArray(cachedBootstrap.quoteLines)){
     return false;
   }
   DB=normalizeDb(cachedBootstrap);
@@ -429,6 +488,211 @@ function normalizeQuoteRecord(quote){
     updatedAt:String(q.updatedAt||'').trim()
   };
 }
+
+function dashboardText(value, fallback){
+  const text=String(value??'').trim();
+  return text||fallback||'-';
+}
+function dashboardMoney(value){
+  return money(parseClientNumber(value));
+}
+function normalizeDashboardLine(line){
+  const item=line&&typeof line==='object'?line:{};
+  const productId=String(item.productId||item.sku||item.id||'').trim();
+  const qty=parseClientNumber(item.qty||item.quantity);
+  const lineTotal=parseClientNumber(item.lineTotal||item.grandTotal||item.total);
+  return {
+    ...item,
+    quoteId:String(item.quoteId||'').trim(),
+    productId,
+    productName:String(item.productName||item.itemName||'').trim(),
+    qty,
+    lineTotal,
+    grandTotal:parseClientNumber(item.grandTotal||lineTotal)
+  };
+}
+function findDashboardProduct(productId){
+  const id=String(productId||'').trim().toLowerCase();
+  return (Array.isArray(DB.products)?DB.products:[]).find(p=>String(p.productId||p.sku||p.id||'').trim().toLowerCase()===id)||{};
+}
+function normalizeDashboardStatus(status){
+  return String(status||'').trim().toUpperCase();
+}
+function isCancelledQuote(quote){
+  return normalizeDashboardStatus(quote.status)==='CANCELLED';
+}
+function ensureDashboardLayout(){
+  const page=$('page-home');
+  if(!page)return null;
+  let root=$('dashboardContent');
+  if(!root){
+    root=document.createElement('div');
+    root.id='dashboardContent';
+    root.className='dashboard-content';
+    const hero=page.querySelector('.hero');
+    if(hero&&hero.parentNode){
+      hero.parentNode.insertBefore(root,hero.nextSibling);
+    }else{
+      page.appendChild(root);
+    }
+  }
+  Array.from(page.children).forEach(node=>{
+    if(node!==root&&(node.classList.contains('grid4')||node.classList.contains('cols'))){
+      node.classList.add('dashboard-legacy-hidden');
+    }
+  });
+  const bestProducts=$('bestProducts');
+  const bestCard=bestProducts&&bestProducts.closest('.card');
+  if(bestCard)bestCard.classList.add('dashboard-legacy-hidden');
+  return root;
+}
+function buildDashboardMetrics(){
+  const quotes=(Array.isArray(DB.quotes)?DB.quotes:[]).map(normalizeQuoteRecord);
+  const lines=(Array.isArray(DB.quoteLines)?DB.quoteLines:[]).map(normalizeDashboardLine);
+  const activeQuotes=quotes.filter(q=>!isCancelledQuote(q));
+  const actual=activeQuotes.reduce((sum,q)=>sum+parseClientNumber(q.grandTotal||q.total),0);
+  const saved=quotes.filter(q=>normalizeDashboardStatus(q.status)==='SAVED');
+  const draft=quotes.filter(q=>normalizeDashboardStatus(q.status)==='DRAFT');
+  const cancelled=quotes.filter(isCancelledQuote);
+  const target=parseClientNumber(DB.settings?.salesTarget||DB.settings?.target||DB.settings?.monthlyTarget);
+  const forecast=actual;
+  const achievement=target>0?(actual/target)*100:0;
+  const gap=target>0?Math.max(target-actual,0):0;
+  const quoteIds={};
+  activeQuotes.forEach(q=>{if(q.quoteId)quoteIds[q.quoteId]=true; if(q.quoteNo)quoteIds[q.quoteNo]=true;});
+  const activeLines=lines.filter(line=>(!line.quoteId||quoteIds[line.quoteId])&&normalizeDashboardStatus(line.status)!=='REMOVED');
+  const bu={Gyproc:0,Weber:0};
+  activeLines.forEach(line=>{
+    const product=findDashboardProduct(line.productId);
+    const brandText=String(product.brand||line.brand||line.discountGroup||'').toLowerCase();
+    const value=parseClientNumber(line.lineTotal||line.grandTotal);
+    if(brandText.indexOf('weber')>=0)bu.Weber+=value;
+    if(brandText.indexOf('gyproc')>=0)bu.Gyproc+=value;
+  });
+  const now=Date.now();
+  const recentMs=30*24*60*60*1000;
+  const newCustomers=(Array.isArray(DB.customers)?DB.customers:[]).filter(c=>{
+    const d=new Date(c.createdAt||c.updatedAt||'');
+    return !Number.isNaN(d.getTime())&&now-d.getTime()<=recentMs;
+  }).length;
+  const topCustomerMap={};
+  activeQuotes.forEach(q=>{
+    const key=q.customerId||q.customerName||'-';
+    if(!topCustomerMap[key])topCustomerMap[key]={name:q.customerName||q.customerId||'-',value:0,count:0};
+    topCustomerMap[key].value+=parseClientNumber(q.grandTotal||q.total);
+    topCustomerMap[key].count+=1;
+  });
+  const topCustomers=Object.values(topCustomerMap).sort((a,b)=>b.value-a.value).slice(0,5);
+  const topProductMap={};
+  activeLines.forEach(line=>{
+    const key=line.productId||line.productName||'-';
+    const product=findDashboardProduct(line.productId);
+    if(!topProductMap[key])topProductMap[key]={name:line.productName||product.productName||line.productId||'-',qty:0,value:0};
+    topProductMap[key].qty+=parseClientNumber(line.qty);
+    topProductMap[key].value+=parseClientNumber(line.lineTotal||line.grandTotal);
+  });
+  const topProducts=Object.values(topProductMap).sort((a,b)=>b.value-a.value).slice(0,5);
+  const openQuoteCustomers=Object.values(activeQuotes.filter(q=>normalizeDashboardStatus(q.status)!=='SAVED').reduce((acc,q)=>{
+    const key=q.customerId||q.customerName||'-';
+    if(!acc[key])acc[key]={name:q.customerName||q.customerId||'-',value:0,count:0};
+    acc[key].value+=parseClientNumber(q.grandTotal||q.total);
+    acc[key].count+=1;
+    return acc;
+  },{})).sort((a,b)=>b.value-a.value).slice(0,5);
+  const recentQuoteCustomerIds={};
+  activeQuotes.forEach(q=>{
+    const d=new Date(q.createdAt||q.updatedAt||'');
+    if(!Number.isNaN(d.getTime())&&now-d.getTime()<=recentMs&&q.customerId){
+      recentQuoteCustomerIds[String(q.customerId).trim()]=true;
+    }
+  });
+  const noRecentCustomers=(Array.isArray(DB.customers)?DB.customers:[]).filter(c=>!recentQuoteCustomerIds[String(c.customerId||c.customerCode||'').trim()]).slice(0,5);
+  return {quotes,lines,target,actual,forecast,achievement,gap,bu,newCustomers,draft,saved,cancelled,topCustomers,topProducts,openQuoteCustomers,noRecentCustomers};
+}
+function renderDashboardList(items, renderer, emptyText){
+  const list=Array.isArray(items)?items:[];
+  if(!list.length){
+    return `<div class="dashboard-empty">${dashboardText(emptyText,'-')}</div>`;
+  }
+  return list.map(renderer).join('');
+}
+function renderHome(){
+  const name=(USER?.displayName||'ก้อย').split(' ')[0];
+  const customerCount=DB.customers.length||parseClientNumber(DB.counts?.customers);
+  const productCount=DB.products.length||parseClientNumber(DB.counts?.products);
+  const greetingEl=$('greetingText');
+  const welcomeEl=$('welcomeText');
+  if(greetingEl)greetingEl.textContent=`${greeting()}, ${name} 👋`;
+  if(welcomeEl)welcomeEl.textContent=DB.settings?.welcomeText||'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ';
+  const root=ensureDashboardLayout();
+  const metrics=buildDashboardMetrics();
+  if(root){
+    root.innerHTML=`
+      <div class="dashboard-kpi-grid">
+        <div class="stat dashboard-kpi"><div class="ico">🎯</div><h3>Target</h3><b>${dashboardMoney(metrics.target)}</b><small>เป้าหมายยอดขาย</small></div>
+        <div class="stat dashboard-kpi"><div class="ico">💰</div><h3>Actual</h3><b>${dashboardMoney(metrics.actual)}</b><small>จาก QuoteHistory</small></div>
+        <div class="stat dashboard-kpi"><div class="ico">📈</div><h3>Forecast</h3><b>${dashboardMoney(metrics.forecast)}</b><small>ประเมินจากใบเสนอราคา</small></div>
+        <div class="stat dashboard-kpi"><div class="ico">✅</div><h3>Achievement %</h3><b>${metrics.achievement?metrics.achievement.toFixed(1):'0.0'}%</b><small>Actual / Target</small></div>
+        <div class="stat dashboard-kpi"><div class="ico">↔️</div><h3>Gap</h3><b>${dashboardMoney(metrics.gap)}</b><small>ยอดที่ต้องเติม</small></div>
+      </div>
+      <div class="dashboard-section-grid">
+        <div class="card dashboard-card">
+          <div class="section-title"><h2>BU Summary</h2></div>
+          <div class="dashboard-mini-grid">
+            <div><small>Gyproc</small><b>${dashboardMoney(metrics.bu.Gyproc)}</b></div>
+            <div><small>Weber</small><b>${dashboardMoney(metrics.bu.Weber)}</b></div>
+            <div><small>Quotation Value</small><b>${dashboardMoney(metrics.actual)}</b></div>
+            <div><small>New Customer</small><b>${metrics.newCustomers||0}</b></div>
+          </div>
+        </div>
+        <div class="card dashboard-card">
+          <div class="section-title"><h2>Quotation KPI</h2></div>
+          <div class="dashboard-mini-grid">
+            <div><small>จำนวนใบเสนอราคา</small><b>${metrics.quotes.length}</b></div>
+            <div><small>มูลค่ารวมใบเสนอราคา</small><b>${dashboardMoney(metrics.actual)}</b></div>
+            <div><small>Draft</small><b>${metrics.draft.length}</b></div>
+            <div><small>Saved</small><b>${metrics.saved.length}</b></div>
+            <div><small>Cancelled</small><b>${metrics.cancelled.length}</b></div>
+          </div>
+        </div>
+      </div>
+      <div class="dashboard-section-grid">
+        <div class="card dashboard-card">
+          <div class="section-title"><h2>Top Customer</h2></div>
+          <div class="dashboard-list">${renderDashboardList(metrics.topCustomers,item=>`<div class="dashboard-row"><span>${dashboardText(item.name)}</span><b>${dashboardMoney(item.value)}</b><small>${item.count||0} ใบ</small></div>`,'-')}</div>
+        </div>
+        <div class="card dashboard-card">
+          <div class="section-title"><h2>Top Product</h2></div>
+          <div class="dashboard-list">${renderDashboardList(metrics.topProducts,item=>`<div class="dashboard-row"><span>${dashboardText(item.name)}</span><b>${dashboardMoney(item.value)}</b><small>จำนวน ${item.qty||0}</small></div>`,'-')}</div>
+        </div>
+      </div>
+      <div class="card dashboard-card">
+        <div class="section-title"><h2>Customer Follow-up</h2></div>
+        <div class="dashboard-followup">
+          <div>
+            <h3>ลูกค้าที่มีใบเสนอราคาแต่ยังไม่ได้ปิด</h3>
+            ${renderDashboardList(metrics.openQuoteCustomers,item=>`<div class="dashboard-row"><span>${dashboardText(item.name)}</span><b>${dashboardMoney(item.value)}</b><small>${item.count||0} ใบ</small></div>`,'-')}
+          </div>
+          <div>
+            <h3>ลูกค้าที่ไม่มีการเสนอราคาในช่วงล่าสุด</h3>
+            ${renderDashboardList(metrics.noRecentCustomers,item=>`<div class="dashboard-row"><span>${dashboardText(item.customerName||item.customerCode)}</span><b>${dashboardText(item.province)}</b><small>${dashboardText(item.customerCode||item.customerId)}</small></div>`,'-')}
+          </div>
+        </div>
+      </div>`;
+  }
+  const setText=(id,value)=>{const el=$(id); if(el)el.textContent=value;};
+  setText('statQuotes',metrics.quotes.length);
+  setText('statSales',Number(metrics.actual||0).toLocaleString('th-TH'));
+  setText('statCustomers',customerCount);
+  setText('statPending',metrics.draft.length);
+  setText('rProducts',productCount);
+  setText('rCustomers',customerCount);
+  setText('rPromos',DB.promotions.length);
+  setText('rQuotes',metrics.quotes.length);
+  if(!quoteHistoryLoaded&&!quoteHistoryPromise&&(!Array.isArray(DB.quotes)||!DB.quotes.length)){
+    ensureQuotationHistoryLoaded();
+  }
+}
 function getQuoteSearchFields(){return ['quoteNo','quoteId','customerName','customerId','status'];}
 function formatDateTime(value){
   if(!value)return '-';
@@ -708,4 +972,4 @@ function renderQuoteProductPicker(){
   picker.innerHTML=limited.items.length?renderLimitNotice(limited.limited,QUOTE_PICKER_LIMIT)+limited.items.map(p=>`<div class="row"><div class="product-img">${p.brand==='Weber'?'🟨':'🟦'}</div><div><b>${p.productName||'-'}</b><br><small>${p.brand||'-'} · รหัสสินค้า: ${p.sku||p.productId||p.id||'-'} · ${p.unit||'-'} · ${money(p.listPrice)}</small></div><button class="tiny" style="margin-left:auto" onclick='addCart(${JSON.stringify(p)})'>+ เพิ่ม</button></div>`).join(''):'<div class="row quote-empty">ไม่พบรายการที่ค้นหา</div>';
 }
 
-window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.toast=toast;
+window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.checkAppVersion=checkAppVersion; window.toast=toast;

@@ -1104,6 +1104,117 @@ async function saveQuotationPdf(quoteId) {
   return pdf;
 }
 
+function getQuotationExportFileName(documentNode) {
+  const rawName = documentNode && documentNode.dataset ? documentNode.dataset.quoteNo || 'QT-PREVIEW' : 'QT-PREVIEW';
+  const safeName = String(rawName || 'QT-PREVIEW').replace(/[^A-Za-z0-9_-]/g, '-');
+  return (safeName.indexOf('QT-') === 0 ? safeName : 'QT-' + safeName) + '.png';
+}
+
+function downloadQuotationCanvas(canvas, fileName) {
+  const link = document.createElement('a');
+  link.download = fileName || 'QT-PREVIEW.png';
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+}
+
+function quotationCanvasToBlob(canvas) {
+  return new Promise(resolve => {
+    if (!canvas || typeof canvas.toBlob !== 'function') {
+      resolve(null);
+      return;
+    }
+    canvas.toBlob(blob => resolve(blob), 'image/png');
+  });
+}
+
+function getQuotationShareText(printData, documentNode) {
+  const data = printData || {};
+  const quote = data.quote || {};
+  const totals = data.totals || {};
+  const quoteNo = (documentNode && documentNode.dataset && documentNode.dataset.quoteNo) || quote.quoteNo || quote.quoteId || CURRENT_QUOTE.quoteNo || CURRENT_QUOTE.quoteId || 'QT-PREVIEW';
+  const customerName = quote.customerName || CURRENT_QUOTE.customerName || '-';
+  const grandTotal = totals.grandTotal ?? quote.grandTotal ?? quote.total ?? calcCart().total ?? 0;
+  return `ใบเสนอราคา: ${quoteNo}
+ร้านค้า: ${customerName || '-'}
+ยอดรวมสุทธิ: ${money(grandTotal)} บาท
+
+สร้างโดย Saint-Gobain Sales System`;
+}
+
+async function copyQuotationShareText(text) {
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (error) {
+    console.warn('Clipboard API failed, using fallback', error);
+  }
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const copied = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return copied;
+  } catch (error) {
+    console.warn('Clipboard fallback failed', error);
+    return false;
+  }
+}
+
+async function shareQuote(quoteId) {
+  const preview = document.getElementById('quotationPrintPreview');
+  const currentDocument = document.getElementById('printQuotationSheet');
+  const hasPreview = currentDocument && currentDocument.innerHTML.trim();
+  const previewOpen = preview && preview.classList.contains('is-open');
+  const prepared = quoteId || !hasPreview || !previewOpen
+    ? await prepareQuotationPrintPreview(quoteId, true)
+    : { preview, documentNode: currentDocument, response: { ok: true, data: getCurrentQuotationPrintData() } };
+  if (!prepared || !prepared.documentNode) {
+    return null;
+  }
+  if (typeof html2canvas !== 'function') {
+    toast('ไม่พบ html2canvas สำหรับ Share');
+    return null;
+  }
+
+  toast('กำลังสร้างรูปสำหรับแชร์...');
+  const canvas = await captureQuotationSheet(prepared.documentNode);
+  const fileName = getQuotationExportFileName(prepared.documentNode);
+  const printData = prepared.response && prepared.response.data ? prepared.response.data : getCurrentQuotationPrintData();
+  const shareText = getQuotationShareText(printData, prepared.documentNode);
+  const blob = await quotationCanvasToBlob(canvas);
+
+  if (blob && typeof File === 'function' && navigator.share && navigator.canShare) {
+    const file = new File([blob], fileName, { type: 'image/png' });
+    const shareData = {
+      title: fileName.replace(/\.png$/i, ''),
+      text: shareText,
+      files: [file]
+    };
+    try {
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share(shareData);
+        toast('เปิด Share Sheet แล้ว');
+        return { ok: true, shared: true };
+      }
+    } catch (error) {
+      console.warn('Native file share failed, using fallback', error);
+    }
+  }
+
+  downloadQuotationCanvas(canvas, fileName);
+  await copyQuotationShareText(shareText);
+  toast('บันทึกรูปแล้ว กรุณาเลือกส่งผ่าน LINE');
+  return { ok: true, shared: false };
+}
+
 async function duplicateCurrentQuotation() {
   const id = String(CURRENT_QUOTE.quoteId || '').trim();
   if (!id) {
