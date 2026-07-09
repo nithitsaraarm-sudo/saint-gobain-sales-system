@@ -70,6 +70,13 @@ function clearCache(key) {
   }
 }
 
+function isUsableBootstrapCache(data) {
+  return data
+    && typeof data === 'object'
+    && Array.isArray(data.quotes)
+    && Array.isArray(data.quoteLines);
+}
+
 function getRequestKey(action, payload) {
   return String(action || '').trim() + JSON.stringify(payload || {});
 }
@@ -174,9 +181,14 @@ function callApi(action, payload) {
       delete pendingApiRequests[requestKey];
     }
     const cachedBootstrap = !body.force ? getCache(CACHE_KEYS.bootstrap) : null;
-    if (cachedBootstrap) {
+    if (cachedBootstrap && !isUsableBootstrapCache(cachedBootstrap)) {
+      clearCache(CACHE_KEYS.bootstrap);
+    } else if (cachedBootstrap) {
       logApiDebug(normalizedAction, 'cached');
       return Promise.resolve({ ok: true, data: cachedBootstrap, cached: true });
+    }
+    if (bootstrapApiCache && !isUsableBootstrapCache(bootstrapApiCache.data)) {
+      bootstrapApiCache = null;
     }
     if (bootstrapApiCache) {
       logApiDebug(normalizedAction, 'cached');
@@ -300,7 +312,7 @@ function mockApi(action, payload) {
     case 'demoLogin':
       return { ok: true, data: { username: 'demo', displayName: 'ก้อย Sales', position: 'Sales Executive', phone: '0800000000' } };
     case 'bootstrap':
-      return { ok: true, data: { settings: { companyName: 'SAINT-GOBAIN', appName: 'SALES SYSTEM', welcomeText: 'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ', vatRate: 7 }, counts: { customers: 0, products: 0 }, sheetInitialized: true } };
+      return { ok: true, data: { settings: { companyName: 'SAINT-GOBAIN', appName: 'SALES SYSTEM', welcomeText: 'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ', vatRate: 7 }, counts: { customers: 0, products: 0 }, quotes: [], quoteLines: [], sheetInitialized: true } };
     case 'customers':
       return { ok: true, data: [] };
     case 'products':

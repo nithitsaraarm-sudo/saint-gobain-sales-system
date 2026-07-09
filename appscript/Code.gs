@@ -24,7 +24,7 @@ function doGet(e) {
 function getBootstrapData() {
   const timer = startPerformanceTimer('bootstrap');
   try {
-    const cacheKey = 'bootstrap:lightweight';
+    const cacheKey = 'bootstrap:dashboard:v1';
     const cached = getServerCache(cacheKey);
     if (cached) {
       endPerformanceTimer(timer, 'cache=hit');
@@ -32,6 +32,8 @@ function getBootstrapData() {
     }
     const env = getCurrentEnvironment();
 
+    const quotes = getBootstrapQuoteHistoryRows(200);
+    const quoteLines = getBootstrapQuoteLineRows(quotes);
     const data = {
       environment: env,
       sheetInitialized: true,
@@ -44,7 +46,9 @@ function getBootstrapData() {
       counts: {
         customers: countSheetDataRows(CUSTOMERS_SHEET),
         products: countSheetDataRows(SHEET_NAMES.PRODUCTS)
-      }
+      },
+      quotes: quotes.slice(0, 50),
+      quoteLines: quoteLines
     };
     setServerCache(cacheKey, data, 300);
     endPerformanceTimer(timer, 'cache=miss');
@@ -66,6 +70,49 @@ function countSheetDataRows(sheetName) {
   } catch (error) {
     logError('countSheetDataRows', error);
     return 0;
+  }
+}
+
+function getBootstrapQuoteHistoryRows(limit) {
+  try {
+    const result = getSheetData(QUOTE_HISTORY_SHEET);
+    if (!result.ok || !Array.isArray(result.data)) {
+      return [];
+    }
+    const maxRows = Math.max(1, Number(limit || 50));
+    return result.data.slice().sort(function (a, b) {
+      return new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0);
+    }).slice(0, maxRows);
+  } catch (error) {
+    logError('getBootstrapQuoteHistoryRows', error);
+    return [];
+  }
+}
+
+function getBootstrapQuoteLineRows(quotes) {
+  try {
+    const quoteList = Array.isArray(quotes) ? quotes : [];
+    if (!quoteList.length) {
+      return [];
+    }
+    const quoteMap = {};
+    quoteList.forEach(function (quote) {
+      const quoteId = String((quote && quote.quoteId) || '').trim();
+      const quoteNo = String((quote && quote.quoteNo) || '').trim();
+      if (quoteId) quoteMap[quoteId.toLowerCase()] = true;
+      if (quoteNo) quoteMap[quoteNo.toLowerCase()] = true;
+    });
+    const result = getSheetData(QUOTE_LINES_SHEET);
+    if (!result.ok || !Array.isArray(result.data)) {
+      return [];
+    }
+    return result.data.filter(function (line) {
+      const quoteId = String((line && line.quoteId) || '').trim().toLowerCase();
+      return quoteMap[quoteId];
+    }).slice(0, 1000);
+  } catch (error) {
+    logError('getBootstrapQuoteLineRows', error);
+    return [];
   }
 }
 
