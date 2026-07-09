@@ -63,7 +63,7 @@
       <div class="cols"><div class="card"><div class="section-title"><h2>ลูกค้าที่เปิดล่าสุด</h2><button class="tiny" onclick="go('customers')">ดูทั้งหมด</button></div><div class="list" id="latestCustomers"></div></div><div class="card"><div class="section-title"><h2>โปรโมชั่นที่กำลังใช้งาน</h2><button class="tiny" onclick="go('promos')">ดูทั้งหมด</button></div><div class="list" id="activePromos"></div></div></div>
       <div class="card" style="margin-top:20px"><div class="section-title"><h2>สินค้าขายดี</h2><button class="tiny" onclick="go('report')">ดูรายงานยอดขาย</button></div><div class="best" id="bestProducts"></div></div>
     </section>
-    <section id="page-quote" class="page"><h1>ออกใบเสนอราคา</h1><div id="quoteMeta" class="quote-meta no-print"></div><div class="quote-layout"><div><div class="card"><div class="field quote-customer-field"><label>เลือกร้านค้า</label><input id="quoteCustomerSearch" autocomplete="off" onfocus="renderQuoteCustomerPicker(true)" oninput="renderQuoteCustomerPicker(true)" placeholder="พิมพ์ชื่อร้านค้า รหัสร้านค้า จังหวัด หรือประเภท"><input id="quoteCustomer" type="hidden"><div id="quoteCustomerPicker" class="quote-autocomplete"></div></div><div class="field"><label>ค้นหาสินค้า</label><input id="productSearch" oninput="renderProductPicker()" placeholder="พิมพ์ชื่อสินค้า SKU หรือแบรนด์"></div><div class="list" id="productPicker"></div></div></div><div class="card"><h2>รายการสินค้า</h2><div class="list" id="cartList"></div><div class="field"><label>ส่วนลดพิเศษ</label><input id="specialDiscount" type="number" value="0" oninput="calcCart()"></div><div class="field"><label>ค่าขนส่ง</label><input id="shipping" type="number" value="0" oninput="calcCart()"></div><hr style="border:0;border-top:1px solid var(--line)"><p>ยอดก่อน VAT <b id="sumSubtotal">0.00</b></p><p>VAT <span id="vatLabel">7</span>% <b id="sumVat">0.00</b></p><div>ยอดสุทธิ</div><div class="total" id="sumTotal">0.00</div><div class="actions no-print" style="margin-top:14px"><button class="ghost" onclick="saveDraftQuotation()">Save as Draft</button><button class="primary" onclick="updateQuotation()">Update Quotation</button><button class="ghost" onclick="duplicateCurrentQuotation()">Duplicate</button><button class="yellow" onclick="cancelCurrentQuotation()">Cancel</button><button class="primary" onclick="window.print()">PDF</button><button class="yellow" onclick="shareQuote()">แชร์</button></div></div></div></section>
+    <section id="page-quote" class="page"><h1>ออกใบเสนอราคา</h1><div id="quoteMeta" class="quote-meta no-print"></div><div class="quote-layout"><div><div class="card"><div class="field quote-customer-field"><label>เลือกร้านค้า</label><input id="quoteCustomerSearch" autocomplete="off" onfocus="renderQuoteCustomerPicker(true)" oninput="renderQuoteCustomerPicker(true)" placeholder="พิมพ์ชื่อร้านค้า รหัสร้านค้า จังหวัด หรือประเภท"><input id="quoteCustomer" type="hidden"><div id="quoteCustomerPicker" class="quote-autocomplete"></div></div><div class="field"><label>ค้นหาสินค้า</label><input id="productSearch" oninput="renderProductPicker()" placeholder="พิมพ์ชื่อสินค้า SKU หรือแบรนด์"></div><div class="list" id="productPicker"></div></div></div><div class="card"><h2>รายการสินค้า</h2><div class="list" id="cartList"></div><div class="field"><label>ส่วนลดพิเศษ</label><input id="specialDiscount" type="number" value="0" oninput="calcCart()"></div><div class="field"><label>ค่าขนส่ง</label><input id="shipping" type="number" value="0" oninput="calcCart()"></div><hr style="border:0;border-top:1px solid var(--line)"><p>ยอดก่อน VAT <b id="sumSubtotal">0.00</b></p><p>VAT <span id="vatLabel">7</span>% <b id="sumVat">0.00</b></p><div>ยอดสุทธิ</div><div class="total" id="sumTotal">0.00</div><div class="actions no-print" style="margin-top:14px"><button class="ghost" onclick="saveDraftQuotation()">Save as Draft</button><button class="primary" onclick="updateQuotation()">Update Quotation</button><button class="ghost" onclick="duplicateCurrentQuotation()">Duplicate</button><button class="yellow" onclick="cancelCurrentQuotation()">Cancel</button><button class="primary" onclick="printQuotation()">Preview</button><button class="primary" onclick="saveQuotationPdf()">Save PDF</button><button class="yellow" onclick="saveQuotationPng()">Save PNG</button><button class="yellow" onclick="shareQuote()">แชร์</button></div></div></div></section>
     <section id="page-customers" class="page"><div class="section-title"><h1>ร้านค้า</h1></div><div class="toolbar"><input class="search" id="customerSearch" oninput="renderCustomers()" placeholder="ค้นหาร้านค้า"><button class="primary main-action" onclick="openModal('customer')">+ เพิ่มร้านค้า</button></div><div class="data-grid" id="customerGrid"></div></section>
     <section id="page-products" class="page"><div class="section-title"><h1>สินค้า</h1></div><div class="toolbar"><input class="search" id="searchProducts" oninput="renderProducts()" placeholder="ค้นหาสินค้า"><button class="yellow main-action" onclick="openModal('product')">+ เพิ่มสินค้า</button></div><div class="data-grid" id="productGrid"></div></section>
     <section id="page-promos" class="page"><div class="section-title"><h1>โปรโมชั่น</h1></div><div class="toolbar"><input class="search" id="searchPromos" oninput="renderPromos()" placeholder="ค้นหาโปรโมชั่น"><button class="yellow main-action" onclick="openModal('promo')">+ เพิ่มโปรโมชั่น</button></div><div class="data-grid" id="promoGrid"></div></section>
@@ -118,6 +118,17 @@
     </section>
   </main>
 </div>
+<div id="quotationPrintPreview" class="quotation-print-overlay hidden">
+  <div class="quotation-print-shell">
+    <div class="quotation-print-actions no-print">
+      <button class="primary" onclick="printQuotationSheet()">Print</button>
+      <button class="primary" onclick="saveQuotationPdf()">Save PDF</button>
+      <button class="yellow" onclick="saveQuotationPng()">Save PNG</button>
+      <button class="ghost" onclick="closeQuotationPrintPreview()">Close</button>
+    </div>
+    <div id="printQuotationSheet" class="quotation-print-document"></div>
+  </div>
+</div>
 <div id="modal" class="modal"><div class="modal-card"><div class="section-title"><h2 id="modalTitle">เพิ่มข้อมูล</h2><button class="ghost" onclick="closeModal()">ปิด</button></div><div id="modalBody"></div></div></div><div id="toast" class="toast"></div>
 
 
@@ -151,5 +162,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   <script src="js/api.js?v=20260706-1"></script>
   <script src="js/app.js?v=20260706-1"></script>
   <script src="js/auth.js?v=20260706-1"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="js/quotation.js?v=20260706-1"></script>
 </body></html>
