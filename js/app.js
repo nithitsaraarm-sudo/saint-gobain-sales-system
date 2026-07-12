@@ -1,4 +1,5 @@
 let DB=normalizeDb(), USER=null, CART=[], selectedCustomerId='';
+let PRODUCT_CALC_PRODUCT=null;
 let bootstrapLoaded=false, bootstrapPromise=null;
 let quoteHistoryLoaded=false, quoteHistoryPromise=null;
 let customersLoaded=false, productsLoaded=false, customersPromise=null, productsPromise=null;
@@ -103,7 +104,7 @@ window.addEventListener('load',()=>{
   if(checkAppVersion())return;
   setupQuoteSearchEnhancements();
   setupDebouncedSearchInputs();
-  const u=localStorage.getItem('currentUser');
+  const u=localStorage.getItem('sg_user')||localStorage.getItem('currentUser');
   if(u){
     try {
       USER=JSON.parse(u);
@@ -233,6 +234,11 @@ async function loadData(options){
       if(!silent)toast('กำลังโหลดข้อมูล...');
       let r = await callApi('bootstrap', force ? { force: true } : {});
       if (!r.ok) {
+        if (/auth|session|permission/i.test(String(r.message||''))) {
+          clearSession();
+          document.getElementById('appView')?.classList.add('hidden');
+          document.getElementById('loginView')?.classList.remove('hidden');
+        }
         toast('โหลดข้อมูลไม่สำเร็จ: ' + r.message);
         return r;
       }
@@ -282,6 +288,124 @@ function customerSearchText(c){return [c.customerId,c.customerCode,c.customerNam
 function renderCustomerSummary(customers){let counts={all:customers.length,gyro:0,weber:0,both:0}; customers.forEach(c=>{if(c.customerType==='Gyproc')counts.gyro++; if(c.customerType==='Weber')counts.weber++; if(c.customerType==='Gyproc/Weber')counts.both++;}); let el=$('customerSummary'); if(el)el.innerHTML=`<div class="crm-stat"><small>ร้านค้าทั้งหมด</small><b>${counts.all}</b></div><div class="crm-stat"><small>Gyproc</small><b>${counts.gyro}</b></div><div class="crm-stat"><small>Weber</small><b>${counts.weber}</b></div><div class="crm-stat"><small>Gyproc/Weber</small><b>${counts.both}</b></div>`}
 function renderCustomers(){ensureCustomerCrmUi();let q=$('customerSearch')?.value||'';let type=($('customerTypeFilter')?.value||'');let fields=['customerId','customerCode','customerName','province','customerType','phone','notes','address'];let customers=DB.customers.filter(c=>smartMatch(c,q,fields)&&(!type||c.customerType===type));let limited=limitList(customers,LIST_RENDER_LIMIT);renderCustomerSummary(DB.customers);let grid=$('customerGrid'); if(!grid)return; grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(c=>`<div class="card"><h3>${c.customerName||'-'}</h3><p>รหัสร้านค้า: ${c.customerCode||c.customerId||c.id||'-'}</p><p>ประเภท: ${c.customerType||'-'}</p><p>จังหวัด: ${c.province||'-'}</p><p>โทร: ${c.phone||'-'}</p><p>ที่อยู่: ${c.address||'-'}</p><p>หมายเหตุ: ${c.notes||'-'}</p><button class="ghost" onclick="selectCustomer('${c.customerId}')">ออกใบเสนอราคา</button></div>`).join('')}
 function productSearchText(p){return [p.productId,p.sku,p.productName,p.description,p.brand,p.discountGroup,p.groupCode,p.unit,p.notes,p.promoText].join(' ').toLowerCase()}
+function htmlAttr(value){
+  return String(value??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function findProductForCalculator(productId){
+  const id=String(productId||'').trim().toLowerCase();
+  return (Array.isArray(DB.products)?DB.products:[]).find(p=>String(p.productId||p.sku||p.id||'').trim().toLowerCase()===id)||null;
+}
+function openProductCalculator(productId){
+  const product=findProductForCalculator(productId);
+  if(!product){
+    toast('ไม่พบสินค้า');
+    return;
+  }
+  PRODUCT_CALC_PRODUCT=product;
+  const modal=$('productPriceModal');
+  if(!modal)return;
+  const priceInput=$('productCalcListPrice');
+  const discountInput=$('productCalcDiscount');
+  const qtyInput=$('productCalcQty');
+  if(priceInput)priceInput.value=parseClientNumber(product.listPrice).toFixed(2);
+  if(discountInput)discountInput.value='0';
+  if(qtyInput)qtyInput.value='1';
+  renderProductCalculator();
+  modal.classList.remove('hidden');
+  modal.classList.add('show');
+}
+function closeProductCalculator(){
+  const modal=$('productPriceModal');
+  if(modal){
+    modal.classList.add('hidden');
+    modal.classList.remove('show');
+  }
+}
+function resetProductCalculator(){
+  if(!PRODUCT_CALC_PRODUCT)return;
+  const priceInput=$('productCalcListPrice');
+  const discountInput=$('productCalcDiscount');
+  const qtyInput=$('productCalcQty');
+  if(priceInput)priceInput.value=parseClientNumber(PRODUCT_CALC_PRODUCT.listPrice).toFixed(2);
+  if(discountInput)discountInput.value='0';
+  if(qtyInput)qtyInput.value='1';
+  renderProductCalculator();
+}
+function renderProductCalculator(){
+  const product=PRODUCT_CALC_PRODUCT||{};
+  const capture=$('productPriceCapture');
+  if(!capture)return;
+  const listPrice=parseClientNumber($('productCalcListPrice')?.value||product.listPrice);
+  const discountPercent=parseClientNumber($('productCalcDiscount')?.value);
+  const qty=Math.max(0,parseClientNumber($('productCalcQty')?.value||1));
+  const netPrice=listPrice*(1-discountPercent/100);
+  const subtotal=netPrice*qty;
+  const vat=subtotal*0.07;
+  const grandTotal=subtotal+vat;
+  const productId=product.productId||product.sku||product.id||'-';
+  const imageUrl=String(product.imageUrl||'').trim();
+  capture.innerHTML=`
+    <div class="product-calc-head">
+      <div class="product-calc-img">${imageUrl?`<img src="${htmlAttr(imageUrl)}" alt="">`:'📦'}</div>
+      <div>
+        <span class="pill ${product.brand==='Weber'?'yellow':'blue'}">${product.brand||'-'}</span>
+        <h2>${product.productName||'-'}</h2>
+        <p>รหัสสินค้า: ${productId}</p>
+        <p>หน่วย: ${product.unit||'-'}</p>
+        <p>ราคาตั้ง: ${money(product.listPrice)}</p>
+      </div>
+    </div>
+    <div class="product-calc-input-summary">
+      <span>ราคาตั้งต่อหน่วย: <b>${money(listPrice)}</b></span>
+      <span>ส่วนลด: <b>${discountPercent}%</b></span>
+      <span>จำนวน: <b>${qty}</b></span>
+    </div>
+    <div class="product-calc-results">
+      <div><small>ราคาสุทธิต่อหน่วย</small><b>${money(netPrice)}</b></div>
+      <div><small>VAT 7%</small><b>${money(vat)}</b></div>
+      <div><small>ยอดก่อน VAT</small><b>${money(subtotal)}</b></div>
+      <div class="grand"><small>ยอดลูกค้าชำระ</small><b>${money(grandTotal)}</b></div>
+    </div>`;
+}
+async function saveProductCalculatorImage(){
+  const product=PRODUCT_CALC_PRODUCT||{};
+  const target=$('productPriceCapture');
+  if(!target)return null;
+  if(typeof html2canvas!=='function'){
+    toast('ไม่พบ html2canvas สำหรับบันทึกรูปภาพ');
+    return null;
+  }
+  toast('กำลังสร้างรูปภาพ...');
+  const clone=target.cloneNode(true);
+  clone.classList.add('product-price-export');
+  clone.style.position='fixed';
+  clone.style.left='-12000px';
+  clone.style.top='0';
+  clone.style.width='1100px';
+  clone.style.maxWidth='1100px';
+  clone.style.background='#ffffff';
+  document.body.appendChild(clone);
+  let canvas;
+  try{
+    canvas=await html2canvas(clone,{scale:3,backgroundColor:'#ffffff',useCORS:true,windowWidth:1200,windowHeight:clone.scrollHeight});
+  }finally{
+    document.body.removeChild(clone);
+  }
+  const productId=String(product.productId||product.sku||product.id||'product').replace(/[^A-Za-z0-9_-]/g,'-');
+  const link=document.createElement('a');
+  link.download=`product-price-${productId}.png`;
+  link.href=canvas.toDataURL('image/png');
+  link.click();
+  toast('บันทึกรูปภาพแล้ว');
+  return canvas;
+}
+function addProductCardToQuote(productId,event){
+  if(event&&typeof event.stopPropagation==='function')event.stopPropagation();
+  const product=findProductForCalculator(productId);
+  if(product&&typeof addCart==='function'){
+    addCart(product);
+  }
+}
 function getProductDiscount(customerId, product){
   const groupCode=String(product&&product.groupCode||'').trim();
   const cacheKey=String(customerId||'').trim()+'|'+groupCode;
@@ -758,6 +882,14 @@ function ensureQuotationHistoryLoaded(){
   return refreshQuotationHistory();
 }
 function isQuotationHistoryLoaded(){return quoteHistoryLoaded;}
+function buildQuotationDetailHtml(data){
+  data=data||{};
+  const quote=normalizeQuoteRecord(data.quote||{});
+  const lines=Array.isArray(data.lines)?data.lines:[];
+  const totals=data.totals||{};
+  const quoteIdAttr=htmlAttr(quote.quoteId||quote.quoteNo||'');
+  return `<div class="section-title"><div><h2>${quote.quoteNo||quote.quoteId||'-'}</h2><p style="color:var(--muted);margin:4px 0 0">${quote.customerName||'-'} · ${quote.customerId||'-'}</p></div><span class="pill ${quote.status==='CANCELLED'?'yellow':'blue'}">${quote.status||'-'}</span></div><div class="quote-detail-meta"><span>วันที่: ${formatDateTime(quote.createdAt)}</span><span>ยอดสุทธิ: ${money(totals.grandTotal||quote.grandTotal)}</span></div><div class="list quote-detail-lines">${lines.length?lines.map((line,index)=>`<div class="row"><div><b>${line.productName||'-'}</b><br><small>${line.productId||'-'} · ${line.unit||'-'}</small></div><span>จำนวน ${line.qty||0}</span><span>ราคา ${money(line.listPrice)}</span><span>ส่วนลด ${line.discountPercent||0}%</span><b style="margin-left:auto">${money(line.grandTotal||line.lineTotal)}</b></div>`).join(''):'<p style="color:var(--muted)">ไม่มีรายการสินค้า</p>'}</div><div class="quote-total-box"><p>Subtotal <b>${money(totals.subtotal||quote.subtotal)}</b></p><p>VAT <b>${money(totals.vat||quote.vat)}</b></p><p>Grand Total <b>${money(totals.grandTotal||quote.grandTotal)}</b></p></div><div class="actions no-print"><button class="primary" onclick="printQuotation('${quoteIdAttr}')">Print</button><button class="yellow" onclick="exportQuotationPNG('${quoteIdAttr}')">Save PNG</button><button class="yellow" onclick="shareQuote('${quoteIdAttr}')">Share</button><button class="ghost" onclick="editQuotationFromHistory('${quoteIdAttr}')">แก้ไข</button><button class="ghost" onclick="duplicateQuotationFromHistory('${quoteIdAttr}')">Duplicate</button><button class="yellow" onclick="cancelQuotationFromHistory('${quoteIdAttr}')">Cancel</button></div>`;
+}
 function renderQuotationDetail(data){
   const box=$('quoteDetail');
   if(!box)return;
@@ -766,11 +898,23 @@ function renderQuotationDetail(data){
     box.innerHTML='';
     return;
   }
-  const quote=normalizeQuoteRecord(data.quote||{});
-  const lines=Array.isArray(data.lines)?data.lines:[];
-  const totals=data.totals||{};
   box.classList.remove('hidden');
-  box.innerHTML=`<div class="section-title"><div><h2>${quote.quoteNo||quote.quoteId||'-'}</h2><p style="color:var(--muted);margin:4px 0 0">${quote.customerName||'-'} · ${quote.customerId||'-'}</p></div><span class="pill ${quote.status==='CANCELLED'?'yellow':'blue'}">${quote.status||'-'}</span></div><div class="quote-detail-meta"><span>วันที่: ${formatDateTime(quote.createdAt)}</span><span>ยอดสุทธิ: ${money(totals.grandTotal||quote.grandTotal)}</span></div><div class="list quote-detail-lines">${lines.length?lines.map((line,index)=>`<div class="row"><div><b>${line.productName||'-'}</b><br><small>${line.productId||'-'} · ${line.unit||'-'}</small></div><span>จำนวน ${line.qty||0}</span><span>ราคา ${money(line.listPrice)}</span><span>ส่วนลด ${line.discountPercent||0}%</span><b style="margin-left:auto">${money(line.grandTotal||line.lineTotal)}</b></div>`).join(''):'<p style="color:var(--muted)">ไม่มีรายการสินค้า</p>'}</div><div class="quote-total-box"><p>Subtotal <b>${money(totals.subtotal||quote.subtotal)}</b></p><p>VAT <b>${money(totals.vat||quote.vat)}</b></p><p>Grand Total <b>${money(totals.grandTotal||quote.grandTotal)}</b></p></div><div class="actions no-print"><button class="ghost" onclick="editQuotationFromHistory('${quote.quoteId}')">แก้ไข</button><button class="ghost" onclick="duplicateQuotationFromHistory('${quote.quoteId}')">Duplicate</button><button class="yellow" onclick="cancelQuotationFromHistory('${quote.quoteId}')">Cancel</button><button class="primary" onclick="printQuotation('${quote.quoteId}')">Print</button><button class="yellow" onclick="exportQuotationPNG('${quote.quoteId}')">Save PNG</button></div>`;
+  box.innerHTML=buildQuotationDetailHtml(data);
+}
+function openQuotationDetailModal(data){
+  const modal=$('quoteDetailModal');
+  const body=$('quoteDetailModalBody');
+  if(!modal||!body)return;
+  body.innerHTML=buildQuotationDetailHtml(data||{});
+  modal.classList.remove('hidden');
+  modal.classList.add('show');
+}
+function closeQuotationDetailModal(){
+  const modal=$('quoteDetailModal');
+  if(modal){
+    modal.classList.add('hidden');
+    modal.classList.remove('show');
+  }
 }
 async function openQuotationDetail(quoteId){
   const id=String(quoteId||'').trim();
@@ -791,11 +935,8 @@ async function openQuotationDetail(quoteId){
       toast(response.message||'เปิดใบเสนอราคาไม่สำเร็จ');
       return response;
     }
-    renderQuotationDetail(response.data);
-    const detail=$('quoteDetail');
-    if(detail&&typeof detail.scrollIntoView==='function'){
-      detail.scrollIntoView({behavior:'smooth',block:'start'});
-    }
+    renderQuotationDetail(null);
+    openQuotationDetailModal(response.data);
     return response;
   }catch(error){
     console.error(error);
@@ -936,7 +1077,7 @@ function toast(msg){const el=document.getElementById('toast'); if(!el)return; el
 
 function renderCustomers(){ensureCustomerCrmUi();let q=$('customerSearch')?.value||'';let type=($('customerTypeFilter')?.value||'');let fields=['customerId','customerCode','customerName','province','customerType','phone','notes','address'];let customers=DB.customers.filter(c=>smartMatch(c,q,fields)&&(!type||c.customerType===type));let limited=limitList(customers,LIST_RENDER_LIMIT);renderCustomerSummary(DB.customers);let grid=$('customerGrid'); if(!grid)return; if(!customersLoaded&&!DB.customers.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(c=>`<div class="card"><h3>${c.customerName||'-'}</h3><p>รหัสร้านค้า: ${c.customerCode||c.customerId||c.id||'-'}</p><p>ประเภท: ${c.customerType||'-'}</p><p>จังหวัด: ${c.province||'-'}</p><p>โทร: ${c.phone||'-'}</p><p>ที่อยู่: ${c.address||'-'}</p><p>หมายเหตุ: ${c.notes||'-'}</p><button class="ghost" onclick="selectCustomer('${c.customerId}')">ออกใบเสนอราคา</button></div>`).join('')}
 
-function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); if(!productsLoaded&&!DB.products.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>`<div class="card"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${p.brand||'-'}</span><h3>${p.productName||'-'}</h3><p>รหัสสินค้า: ${p.sku||p.productId||p.id||'-'}</p><p>${p.unit||'-'}</p><b>${money(p.listPrice)}</b><br><button class="ghost" onclick='addCart(${JSON.stringify(p)})'>เพิ่มลงใบเสนอราคา</button></div>`).join('')}
+function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); if(!productsLoaded&&!DB.products.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>{const id=encodeURIComponent(String(p.productId||p.sku||p.id||''));return `<div class="card product-card-clickable" role="button" tabindex="0" onclick="openProductCalculator(decodeURIComponent('${id}'))" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProductCalculator(decodeURIComponent('${id}'))}"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${p.brand||'-'}</span><h3>${p.productName||'-'}</h3><p>รหัสสินค้า: ${p.sku||p.productId||p.id||'-'}</p><p>${p.unit||'-'}</p><b>${money(p.listPrice)}</b><br><button class="ghost" onclick="addProductCardToQuote(decodeURIComponent('${id}'),event)">เพิ่มลงใบเสนอราคา</button></div>`}).join('')}
 
 function renderQuoteCustomerPicker(forceShow){
   const picker=$('quoteCustomerPicker'),input=$('quoteCustomerSearch');
@@ -972,4 +1113,67 @@ function renderQuoteProductPicker(){
   picker.innerHTML=limited.items.length?renderLimitNotice(limited.limited,QUOTE_PICKER_LIMIT)+limited.items.map(p=>`<div class="row"><div class="product-img">${p.brand==='Weber'?'🟨':'🟦'}</div><div><b>${p.productName||'-'}</b><br><small>${p.brand||'-'} · รหัสสินค้า: ${p.sku||p.productId||p.id||'-'} · ${p.unit||'-'} · ${money(p.listPrice)}</small></div><button class="tiny" style="margin-left:auto" onclick='addCart(${JSON.stringify(p)})'>+ เพิ่ม</button></div>`).join(''):'<div class="row quote-empty">ไม่พบรายการที่ค้นหา</div>';
 }
 
-window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.checkAppVersion=checkAppVersion; window.toast=toast;
+function normalizeRole(role){const text=String(role||'').trim().toLowerCase().replace(/[\s-]+/g,'_');if(text==='super_admin'||text==='superadmin')return'SUPER_ADMIN';if(text==='admin')return'ADMIN';if(text==='manager')return'MANAGER';if(text==='viewer')return'VIEWER';return'SALES'}
+function currentRole(){return normalizeRole(USER&&USER.role)}
+function canAccessPage(page){const role=currentRole();const access={SUPER_ADMIN:['home','quote','customers','products','promos','quotes','users','report','settings'],ADMIN:['home','quote','customers','products','promos','quotes','users','report','settings'],MANAGER:['home','customers','quotes','report','settings'],SALES:['home','quote','customers','products','promos','quotes','settings'],VIEWER:['home','quotes','report','settings']};return (access[role]||access.VIEWER).indexOf(page)>=0}
+function applyRolePermissions(){
+  document.querySelectorAll('.nav button[data-page]').forEach(btn=>{const page=btn.getAttribute('data-page');btn.classList.toggle('hidden',!canAccessPage(page));});
+  document.querySelectorAll('.main-action').forEach(btn=>{btn.classList.toggle('hidden',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0);});
+  const quoteActions=document.querySelector('#page-quote .actions');
+  if(quoteActions)quoteActions.classList.toggle('hidden',currentRole()==='VIEWER');
+}
+const baseNormalizeDbForAuth=normalizeDb;
+normalizeDb=function(data){
+  const db=baseNormalizeDbForAuth(data);
+  db.users=Array.isArray(data&&data.users)?data.users:[];
+  db.permissions=data&&data.permissions?data.permissions:{};
+  if(data&&data.user){
+    USER=Object.assign({}, USER||{}, data.user, {displayName:data.user.displayName||data.user.fullName||data.user.username});
+    try{localStorage.setItem('sg_user',JSON.stringify(USER));localStorage.setItem('currentUser',JSON.stringify(USER));localStorage.setItem('sg_role',USER.role||'');localStorage.setItem('sg_userId',USER.userId||'')}catch(error){}
+  }
+  return db;
+};
+const baseShowAppForAuth=showApp;
+showApp=function(){baseShowAppForAuth();applyRolePermissions();};
+const baseRenderAllForAuth=renderAll;
+renderAll=function(){baseRenderAllForAuth();renderUsers();applyRolePermissions();};
+const baseGoForAuth=go;
+go=function(page,btn){if(!canAccessPage(page)){toast('ไม่มีสิทธิ์เข้าใช้งานหน้านี้');return;}baseGoForAuth(page,btn);applyRolePermissions();};
+const baseEnsurePageDataForAuth=ensurePageData;
+ensurePageData=function(page){if(page==='users'){return loadUsers();}return baseEnsurePageDataForAuth(page);};
+async function loadUsers(){
+  if(['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0)return {ok:false,message:'Insufficient permission'};
+  const response=await callApi('loadUsers',{});
+  if(response&&response.ok){DB.users=Array.isArray(response.data)?response.data:[];renderUsers();}
+  else toast(response.message||'โหลด Users ไม่สำเร็จ');
+  return response;
+}
+function renderUsers(){
+  const list=$('userList');if(!list)return;
+  if(['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0){list.innerHTML='<p class="loading-text">Admin only</p>';return;}
+  const q=normalizeSearchText($('userSearch')?.value||'');
+  const users=(Array.isArray(DB.users)?DB.users:[]).filter(u=>!q||smartMatch(u,q,['fullName','displayName','username','role','branch','status','email','phone']));
+  list.innerHTML=users.length?users.map(u=>`<div class="row user-row"><div><b>${u.fullName||u.displayName||u.username||'-'}</b><br><small>${u.username||'-'} · ${u.email||'-'}</small></div><span class="pill blue">${u.role||'-'}</span><span>${u.branch||'-'}</span><span>${u.status||'-'}</span><small>${u.lastLogin||'-'}</small><button class="tiny" onclick="openUserForm('${u.userId||''}')">Edit</button></div>`).join(''):'<p class="loading-text">No users</p>';
+}
+function openUserForm(userId){
+  const form=$('userForm');if(!form)return;
+  const user=(Array.isArray(DB.users)?DB.users:[]).find(u=>String(u.userId||'')===String(userId||''))||{};
+  form.classList.remove('hidden');
+  const roleOptions=(currentRole()==='SUPER_ADMIN'?['SUPER_ADMIN','ADMIN','MANAGER','SALES','VIEWER']:['ADMIN','MANAGER','SALES','VIEWER']).map(r=>`<option value="${r}">${r}</option>`).join('');
+  form.innerHTML=`<div class="grid2"><div class="field"><label>Full Name</label><input id="userFullName" value="${user.fullName||user.displayName||''}"></div><div class="field"><label>Username</label><input id="userUsername" value="${user.username||''}" ${user.userId?'disabled':''}></div><div class="field"><label>Password ${user.userId?'(leave blank to keep)':''}</label><input id="userPassword" type="password"></div><div class="field"><label>Email</label><input id="userEmail" value="${user.email||''}"></div><div class="field"><label>Phone</label><input id="userPhone" value="${user.phone||''}"></div><div class="field"><label>Role</label><select id="userRole">${roleOptions}</select></div><div class="field"><label>Branch</label><input id="userBranch" value="${user.branch||''}"></div><div class="field"><label>Status</label><select id="userStatus"><option>Active</option><option>Inactive</option><option>Locked</option></select></div></div><div class="actions"><button class="primary" onclick="saveUserForm('${user.userId||''}')">${user.userId?'Update User':'Create User'}</button><button class="ghost" onclick="$('userForm').classList.add('hidden')">Cancel</button></div>`;
+  $('userRole').value=normalizeRole(user.role||'SALES');
+  $('userStatus').value=user.status||'Active';
+}
+async function saveUserForm(userId){
+  const payload={userId:userId||'',fullName:$('userFullName')?.value||'',username:$('userUsername')?.value||'',password:$('userPassword')?.value||'',email:$('userEmail')?.value||'',phone:$('userPhone')?.value||'',role:$('userRole')?.value||'Sales',branch:$('userBranch')?.value||'',status:$('userStatus')?.value||'Active'};
+  const action=userId?'updateUser':'createUser';
+  const response=await callApi(action,payload);
+  toast(response.message || (response.ok ? 'Saved' : 'Save failed'));
+  if(response&&response.ok){$('userForm')?.classList.add('hidden');await loadUsers();}
+  return response;
+}
+const baseRenderHistoryForAuth=renderHistory;
+renderHistory=function(){baseRenderHistoryForAuth();if(currentRole()==='VIEWER'){document.querySelectorAll('#quoteHistory button').forEach(btn=>{if(!/เปิดดู|Open/i.test(btn.textContent||''))btn.classList.add('hidden');});}};
+const baseRenderHomeForAuth=renderHome;
+renderHome=function(){baseRenderHomeForAuth();const role=currentRole();const title=document.querySelector('#dashboardContent .dashboard-kpi-grid');if(title&&role==='VIEWER'){document.querySelectorAll('#dashboardContent button').forEach(btn=>btn.classList.add('hidden'));}};
+window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.addProductCardToQuote=addProductCardToQuote; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.toast=toast;

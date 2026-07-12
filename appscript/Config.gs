@@ -80,5 +80,5 @@ function getDiscountChangeLogSheetName() {
 }
 
 function getDefaultUserHeaders() {
-  return ['userId', 'username', 'password', 'displayName', 'role', 'phone', 'email', 'photoUrl', 'active', 'createdAt', 'updatedAt'];
+  return ['userId', 'username', 'passwordHash', 'passwordSalt', 'fullName', 'email', 'phone', 'role', 'branch', 'status', 'mustChangePassword', 'createdBy', 'updatedBy', 'failedLoginCount', 'lastLogin', 'createdAt', 'updatedAt'];
 }

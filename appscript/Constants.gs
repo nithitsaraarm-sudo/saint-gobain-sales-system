@@ -1,5 +1,5 @@
 const APP_ENV = 'APP_ENV';
-const APP_VERSION = '0.2.0';
+const APP_VERSION = '0.5.0';
 
 const SHEET_NAMES = {
   USERS: 'Users',
@@ -40,10 +40,18 @@ const LINE_STATUSES = {
 };
 
 const USER_ROLES = {
+  SUPER_ADMIN: 'SUPER_ADMIN',
   ADMIN: 'ADMIN',
   MANAGER: 'MANAGER',
   SALES: 'SALES',
   VIEWER: 'VIEWER'
+};
+
+const USER_STATUSES = {
+  ACTIVE: 'Active',
+  PENDING: 'Pending',
+  LOCKED: 'Locked',
+  INACTIVE: 'Inactive'
 };
 
 const STATUS = {

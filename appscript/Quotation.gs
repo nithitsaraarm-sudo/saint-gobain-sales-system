@@ -1,10 +1,16 @@
 function createQuotation(customerId) {
   try {
-    const idCheck = requireValue(customerId, 'customerId');
+    const payload = customerId && typeof customerId === 'object' ? customerId : { customerId: customerId };
+    const targetCustomerId = payload.customerId || payload.value;
+    const auth = requireApiUser(payload);
+    if (!auth.ok) {
+      return auth;
+    }
+    const idCheck = requireValue(targetCustomerId, 'customerId');
     if (!idCheck.ok) {
       return idCheck;
     }
-    const customerResult = getCustomer(customerId);
+    const customerResult = getCustomer(targetCustomerId);
     if (!customerResult.ok) {
       return customerResult;
     }
@@ -12,13 +18,18 @@ function createQuotation(customerId) {
     const now = new Date().toISOString();
     const row = {
       quoteId: quoteId,
-      customerId: String(customerId).trim(),
+      customerId: String(targetCustomerId).trim(),
+      customerName: String(customerResult.data && customerResult.data.customerName || '').trim(),
       status: QUOTE_STATUSES.DRAFT,
       shipping: 0,
       specialDiscount: 0,
       subtotal: 0,
       vat: 0,
       grandTotal: 0,
+      createdBy: String(auth.data.fullName || auth.data.displayName || auth.data.username || '').trim(),
+      createdById: String(auth.data.userId || '').trim(),
+      updatedBy: String(auth.data.fullName || auth.data.displayName || auth.data.username || '').trim(),
+      updatedById: String(auth.data.userId || '').trim(),
       createdAt: now,
       updatedAt: now
     };
@@ -290,7 +301,21 @@ function saveQuotationPayload(payload) {
     const specialDiscount = roundCurrency(parseQuotationNumericValue(data.specialDiscount));
     const grandTotal = roundCurrency(data.grandTotal !== undefined ? parseQuotationNumericValue(data.grandTotal) : subtotal + vat + shipping - specialDiscount);
     const status = normalizeQuotationStatus(data.status, QUOTE_STATUSES.SAVED);
-    const createdBy = String(data.createdBy || data.sales || '').trim();
+    const auth = requireApiUser(data);
+    if (!auth.ok) {
+      return auth;
+    }
+    if (existingQuote) {
+      const permissionResult = canAccessQuotationRecord(auth.data, existingQuote);
+      if (!permissionResult.ok) {
+        return permissionResult;
+      }
+    }
+    const auditUser = auth.ok ? auth.data : {};
+    const auditName = String(auditUser.fullName || auditUser.displayName || auditUser.username || data.createdBy || data.sales || '').trim();
+    const auditId = String(auditUser.userId || data.createdById || '').trim();
+    const createdBy = String(existingQuote && existingQuote.createdBy || data.createdBy || auditName).trim();
+    const createdById = String(existingQuote && existingQuote.createdById || data.createdById || auditId).trim();
     const headerObject = {
       quoteId: quoteId,
       quoteNo: quoteNo,
@@ -303,6 +328,9 @@ function saveQuotationPayload(payload) {
       grandTotal: grandTotal,
       status: status,
       createdBy: createdBy,
+      createdById: createdById,
+      updatedBy: auditName,
+      updatedById: auditId,
       createdAt: String(existingQuote && existingQuote.createdAt || data.createdAt || now).trim(),
       updatedAt: now
     };
@@ -554,7 +582,7 @@ function getQuotationSheetHeaders(sheet) {
 }
 
 function getQuoteHistoryHeaders() {
-  return ['quoteId', 'quoteNo', 'customerId', 'customerName', 'subtotal', 'vat', 'shipping', 'specialDiscount', 'grandTotal', 'status', 'createdBy', 'createdAt', 'updatedAt'];
+  return ['quoteId', 'quoteNo', 'customerId', 'customerName', 'subtotal', 'vat', 'shipping', 'specialDiscount', 'grandTotal', 'status', 'createdBy', 'createdById', 'updatedBy', 'updatedById', 'createdAt', 'updatedAt'];
 }
 
 function getQuoteLineHeaders() {
@@ -607,6 +635,7 @@ function parseQuotationDate(value) {
 
 function getQuotationHistoryCacheKey(filter, limit) {
   const data = filter || {};
+  const user = data.currentUser || {};
   const normalizedLimit = limit || 50;
   if (isDefaultQuotationHistoryRequest(data, normalizedLimit)) {
     return 'quotationHistory:default:50';
@@ -618,13 +647,15 @@ function getQuotationHistoryCacheKey(filter, limit) {
     normalizeString(data.keyword || '').slice(0, 40),
     normalizeString(data.status || '').slice(0, 20),
     String(data.dateFrom || '').slice(0, 24),
-    String(data.dateTo || '').slice(0, 24)
+    String(data.dateTo || '').slice(0, 24),
+    normalizeString(user.userId || user.username || '').slice(0, 40)
   ].join(':');
 }
 
 function isDefaultQuotationHistoryRequest(filter, limit) {
   const data = filter || {};
   return limit === 50
+    && !data.currentUser
     && !String(data.customerId || '').trim()
     && !String(data.keyword || '').trim()
     && !String(data.status || '').trim()
@@ -662,6 +693,11 @@ function loadQuotation(payload) {
       return quoteResult;
     }
     const quote = quoteResult.data;
+    const permissionResult = canAccessQuotationRecord(payload && payload.currentUser, quote);
+    if (!permissionResult.ok) {
+      endPerformanceTimer(timer, 'permission=false');
+      return permissionResult;
+    }
     const targetQuoteId = String(quote.quoteId || quoteId).trim();
     const linesResult = getQuoteLines(targetQuoteId);
     if (!linesResult.ok) {
@@ -703,7 +739,7 @@ function loadQuotation(payload) {
 function duplicateQuotation(payload) {
   try {
     const quoteId = extractQuoteId(payload);
-    const originalResult = loadQuotation(quoteId);
+    const originalResult = loadQuotation(payload);
     if (!originalResult.ok) {
       return originalResult;
     }
@@ -754,6 +790,10 @@ function cancelQuotation(payload) {
     const quoteResult = getQuotationRow(quoteId);
     if (!quoteResult.ok) {
       return quoteResult;
+    }
+    const permissionResult = canAccessQuotationRecord(payload && payload.currentUser, quoteResult.data);
+    if (!permissionResult.ok) {
+      return permissionResult;
     }
     const targetQuoteId = String(quoteResult.data && quoteResult.data.quoteId || quoteId).trim();
     const updateObject = {
@@ -809,8 +849,22 @@ function getQuotationHistory(payload) {
     const shippingIndex = headers.indexOf('shipping');
     const specialDiscountIndex = headers.indexOf('specialDiscount');
     const grandTotalIndex = headers.indexOf('grandTotal');
+    const createdByIndex = headers.indexOf('createdBy');
+    const createdByIdIndex = headers.indexOf('createdById');
+    const updatedByIndex = headers.indexOf('updatedBy');
+    const updatedByIdIndex = headers.indexOf('updatedById');
+    const currentUser = filter.currentUser || null;
 
     const matches = values.filter(function (row) {
+      const rowQuote = {
+        createdBy: createdByIndex >= 0 ? row[createdByIndex] : '',
+        createdById: createdByIdIndex >= 0 ? row[createdByIdIndex] : '',
+        updatedBy: updatedByIndex >= 0 ? row[updatedByIndex] : '',
+        updatedById: updatedByIdIndex >= 0 ? row[updatedByIdIndex] : ''
+      };
+      if (!canAccessQuotationRecord(currentUser, rowQuote).ok) {
+        return false;
+      }
       const quoteDate = parseQuotationDate((createdAtIndex >= 0 ? row[createdAtIndex] : '') || (updatedAtIndex >= 0 ? row[updatedAtIndex] : ''));
       const haystack = normalizeString([
         quoteNoIndex >= 0 ? row[quoteNoIndex] : '',
@@ -855,6 +909,10 @@ function getQuotationHistory(payload) {
         grandTotal: grandTotal,
         total: grandTotal,
         status: String(statusIndex >= 0 ? row[statusIndex] || '' : '').trim(),
+        createdBy: String(createdByIndex >= 0 ? row[createdByIndex] || '' : '').trim(),
+        createdById: String(createdByIdIndex >= 0 ? row[createdByIdIndex] || '' : '').trim(),
+        updatedBy: String(updatedByIndex >= 0 ? row[updatedByIndex] || '' : '').trim(),
+        updatedById: String(updatedByIdIndex >= 0 ? row[updatedByIdIndex] || '' : '').trim(),
         createdAt: String(createdAtIndex >= 0 ? row[createdAtIndex] || '' : '').trim(),
         updatedAt: String(updatedAtIndex >= 0 ? row[updatedAtIndex] || '' : '').trim()
       };
@@ -867,6 +925,25 @@ function getQuotationHistory(payload) {
     logError('getQuotationHistory', error);
     return fail(error && error.message ? error.message : 'Failed to load quotation history');
   }
+}
+
+function canAccessQuotationRecord(user, quote) {
+  if (!user) {
+    return success(true);
+  }
+  if (hasRole(user, [USER_ROLES.ADMIN, USER_ROLES.VIEWER])) {
+    return success(true);
+  }
+  if (hasRole(user, [USER_ROLES.SALES])) {
+    const userId = normalizeString(user.userId);
+    const username = normalizeString(user.username);
+    const createdById = normalizeString(quote && (quote.createdById || quote.updatedById));
+    const createdBy = normalizeString(quote && (quote.createdBy || quote.updatedBy));
+    if ((userId && createdById === userId) || (username && createdBy === username)) {
+      return success(true);
+    }
+  }
+  return forbidden('Cannot access this quotation');
 }
 
 function getQuotationRow(quoteId) {

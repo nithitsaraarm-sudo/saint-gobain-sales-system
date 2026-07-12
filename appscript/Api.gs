@@ -1,56 +1,97 @@
 function api(action, payload) {
   try {
     const normalizedAction = String(action || '').trim();
+    const publicActions = ['login', 'demoLogin', 'register'];
+    const auth = publicActions.indexOf(normalizedAction) >= 0 ? null : requireApiUser(payload);
+    const user = auth && auth.ok ? auth.data : null;
+    const permissions = user ? getUserPermissions(user) : {};
+    if (auth && !auth.ok && normalizedAction !== 'bootstrap') {
+      return auth;
+    }
+    if (user && user.mustChangePassword && ['bootstrap', 'changePassword', 'logout'].indexOf(normalizedAction) < 0) {
+      return forbidden('กรุณาเปลี่ยนรหัสผ่านก่อนใช้งานต่อ');
+    }
     switch (normalizedAction) {
       case 'login':
         return authorizeAction(loginUser, [payload && payload.username, payload && payload.password]);
       case 'demoLogin':
         return authorizeAction(demoLogin, []);
+      case 'logout':
+        return authorizeAction(logoutUser, [payload && (payload.sessionToken || payload.sg_token || payload.token)]);
+      case 'changePassword':
+        return authorizeAction(changePassword, [payload]);
+      case 'createUser':
+        return authorizeAction(createUser, [payload]);
+      case 'updateUser':
+        return authorizeAction(updateUser, [payload]);
+      case 'loadUsers':
+        return authorizeAction(loadUsers, [payload]);
       case 'register':
-        return authorizeAction(registerUser, [payload]);
+        return forbidden('Self registration is disabled');
       case 'resetPassword':
-        return authorizeAction(resetPassword, [payload && payload.phone, payload && payload.username, payload && payload.newPassword]);
+        return fail('Forgot password is not available yet');
       case 'updateProfile':
         return authorizeAction(updateProfile, [payload]);
       case 'customers':
       case 'getCustomers':
+        if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES])) return forbidden('Insufficient permission');
         return authorizeAction(getCustomers, []);
       case 'customer':
-        return authorizeAction(getCustomer, [payload && payload.customerId]);
+        if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES])) return forbidden('Insufficient permission');
+        return authorizeAction(getCustomer, [payload && (payload.customerId || payload.value)]);
       case 'searchCustomers':
+        if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES])) return forbidden('Insufficient permission');
         return authorizeAction(searchCustomers, [payload && payload.keyword]);
       case 'products':
       case 'getProducts':
+        if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES])) return forbidden('Insufficient permission');
         return authorizeAction(getProducts, []);
       case 'product':
-        return authorizeAction(getProduct, [payload && payload.productId]);
+        if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES])) return forbidden('Insufficient permission');
+        return authorizeAction(getProduct, [payload && (payload.productId || payload.value)]);
       case 'discount':
         return authorizeAction(getDiscount, [payload && payload.customerId, payload && payload.groupCode]);
       case 'saveCustomer':
+        if (!permissions.canManageCustomers) return forbidden('Insufficient permission');
         return authorizeAction(saveCustomer, [payload]);
       case 'saveProduct':
+        if (!permissions.canManageProducts) return forbidden('Insufficient permission');
         return authorizeAction(saveProduct, [payload]);
       case 'savePromotion':
+        if (!permissions.canManagePromotions) return forbidden('Insufficient permission');
         return authorizeAction(savePromotion, [payload]);
       case 'updateSettings':
+        if (!permissions.canManageSettings) return forbidden('Insufficient permission');
         return authorizeAction(updateSettings, [payload]);
       case 'createQuotation':
+        if (!permissions.canCreateQuotations) return forbidden('Insufficient permission');
+        if (payload && typeof payload === 'object') payload.currentUser = user;
         return authorizeAction(createQuotation, [payload]);
       case 'loadQuotation':
+        if (payload && typeof payload === 'object') payload.currentUser = user;
         return authorizeAction(loadQuotation, [payload]);
       case 'duplicateQuotation':
+        if (!permissions.canCreateQuotations) return forbidden('Insufficient permission');
+        if (payload && typeof payload === 'object') payload.currentUser = user;
         return authorizeAction(duplicateQuotation, [payload]);
       case 'cancelQuotation':
+        if (!permissions.canEditQuotations) return forbidden('Insufficient permission');
+        if (payload && typeof payload === 'object') payload.currentUser = user;
         return authorizeAction(cancelQuotation, [payload]);
       case 'getQuotationHistory':
+        if (payload && typeof payload === 'object') payload.currentUser = user;
         return authorizeAction(getQuotationHistory, [payload]);
       case 'updateQuotation':
+        if (!permissions.canEditQuotations) return forbidden('Insufficient permission');
+        if (payload && typeof payload === 'object') payload.currentUser = user;
         return authorizeAction(saveQuotation, [payload]);
       case 'quotation':
       case 'saveQuotation':
+        if (!permissions.canCreateQuotations) return forbidden('Insufficient permission');
+        if (payload && typeof payload === 'object') payload.currentUser = user;
         return authorizeAction(saveQuotation, [payload]);
       case 'bootstrap':
-        return authorizeAction(getBootstrapData, []);
+        return authorizeAction(getBootstrapData, [payload]);
       default:
         return fail('Unsupported API action: ' + normalizedAction);
     }

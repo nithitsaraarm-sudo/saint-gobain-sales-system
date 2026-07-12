@@ -1,4 +1,4 @@
-window.APP_VERSION = window.APP_VERSION || '0.4.0';
+window.APP_VERSION = window.APP_VERSION || '0.5.0';
 const APP_ENV = String(window.APP_ENV || 'production').trim().toLowerCase();
 const API_MOCK_MODE = APP_ENV === 'development';
 const GAS_WEB_APP_URL =
@@ -110,7 +110,7 @@ function withApiTiming(action, requestKey, requestPromise) {
 
 function getQuoteIdFromPayload(payload) {
   if (payload && typeof payload === 'object') {
-    return String(payload.quoteId || payload.quoteNo || '').trim();
+    return String(payload.quoteId || payload.quoteNo || payload.value || '').trim();
   }
   return String(payload || '').trim();
 }
@@ -164,8 +164,25 @@ function runApiRequest(action, payload) {
 function callApi(action, payload) {
   const normalizedAction = String(action || '').trim();
   let body = payload || {};
+  if (body && typeof body === 'object' && !Array.isArray(body)) {
+    body = Object.assign({}, body);
+  } else {
+    body = { value: body };
+  }
+  try {
+    const token = localStorage.getItem('sg_token') || localStorage.getItem('sessionToken') || '';
+    const userId = localStorage.getItem('sg_userId') || '';
+    if (token && !body.sessionToken) body.sessionToken = token;
+    if (userId && !body.currentUserId) body.currentUserId = userId;
+  } catch (error) {
+    // Auth context is optional for public calls.
+  }
   if (normalizedAction === 'loadQuotation') {
     body = { quoteId: getQuoteIdFromPayload(body) };
+    try {
+      const token = localStorage.getItem('sg_token') || localStorage.getItem('sessionToken') || '';
+      if (token) body.sessionToken = token;
+    } catch (error) {}
   }
   const requestKey = getRequestKey(normalizedAction, body);
 
@@ -306,6 +323,18 @@ function jsonpApi(action, payload) {
 
 function mockApi(action, payload) {
   const data = payload || {};
+  if (action === 'demoLogin') {
+    return { ok: false, code: 'FORBIDDEN', message: 'Demo Login is disabled' };
+  }
+  if (action === 'login') {
+    return { ok: true, data: { sessionToken: 'mock-token', user: { userId: 'UDEMO', username: data.username || 'demo', fullName: 'Demo Sales', displayName: 'Demo Sales', role: 'ADMIN', branch: 'Demo', phone: '0800000000' } } };
+  }
+  if (action === 'loadUsers') {
+    return { ok: true, data: [{ userId: 'UDEMO', username: 'demo', fullName: 'Demo Sales', role: 'ADMIN', branch: 'Demo', status: 'Active', lastLogin: '' }] };
+  }
+  if (['createUser', 'updateUser', 'changePassword', 'logout'].indexOf(action) >= 0) {
+    return { ok: true, data: data, message: 'Mock success' };
+  }
   switch (action) {
     case 'login':
       return { ok: true, data: { username: data.username || 'demo', displayName: 'ก้อย Sales', position: 'Sales Executive', phone: '0800000000' } };
@@ -322,7 +351,7 @@ function mockApi(action, payload) {
     case 'quotation':
       return { ok: true, message: 'Mock quotation saved', data: { quoteNo: 'QT-MOCK-' + Date.now() } };
     case 'register':
-      return { ok: true, data: { username: data.username || 'demo', displayName: data.displayName || 'ก้อย Sales', position: data.position || 'Sales Executive', phone: data.phone || '0800000000' } };
+      return { ok: false, code: 'FORBIDDEN', message: 'Self registration is disabled' };
     case 'resetPassword':
       return { ok: true, message: 'Mock password reset successful' };
     case 'updateProfile':
