@@ -32,6 +32,8 @@ function api(action, payload) {
         return fail('Forgot password is not available yet');
       case 'updateProfile':
         return authorizeAction(updateProfile, [payload]);
+      case 'uploadProfileImage':
+        return authorizeAction(uploadProfileImage, [payload]);
       case 'customers':
       case 'getCustomers':
         if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES])) return forbidden('Insufficient permission');
@@ -46,6 +48,9 @@ function api(action, payload) {
       case 'getProducts':
         if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES])) return forbidden('Insufficient permission');
         return authorizeAction(getProducts, []);
+      case 'searchQuoteProducts':
+        if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES])) return forbidden('Insufficient permission');
+        return authorizeAction(searchQuoteProducts, [payload]);
       case 'product':
         if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES])) return forbidden('Insufficient permission');
         return authorizeAction(getProduct, [payload && (payload.productId || payload.value)]);

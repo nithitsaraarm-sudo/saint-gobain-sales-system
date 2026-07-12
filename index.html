@@ -55,12 +55,11 @@
     <nav class="nav">
       <button class="active" data-page="home" onclick="go('home',this)">🏠 หน้าหลัก</button><button data-page="quote" onclick="go('quote',this)">📄 ออกใบเสนอราคา</button><button data-page="customers" onclick="go('customers',this)">🏪 ร้านค้า</button><button data-page="products" onclick="go('products',this)">📦 สินค้า</button><button data-page="promos" onclick="go('promos',this)">🎁 โปรโมชั่น</button><button data-page="quotes" onclick="go('quotes',this)">📋 ใบเสนอราคา</button><button data-page="users" onclick="go('users',this)">👥 Users</button><button data-page="report" onclick="go('report',this)">📊 รายงาน</button><button data-page="settings" onclick="go('settings',this)">⚙️ ตั้งค่า</button>
     </nav>
-    <div class="profile" onclick="go('settings')"><div class="avatar" id="sideAvatar">👩🏻</div><div><b id="sideName">ก้อย Sales</b><br><span id="sidePosition">Sales Executive</span></div></div>
   </aside>
   <main class="main">
-    <div class="topbar no-print"><button class="hamb" onclick="toggleMenu(true)">☰</button><div></div><button class="ghost" onclick="logout()">ออกจากระบบ</button></div>
+    <div class="topbar no-print"><button class="hamb" onclick="toggleMenu(true)">☰</button><div></div><div class="topbar-user-area"><button class="header-profile" onclick="go('settings')" aria-label="Profile"><span class="header-avatar" id="topAvatar">👤</span><span class="header-user-text"><b id="topName">-</b><small id="topPosition">-</small></span></button><span class="header-separator"></span><button class="ghost" onclick="logout()">ออกจากระบบ</button></div></div>
     <section id="page-home" class="page active">
-      <div class="hero"><div class="greeting"><h1 id="greetingText">สวัสดีตอนเช้า, ก้อย 👋</h1><p id="welcomeText">เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ</p></div><div class="logos"><div class="badge-logo gyro">Gyproc</div><div class="badge-logo web">weber</div></div></div>
+      <div class="hero"><div class="greeting"><h1 id="greetingText">-</h1><p id="welcomeText">-</p></div><div class="logos"><div class="badge-logo gyro">Gyproc</div><div class="badge-logo web">weber</div></div></div>
       <div class="grid4"><div class="stat"><div class="ico">📄</div><h3>ใบเสนอราคาวันนี้</h3><b id="statQuotes">0</b> ใบ<small>อัปเดตจาก Google Sheet</small></div><div class="stat"><div class="ico">💰</div><h3>ยอดรวมวันนี้</h3><b id="statSales">0</b><small>บาท</small></div><div class="stat"><div class="ico">👥</div><h3>ลูกค้าใหม่วันนี้</h3><b id="statCustomers">0</b> ราย<small>จากรายการร้านค้า</small></div><div class="stat"><div class="ico">📝</div><h3>ใบเสนอราคาที่รออนุมัติ</h3><b id="statPending">0</b> ใบ<small>รอดำเนินการ</small></div></div>
       <div class="cols"><div class="card"><div class="section-title"><h2>ลูกค้าที่เปิดล่าสุด</h2><button class="tiny" onclick="go('customers')">ดูทั้งหมด</button></div><div class="list" id="latestCustomers"></div></div><div class="card"><div class="section-title"><h2>โปรโมชั่นที่กำลังใช้งาน</h2><button class="tiny" onclick="go('promos')">ดูทั้งหมด</button></div><div class="list" id="activePromos"></div></div></div>
       <div class="card" style="margin-top:20px"><div class="section-title"><h2>สินค้าขายดี</h2><button class="tiny" onclick="go('report')">ดูรายงานยอดขาย</button></div><div class="best" id="bestProducts"></div></div>
@@ -89,10 +88,12 @@
         <div class="card" style="margin-top:16px"><h2>โปรไฟล์ผู้ใช้งาน</h2>
           <div class="avatar-upload"><div id="profilePreview" class="avatar-preview">👩🏻</div><div><label class="primary" for="profileFile">อัพโหลดรูปจากมือถือ</label><input id="profileFile" class="file-input" type="file" accept="image/*" onchange="handleProfileImage(event)"><p style="color:var(--muted);margin:8px 0 0">ระบบจะย่อรูปให้อัตโนมัติเพื่อให้บันทึกได้เร็ว</p></div></div>
           <div class="field"><label>ชื่อที่แสดง</label><input id="setDisplay"></div>
+          <div class="field"><label>Quote Display Name</label><input id="setQuoteDisplayName"></div>
           <div class="field"><label>ตำแหน่งงาน</label><input id="setPosition"></div>
           <div class="field"><label>เบอร์โทร</label><input id="setPhone"></div>
+          <div class="field"><label>Email</label><input id="setEmail" type="email"></div>
           <div class="field"><label>ลิงก์รูปโปรไฟล์ หรือรูปที่อัพโหลด</label><input id="setPhoto" placeholder="วาง URL รูปภาพ หรืออัพโหลดรูปจากมือถือด้านบน" oninput="updateProfilePreview(this.value)"></div>
-          <button class="primary" onclick="saveProfile()">บันทึกโปรไฟล์</button>
+          <button id="saveProfileBtn" class="primary" onclick="saveProfile()">บันทึกโปรไฟล์</button>
         </div>
       </div>
 
@@ -106,7 +107,7 @@
           <div class="field"><label>คำทักทายตอนบ่าย</label><input id="setAfternoon"></div>
           <div class="field"><label>คำทักทายตอนเย็น</label><input id="setEvening"></div>
           <div class="field"><label>คำทักทายตอนดึก</label><input id="setNight"></div>
-          <button class="primary" onclick="saveSettings()">บันทึกตั้งค่า</button>
+          <button id="saveSettingsBtn" class="primary" onclick="saveSettings()">บันทึกตั้งค่า</button>
         </div>
       </div>
 
@@ -160,6 +161,17 @@
       <button class="ghost" onclick="closeQuotationDetailModal()">Close</button>
     </div>
     <div id="quoteDetailModalBody" class="quote-detail-modal-body"></div>
+  </div>
+</div>
+<div id="quoteTypeModal" class="modal no-print">
+  <div class="modal-card quote-type-modal-card">
+    <h2>เลือกประเภทใบเสนอราคา</h2>
+    <p>เลือก BU ก่อนสร้างใบเสนอราคาใหม่</p>
+    <div class="quote-type-options">
+      <button class="quote-type-option gyproc" onclick="selectQuoteType('GYPROC')"><span>Gyproc</span><small>Blue BU</small></button>
+      <button class="quote-type-option weber" onclick="selectQuoteType('WEBER')"><span>Weber</span><small>Yellow BU</small></button>
+    </div>
+    <div class="actions" style="margin-top:14px"><button class="ghost" onclick="closeQuoteTypeModal()">Cancel</button></div>
   </div>
 </div>
 <div id="modal" class="modal"><div class="modal-card"><div class="section-title"><h2 id="modalTitle">เพิ่มข้อมูล</h2><button class="ghost" onclick="closeModal()">ปิด</button></div><div id="modalBody"></div></div></div><div id="toast" class="toast"></div>

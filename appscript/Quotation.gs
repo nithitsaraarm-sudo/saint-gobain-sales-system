@@ -1,3 +1,39 @@
+function normalizeQuoteType(value) {
+  const text = String(value || '').trim().toUpperCase();
+  return text === 'GYPROC' ? 'GYPROC' : 'WEBER';
+}
+
+function isInvalidExplicitQuoteType(value) {
+  const text = String(value || '').trim().toUpperCase();
+  return Boolean(text && text !== 'GYPROC' && text !== 'WEBER');
+}
+
+function getQuotationProductBusinessUnit(product) {
+  if (typeof getProductBusinessUnit === 'function') {
+    return getProductBusinessUnit(product);
+  }
+  const item = product && typeof product === 'object' ? product : {};
+  const text = String(item.businessUnit || item.quoteType || item.bu || item.brand || '').trim().toUpperCase();
+  if (text.indexOf('GYPROC') >= 0) return 'GYPROC';
+  if (text.indexOf('WEBER') >= 0) return 'WEBER';
+  return '';
+}
+
+function validateProductForQuotationLine(product) {
+  if (typeof filterActiveProductObject === 'function' && !filterActiveProductObject(product)) {
+    return validationError('Product is inactive');
+  }
+  const productQuoteType = getQuotationProductBusinessUnit(product);
+  if (!productQuoteType) {
+    return validationError('productBusinessUnit is required');
+  }
+  return success({ productBusinessUnit: productQuoteType });
+}
+
+function validateProductMatchesQuoteType(product, quoteType) {
+  return validateProductForQuotationLine(product);
+}
+
 function createQuotation(customerId) {
   try {
     const payload = customerId && typeof customerId === 'object' ? customerId : { customerId: customerId };
@@ -16,8 +52,14 @@ function createQuotation(customerId) {
     }
     const quoteId = generateId('QUOTE');
     const now = new Date().toISOString();
+    if (isInvalidExplicitQuoteType(payload.quoteType || payload.businessUnit)) {
+      return validationError('businessUnit must be WEBER or GYPROC');
+    }
+    const quoteType = normalizeQuoteType(payload.quoteType || payload.businessUnit);
     const row = {
       quoteId: quoteId,
+      quoteType: quoteType,
+      businessUnit: quoteType,
       customerId: String(targetCustomerId).trim(),
       customerName: String(customerResult.data && customerResult.data.customerName || '').trim(),
       status: QUOTE_STATUSES.DRAFT,
@@ -33,6 +75,7 @@ function createQuotation(customerId) {
       createdAt: now,
       updatedAt: now
     };
+    ensureQuotationSheets();
     const insertResult = appendRow(QUOTE_HISTORY_SHEET, row);
     if (!insertResult.ok) {
       return insertResult;
@@ -73,6 +116,10 @@ function addQuotationItem(quoteId, productId, qty) {
       return productResult;
     }
     const product = productResult.data || {};
+    const lineProductCheck = validateProductForQuotationLine(product);
+    if (!lineProductCheck.ok) {
+      return lineProductCheck;
+    }
     const discountResult = getDiscount(quote.customerId, getProductGroupCode(product));
     const listPrice = roundCurrency(parseNumericValue(product.listPrice || product.price || 0));
     const discountPercent = discountResult.ok ? roundCurrency(parseNumericValue(discountResult.data && discountResult.data.discountPercent)) : 0;
@@ -84,6 +131,7 @@ function addQuotationItem(quoteId, productId, qty) {
       quoteId: quoteId,
       lineId: lineId,
       productId: String(productId).trim(),
+      productBusinessUnit: lineProductCheck.data && lineProductCheck.data.productBusinessUnit || '',
       productName: String(product.productName || product.name || product.product || '').trim(),
       qty: quantity,
       listPrice: listPrice,
@@ -301,6 +349,10 @@ function saveQuotationPayload(payload) {
     const specialDiscount = roundCurrency(parseQuotationNumericValue(data.specialDiscount));
     const grandTotal = roundCurrency(data.grandTotal !== undefined ? parseQuotationNumericValue(data.grandTotal) : subtotal + vat + shipping - specialDiscount);
     const status = normalizeQuotationStatus(data.status, QUOTE_STATUSES.SAVED);
+    if (isInvalidExplicitQuoteType(data.quoteType || data.businessUnit)) {
+      return validationError('businessUnit must be WEBER or GYPROC');
+    }
+    const quoteType = normalizeQuoteType(data.quoteType || data.businessUnit || (existingQuote && (existingQuote.quoteType || existingQuote.businessUnit)));
     const auth = requireApiUser(data);
     if (!auth.ok) {
       return auth;
@@ -311,6 +363,11 @@ function saveQuotationPayload(payload) {
         return permissionResult;
       }
     }
+    const businessUnitCheck = validateQuotationPayloadProductsBusinessUnit(items, quoteType);
+    if (!businessUnitCheck.ok) {
+      return businessUnitCheck;
+    }
+    const productBusinessUnits = businessUnitCheck.data && businessUnitCheck.data.productBusinessUnits || {};
     const auditUser = auth.ok ? auth.data : {};
     const auditName = String(auditUser.fullName || auditUser.displayName || auditUser.username || data.createdBy || data.sales || '').trim();
     const auditId = String(auditUser.userId || data.createdById || '').trim();
@@ -319,6 +376,8 @@ function saveQuotationPayload(payload) {
     const headerObject = {
       quoteId: quoteId,
       quoteNo: quoteNo,
+      quoteType: quoteType,
+      businessUnit: quoteType,
       customerId: customerId,
       customerName: customerName,
       subtotal: subtotal,
@@ -349,11 +408,13 @@ function saveQuotationPayload(payload) {
     }
 
     for (var i = 0; i < items.length; i++) {
-      const item = normalizeQuotationPayloadItem(items[i], i + 1);
+      const rawProductId = String(items[i] && items[i].productId || '').trim();
+      const item = normalizeQuotationPayloadItem(items[i], i + 1, productBusinessUnits[normalizeString(rawProductId)]);
       const lineResult = appendQuotationObject(QUOTE_LINES_SHEET, getQuoteLineHeaders(), {
         quoteId: quoteId,
         lineNo: item.lineNo,
         productId: item.productId,
+        productBusinessUnit: item.productBusinessUnit,
         productName: item.productName,
         unit: item.unit,
         qty: item.qty,
@@ -380,7 +441,9 @@ function saveQuotationPayload(payload) {
       shipping: shipping,
       specialDiscount: specialDiscount,
       grandTotal: grandTotal,
-      status: status
+      status: status,
+      quoteType: quoteType,
+      businessUnit: quoteType
     }, 'Quotation saved');
   } catch (error) {
     logError('saveQuotationPayload', error);
@@ -388,7 +451,7 @@ function saveQuotationPayload(payload) {
   }
 }
 
-function normalizeQuotationPayloadItem(item, lineNo) {
+function normalizeQuotationPayloadItem(item, lineNo, productBusinessUnit) {
   const data = item || {};
   const qty = roundCurrency(parseQuotationNumericValue(data.qty || 1));
   const listPrice = roundCurrency(parseQuotationNumericValue(data.listPrice));
@@ -400,6 +463,7 @@ function normalizeQuotationPayloadItem(item, lineNo) {
   return {
     lineNo: lineNo,
     productId: String(data.productId || '').trim(),
+    productBusinessUnit: getQuotationProductBusinessUnit({ businessUnit: productBusinessUnit || data.productBusinessUnit || data.businessUnit || data.quoteType || data.brand }),
     productName: String(data.productName || '').trim(),
     unit: String(data.unit || '').trim(),
     qty: qty,
@@ -411,6 +475,41 @@ function normalizeQuotationPayloadItem(item, lineNo) {
     grandTotal: grandTotal,
     status: String(data.status || LINE_STATUSES.ACTIVE).trim() || LINE_STATUSES.ACTIVE
   };
+}
+
+function validateQuotationPayloadProductsBusinessUnit(items, quoteType) {
+  try {
+    const productsResult = getProducts();
+    if (!productsResult.ok) {
+      return productsResult;
+    }
+    const products = Array.isArray(productsResult.data) ? productsResult.data : [];
+    const list = Array.isArray(items) ? items : [];
+    const productBusinessUnits = {};
+    for (var i = 0; i < list.length; i++) {
+      const productId = String(list[i] && list[i].productId || '').trim();
+      if (!productId) {
+        return validationError('productId is required');
+      }
+      const product = typeof findProductById === 'function'
+        ? findProductById(productId, products)
+        : products.find(function (item) {
+          return normalizeString(item.productId || item.id || item.sku || item.productCode) === normalizeString(productId);
+        });
+      if (!product) {
+        return notFound('Product not found');
+      }
+      const match = validateProductForQuotationLine(product);
+      if (!match.ok) {
+        return match;
+      }
+      productBusinessUnits[normalizeString(productId)] = match.data && match.data.productBusinessUnit || '';
+    }
+    return success({ productBusinessUnits: productBusinessUnits });
+  } catch (error) {
+    logError('validateQuotationPayloadProductsBusinessUnit', error);
+    return fail(error && error.message ? error.message : 'Failed to validate quotation products');
+  }
 }
 
 function sumQuotationItems(items, field) {
@@ -582,11 +681,11 @@ function getQuotationSheetHeaders(sheet) {
 }
 
 function getQuoteHistoryHeaders() {
-  return ['quoteId', 'quoteNo', 'customerId', 'customerName', 'subtotal', 'vat', 'shipping', 'specialDiscount', 'grandTotal', 'status', 'createdBy', 'createdById', 'updatedBy', 'updatedById', 'createdAt', 'updatedAt'];
+  return ['quoteId', 'quoteNo', 'quoteType', 'businessUnit', 'customerId', 'customerName', 'subtotal', 'vat', 'shipping', 'specialDiscount', 'grandTotal', 'status', 'createdBy', 'createdById', 'updatedBy', 'updatedById', 'createdAt', 'updatedAt'];
 }
 
 function getQuoteLineHeaders() {
-  return ['quoteId', 'lineNo', 'productId', 'productName', 'unit', 'qty', 'listPrice', 'discountPercent', 'unitPrice', 'lineTotal', 'vat', 'grandTotal', 'status'];
+  return ['quoteId', 'lineNo', 'productId', 'productBusinessUnit', 'productName', 'unit', 'qty', 'listPrice', 'discountPercent', 'unitPrice', 'lineTotal', 'vat', 'grandTotal', 'status'];
 }
 
 function extractQuoteId(payload) {
@@ -605,9 +704,17 @@ function normalizeLoadedQuotationLine(line) {
   const lineTotal = roundCurrency(parseQuotationNumericValue(item.lineTotal || unitPrice * qty));
   const vat = roundCurrency(parseQuotationNumericValue(item.vat || lineTotal * 0.07));
   const grandTotal = roundCurrency(parseQuotationNumericValue(item.grandTotal || lineTotal + vat));
+  var productBusinessUnit = getQuotationProductBusinessUnit(item);
+  if (!productBusinessUnit && item.productId) {
+    const productResult = getProduct(item.productId);
+    if (productResult.ok) {
+      productBusinessUnit = getQuotationProductBusinessUnit(productResult.data);
+    }
+  }
   return Object.assign({}, item, {
     lineNo: String(item.lineNo || '').trim(),
     productId: String(item.productId || '').trim(),
+    productBusinessUnit: productBusinessUnit,
     productName: String(item.productName || '').trim(),
     unit: String(item.unit || '').trim(),
     qty: qty,
@@ -692,7 +799,9 @@ function loadQuotation(payload) {
       endPerformanceTimer(timer, 'quote=false');
       return quoteResult;
     }
-    const quote = quoteResult.data;
+    const quote = Object.assign({}, quoteResult.data || {});
+    quote.quoteType = normalizeQuoteType(quote.quoteType || quote.businessUnit);
+    quote.businessUnit = quote.quoteType;
     const permissionResult = canAccessQuotationRecord(payload && payload.currentUser, quote);
     if (!permissionResult.ok) {
       endPerformanceTimer(timer, 'permission=false');
@@ -749,9 +858,12 @@ function duplicateQuotation(payload) {
     const duplicatePayload = {
       customerId: String(quote.customerId || '').trim(),
       customerName: String(quote.customerName || '').trim(),
+      quoteType: normalizeQuoteType(quote.quoteType || quote.businessUnit),
+      businessUnit: normalizeQuoteType(quote.quoteType || quote.businessUnit),
       items: Array.isArray(original.lines) ? original.lines.map(function (line) {
         return {
           productId: line.productId,
+          productBusinessUnit: getQuotationProductBusinessUnit(line),
           productName: line.productName,
           unit: line.unit,
           qty: line.qty,
@@ -829,6 +941,7 @@ function getQuotationHistory(payload) {
       endPerformanceTimer(timer, 'cache=hit count=' + (Array.isArray(cached) ? cached.length : 0));
       return success(cached);
     }
+    ensureQuotationSheets();
     const sheet = getSheet(QUOTE_HISTORY_SHEET);
     if (!sheet || sheet.getLastRow() < 2) {
       endPerformanceTimer(timer, 'count=0');
@@ -839,6 +952,8 @@ function getQuotationHistory(payload) {
     const values = sheet.getRange(2, 1, lastRow - 1, Math.max(sheet.getLastColumn(), headers.length)).getDisplayValues();
     const quoteIdIndex = headers.indexOf('quoteId');
     const quoteNoIndex = headers.indexOf('quoteNo');
+    const quoteTypeIndex = headers.indexOf('quoteType');
+    const businessUnitIndex = headers.indexOf('businessUnit');
     const customerIdIndex = headers.indexOf('customerId');
     const customerNameIndex = headers.indexOf('customerName');
     const statusIndex = headers.indexOf('status');
@@ -871,7 +986,9 @@ function getQuotationHistory(payload) {
         quoteIdIndex >= 0 ? row[quoteIdIndex] : '',
         customerNameIndex >= 0 ? row[customerNameIndex] : '',
         customerIdIndex >= 0 ? row[customerIdIndex] : '',
-        statusIndex >= 0 ? row[statusIndex] : ''
+        statusIndex >= 0 ? row[statusIndex] : '',
+        quoteTypeIndex >= 0 ? row[quoteTypeIndex] : '',
+        businessUnitIndex >= 0 ? row[businessUnitIndex] : ''
       ].join(' '));
       if (customerId && normalizeString(customerIdIndex >= 0 ? row[customerIdIndex] : '') !== normalizeString(customerId)) {
         return false;
@@ -900,6 +1017,8 @@ function getQuotationHistory(payload) {
       return {
         quoteId: String(quoteIdValue || '').trim(),
         quoteNo: String(quoteNoValue || quoteIdValue || '').trim(),
+        quoteType: normalizeQuoteType((quoteTypeIndex >= 0 ? row[quoteTypeIndex] : '') || (businessUnitIndex >= 0 ? row[businessUnitIndex] : '')),
+        businessUnit: normalizeQuoteType((quoteTypeIndex >= 0 ? row[quoteTypeIndex] : '') || (businessUnitIndex >= 0 ? row[businessUnitIndex] : '')),
         customerId: String(customerIdIndex >= 0 ? row[customerIdIndex] || '' : '').trim(),
         customerName: String(customerNameIndex >= 0 ? row[customerNameIndex] || '' : '').trim(),
         subtotal: roundCurrency(parseQuotationNumericValue(subtotalIndex >= 0 ? row[subtotalIndex] : 0)),
@@ -931,7 +1050,7 @@ function canAccessQuotationRecord(user, quote) {
   if (!user) {
     return success(true);
   }
-  if (hasRole(user, [USER_ROLES.ADMIN, USER_ROLES.VIEWER])) {
+  if (hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.VIEWER])) {
     return success(true);
   }
   if (hasRole(user, [USER_ROLES.SALES])) {
@@ -952,6 +1071,7 @@ function getQuotationRow(quoteId) {
     if (!idCheck.ok) {
       return idCheck;
     }
+    ensureQuotationSheets();
     const sheet = getSheet(QUOTE_HISTORY_SHEET);
     if (!sheet || sheet.getLastRow() < 2) {
       return notFound('Quotation not found');
@@ -1111,8 +1231,14 @@ function getProductGroupCode(product) {
 
 function ensureQuotationSheets() {
   try {
-    ensureSheet(QUOTE_HISTORY_SHEET, getQuoteHistoryHeaders());
-    ensureSheet(QUOTE_LINES_SHEET, getQuoteLineHeaders());
+    const historySheet = ensureSheet(QUOTE_HISTORY_SHEET, getQuoteHistoryHeaders());
+    const linesSheet = ensureSheet(QUOTE_LINES_SHEET, getQuoteLineHeaders());
+    if (historySheet) {
+      ensureQuotationSheetColumns(historySheet, getQuoteHistoryHeaders());
+    }
+    if (linesSheet) {
+      ensureQuotationSheetColumns(linesSheet, getQuoteLineHeaders());
+    }
     return success(true);
   } catch (error) {
     logError('ensureQuotationSheets', error);

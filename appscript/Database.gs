@@ -373,10 +373,10 @@ function getHeadersForSheet(sheetName) {
     return ['productId', 'brand', 'discountGroup', 'groupCode', 'itemName', 'itemDesc', 'unit', 'listPrice', 'imageUrl', 'status', 'active', 'notes', 'promoText'];
   }
   if (sheetName === SHEET_NAMES.QUOTE_HISTORY) {
-    return ['quoteId', 'customerId', 'status', 'shipping', 'specialDiscount', 'subtotal', 'vat', 'grandTotal', 'createdAt', 'updatedAt'];
+    return ['quoteId', 'quoteNo', 'quoteType', 'businessUnit', 'customerId', 'customerName', 'status', 'shipping', 'specialDiscount', 'subtotal', 'vat', 'grandTotal', 'createdBy', 'createdById', 'updatedBy', 'updatedById', 'createdAt', 'updatedAt'];
   }
   if (sheetName === SHEET_NAMES.QUOTE_LINES) {
-    return ['quoteId', 'lineId', 'productId', 'productName', 'qty', 'listPrice', 'discountPercent', 'netPrice', 'lineTotal', 'status', 'createdAt', 'updatedAt'];
+    return ['quoteId', 'lineId', 'lineNo', 'productId', 'productBusinessUnit', 'productName', 'unit', 'qty', 'listPrice', 'discountPercent', 'unitPrice', 'netPrice', 'lineTotal', 'vat', 'grandTotal', 'status', 'createdAt', 'updatedAt'];
   }
   if (sheetName === SHEET_NAMES.CUSTOMER_FREQUENT_PRODUCTS) {
     return ['customerId', 'productId', 'favorite', 'type', 'createdAt', 'updatedAt'];
@@ -394,7 +394,7 @@ function getHeadersForSheet(sheetName) {
     return ['customerId', 'productId', 'oldDiscount', 'newDiscount', 'changedBy', 'createdAt'];
   }
   if (sheetName === SHEET_NAMES.SETTINGS) {
-    return ['key', 'value', 'updatedAt'];
+    return ['key', 'value', 'updatedAt', 'updatedBy'];
   }
   if (sheetName === SHEET_NAMES.PROMOTIONS) {
     return ['promotionId', 'brand', 'productName', 'description', 'discountText', 'active', 'createdAt', 'updatedAt'];
