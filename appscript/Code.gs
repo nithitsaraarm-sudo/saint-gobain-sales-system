@@ -46,7 +46,8 @@ function getBootstrapData(payload) {
       sheetInitialized: true,
       user: currentUser,
       permissions: permissions,
-      settings: {
+      settings: getSystemSettings(),
+      defaultSettings: {
         companyName: 'SAINT-GOBAIN',
         appName: 'SALES SYSTEM',
         welcomeText: 'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ',
@@ -144,10 +145,106 @@ function getBootstrapQuoteLineRows(quotes) {
 
 function updateSettings(payload) {
   try {
-    return success(payload || {}, 'Settings saved');
+    const auth = requireApiUser(payload);
+    if (!auth.ok) return auth;
+    if (!hasRole(auth.data, [USER_ROLES.SUPER_ADMIN])) {
+      return forbidden('Insufficient permission');
+    }
+    const saved = saveSystemSettings(payload || {}, auth.data);
+    if (!saved.ok) return saved;
+    clearServerCache('bootstrap:dashboard:v2:' + String(auth.data.userId || auth.data.username || 'anon'));
+    return success(saved.data, 'Settings saved');
   } catch (error) {
     logError('updateSettings', error);
     return fail(error && error.message ? error.message : 'Failed to update settings');
+  }
+}
+
+function getDefaultSystemSettings() {
+  return {
+    companyName: 'SAINT-GOBAIN',
+    appName: 'SALES SYSTEM',
+    welcomeText: '',
+    greetingMorning: '',
+    greetingAfternoon: '',
+    greetingEvening: '',
+    greetingNight: '',
+    vatRate: 7
+  };
+}
+
+function getSystemSettings() {
+  try {
+    ensureSheet(SETTINGS_SHEET, getHeadersForSheet(SETTINGS_SHEET));
+    const result = getSheetData(SETTINGS_SHEET);
+    const settings = getDefaultSystemSettings();
+    if (result.ok && Array.isArray(result.data)) {
+      result.data.forEach(function (row) {
+        const key = String(row.key || '').trim();
+        if (key) settings[key] = row.value;
+      });
+    }
+    settings.vatRate = parseNumericValue(settings.vatRate || 7) || 7;
+    return settings;
+  } catch (error) {
+    logError('getSystemSettings', error);
+    return getDefaultSystemSettings();
+  }
+}
+
+function saveSystemSettings(payload, user) {
+  try {
+    const allowedKeys = ['companyName', 'appName', 'welcomeText', 'greetingMorning', 'greetingAfternoon', 'greetingEvening', 'greetingNight', 'vatRate'];
+    const sheet = ensureSheet(SETTINGS_SHEET, getHeadersForSheet(SETTINGS_SHEET));
+    if (!sheet) return fail('Unable to access Settings sheet');
+    ensureSettingsSheetColumns_(sheet);
+    const existing = getSheetData(SETTINGS_SHEET);
+    const rows = existing.ok && Array.isArray(existing.data) ? existing.data : [];
+    const existingKeys = {};
+    rows.forEach(function (row) {
+      const key = String(row.key || '').trim();
+      if (key) existingKeys[key] = true;
+    });
+    const now = new Date().toISOString();
+    allowedKeys.forEach(function (key) {
+      if (payload[key] === undefined) return;
+      const value = key === 'vatRate' ? String(parseNumericValue(payload[key] || 7) || 7) : String(payload[key] || '').trim();
+      const row = { key: key, value: value, updatedAt: now, updatedBy: user.userId || user.username || '' };
+      if (existingKeys[key]) {
+        updateRowById(SETTINGS_SHEET, 'key', key, row);
+      } else {
+        appendRow(SETTINGS_SHEET, row);
+      }
+    });
+    return success(getSystemSettings(), 'Settings saved');
+  } catch (error) {
+    logError('saveSystemSettings', error);
+    return fail(error && error.message ? error.message : 'Failed to save settings');
+  }
+}
+
+function ensureSettingsSheetColumns_(sheet) {
+  try {
+    const requiredHeaders = getHeadersForSheet(SETTINGS_SHEET);
+    var headers = getHeaders(sheet);
+    if (!headers.length) {
+      sheet.getRange(1, 1, 1, requiredHeaders.length).setValues([requiredHeaders]);
+      return requiredHeaders;
+    }
+    var changed = false;
+    requiredHeaders.forEach(function (header) {
+      if (headers.indexOf(header) < 0) {
+        headers.push(header);
+        changed = true;
+      }
+    });
+    if (changed) {
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    }
+    return headers;
+  } catch (error) {
+    logError('ensureSettingsSheetColumns_', error);
+    return [];
   }
 }
 
@@ -162,9 +259,20 @@ function savePromotion(payload) {
 
 function doPost(e) {
   try {
-    const rawBody = e && e.postData && e.postData.contents ? e.postData.contents : '{}';
-    const body = JSON.parse(rawBody);
+    const rawBody = e && e.postData && e.postData.contents ? e.postData.contents : '';
+    if (!rawBody) {
+      return ContentService.createTextOutput(JSON.stringify(validationError('Request body is required'))).setMimeType(ContentService.MimeType.JSON);
+    }
+    var body = {};
+    try {
+      body = JSON.parse(rawBody);
+    } catch (parseError) {
+      return ContentService.createTextOutput(JSON.stringify(validationError('Invalid JSON request body'))).setMimeType(ContentService.MimeType.JSON);
+    }
     const action = String(body.action || '').trim();
+    if (!action) {
+      return ContentService.createTextOutput(JSON.stringify(validationError('action is required'))).setMimeType(ContentService.MimeType.JSON);
+    }
     const payload = body.payload || {};
     const result = api(action, payload);
 

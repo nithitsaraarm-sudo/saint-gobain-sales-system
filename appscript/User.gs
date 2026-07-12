@@ -25,6 +25,10 @@ function normalizeUserStatus(status, active) {
 function normalizeUserAccount(user) {
   const source = user && typeof user === 'object' ? user : {};
   const fullName = sanitizeUserText(source.fullName || source.displayName || source.name || source.username);
+  const displayName = sanitizeUserText(source.displayName || fullName || source.username);
+  const jobTitle = sanitizeUserText(source.jobTitle || source.position || source.title || source.branch);
+  const profileImageUrl = sanitizeUserText(source.profileImageUrl || source.photoUrl || source.imageUrl);
+  const quoteDisplayName = sanitizeUserText(source.quoteDisplayName || displayName || fullName || source.username);
   const status = normalizeUserStatus(source.status, source.active);
   const role = normalizeUserRole(source.role);
   return Object.assign({}, source, {
@@ -33,9 +37,16 @@ function normalizeUserAccount(user) {
     passwordHash: sanitizeUserText(source.passwordHash || source.password),
     passwordSalt: sanitizeUserText(source.passwordSalt),
     fullName: fullName,
-    displayName: fullName,
+    displayName: displayName,
     email: sanitizeUserText(source.email),
     phone: sanitizeUserText(source.phone),
+    jobTitle: jobTitle,
+    position: jobTitle,
+    profileImageUrl: profileImageUrl,
+    photoUrl: profileImageUrl,
+    quoteDisplayName: quoteDisplayName,
+    companyName: sanitizeUserText(source.companyName),
+    greetingText: sanitizeUserText(source.greetingText),
     role: role,
     branch: sanitizeUserText(source.branch),
     status: status,
@@ -57,9 +68,16 @@ function sanitizeUser(user) {
     userId: item.userId,
     username: item.username,
     fullName: item.fullName,
-    displayName: item.fullName,
+    displayName: item.displayName,
     email: item.email,
     phone: item.phone,
+    jobTitle: item.jobTitle,
+    position: item.jobTitle,
+    profileImageUrl: item.profileImageUrl,
+    photoUrl: item.profileImageUrl,
+    quoteDisplayName: item.quoteDisplayName,
+    companyName: item.companyName,
+    greetingText: item.greetingText,
     role: item.role,
     branch: item.branch,
     status: item.status,
@@ -192,8 +210,15 @@ function createUser(payload) {
       passwordHash: hashPassword(password, passwordSalt),
       passwordSalt: passwordSalt,
       fullName: sanitizeUserText(data.fullName || data.displayName || username),
+      displayName: sanitizeUserText(data.displayName || data.fullName || username),
       email: email,
       phone: sanitizeUserText(data.phone),
+      jobTitle: sanitizeUserText(data.jobTitle || data.position),
+      profileImageUrl: sanitizeUserText(data.profileImageUrl || data.photoUrl),
+      photoUrl: sanitizeUserText(data.profileImageUrl || data.photoUrl),
+      quoteDisplayName: sanitizeUserText(data.quoteDisplayName || data.displayName || data.fullName || username),
+      companyName: sanitizeUserText(data.companyName),
+      greetingText: sanitizeUserText(data.greetingText),
       role: role,
       branch: sanitizeUserText(data.branch),
       status: status,
@@ -239,8 +264,15 @@ function updateUser(payload) {
     }
     const updateObject = {
       fullName: sanitizeUserText(data.fullName || data.displayName || current.fullName),
+      displayName: sanitizeUserText(data.displayName || data.fullName || current.displayName),
       email: sanitizeUserText(data.email),
       phone: sanitizeUserText(data.phone),
+      jobTitle: sanitizeUserText(data.jobTitle || data.position || current.jobTitle),
+      profileImageUrl: sanitizeUserText(data.profileImageUrl || data.photoUrl || current.profileImageUrl),
+      photoUrl: sanitizeUserText(data.profileImageUrl || data.photoUrl || current.profileImageUrl),
+      quoteDisplayName: sanitizeUserText(data.quoteDisplayName || data.displayName || data.fullName || current.quoteDisplayName),
+      companyName: sanitizeUserText(data.companyName || current.companyName),
+      greetingText: sanitizeUserText(data.greetingText || current.greetingText),
       role: newRole,
       branch: sanitizeUserText(data.branch),
       status: newStatus,
@@ -298,26 +330,87 @@ function changePassword(payload) {
 
 function updateProfile(payload) {
   try {
+    migrateUsersSheet();
     const auth = requireApiUser(payload);
     if (!auth.ok) return auth;
     const body = payload || {};
-    const userId = sanitizeUserText(body.userId || auth.data.userId);
+    const userId = sanitizeUserText(auth.data.userId);
+    if (body.profileImageData) {
+      return validationError('profileImageData must be uploaded with uploadProfileImage first');
+    }
     if (userId !== String(auth.data.userId || '').trim() && !hasRole(auth.data, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN])) {
       return forbidden('Cannot update another user profile');
     }
+    const displayName = sanitizeUserText(body.displayName || auth.data.displayName || auth.data.username);
+    const jobTitle = sanitizeUserText(body.jobTitle || body.position || auth.data.jobTitle || auth.data.position);
+    const profileImageUrl = sanitizeUserText(body.profileImageUrl || body.photoUrl || auth.data.profileImageUrl || auth.data.photoUrl);
     const updateObject = {
-      fullName: sanitizeUserText(body.fullName || body.displayName),
-      email: sanitizeUserText(body.email),
+      fullName: displayName,
+      displayName: displayName,
       phone: sanitizeUserText(body.phone),
+      jobTitle: jobTitle,
+      profileImageUrl: profileImageUrl,
+      photoUrl: profileImageUrl,
+      quoteDisplayName: sanitizeUserText(body.quoteDisplayName || displayName),
+      updatedBy: userId,
       updatedAt: new Date().toISOString()
     };
     const updateResult = updateRowById(getUsersSheetName(), 'userId', userId, updateObject);
     if (!updateResult.ok) return updateResult;
-    return success(Object.assign({ userId: userId }, updateObject), 'Profile updated');
+    const refreshed = getUserById(userId);
+    return success(refreshed.ok ? sanitizeUser(refreshed.data) : Object.assign({ userId: userId }, updateObject), 'Profile updated');
   } catch (error) {
     logError('updateProfile', error);
     return fail(error && error.message ? error.message : 'Profile update failed');
   }
+}
+
+function uploadProfileImage(payload) {
+  try {
+    const auth = requireApiUser(payload);
+    if (!auth.ok) return auth;
+    const body = payload || {};
+    const imageData = String(body.profileImageData || body.imageData || '').trim();
+    if (!imageData) {
+      return validationError('profileImageData is required');
+    }
+    const profileImageUrl = saveProfileImageIfNeeded_(imageData, auth.data.userId);
+    return success({ profileImageUrl: profileImageUrl, photoUrl: profileImageUrl }, 'Profile image uploaded');
+  } catch (error) {
+    logError('uploadProfileImage', error);
+    return fail(error && error.message ? error.message : 'Failed to upload profile image');
+  }
+}
+
+function saveProfileImageIfNeeded_(value, userId) {
+  const text = String(value || '').trim();
+  if (!text || text.indexOf('data:image/') !== 0) {
+    return sanitizeUserText(text);
+  }
+  const folderId = getScriptProperty('PROFILE_IMAGE_FOLDER_ID', '');
+  if (!folderId) {
+    throw new Error('PROFILE_IMAGE_FOLDER_ID is required for profile image upload.');
+  }
+  const match = text.match(/^data:(image\/(?:png|jpeg|jpg|webp));base64,(.+)$/i);
+  if (!match) {
+    throw new Error('Unsupported profile image format.');
+  }
+  const mimeType = match[1].toLowerCase() === 'image/jpg' ? 'image/jpeg' : match[1].toLowerCase();
+  const extension = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg';
+  const bytes = Utilities.base64Decode(match[2]);
+  if (bytes.length > 2 * 1024 * 1024) {
+    throw new Error('Profile image is too large.');
+  }
+  const folder = DriveApp.getFolderById(folderId);
+  const fileName = 'profile-' + sanitizeUserText(userId || 'user') + '-' + new Date().getTime() + '.' + extension;
+  const blob = Utilities.newBlob(bytes, mimeType, fileName);
+  const file = folder.createFile(blob);
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (sharingError) {
+    logWarning('saveProfileImageIfNeeded_', 'Unable to set sharing: ' + sharingError);
+  }
+  return 'https://drive.google.com/uc?export=view&id=' + file.getId();
 }
 
 function registerUser(payload) {
@@ -513,8 +606,15 @@ function createBootstrapSuperAdmin() {
         passwordHash: hashPassword(temporaryPassword, passwordSalt),
         passwordSalt: passwordSalt,
         fullName: sanitizeUserText(config.fullName),
+        displayName: sanitizeUserText(config.fullName),
         email: sanitizeUserText(config.email),
         phone: '',
+        jobTitle: 'SUPER_ADMIN',
+        profileImageUrl: '',
+        photoUrl: '',
+        quoteDisplayName: sanitizeUserText(config.fullName),
+        companyName: '',
+        greetingText: '',
         role: USER_ROLES.SUPER_ADMIN,
         branch: 'System',
         status: USER_STATUSES.ACTIVE,

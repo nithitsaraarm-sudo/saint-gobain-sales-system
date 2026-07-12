@@ -76,6 +76,112 @@ function searchProducts(keyword) {
   }
 }
 
+function normalizeProductBusinessUnit(value) {
+  const text = String(value || '').trim().toUpperCase();
+  if (text.indexOf('GYPROC') >= 0) {
+    return 'GYPROC';
+  }
+  if (text.indexOf('WEBER') >= 0) {
+    return 'WEBER';
+  }
+  return '';
+}
+
+function getProductBusinessUnit(product) {
+  const item = product && typeof product === 'object' ? product : {};
+  return normalizeProductBusinessUnit(item.businessUnit || item.quoteType || item.bu || item.brand);
+}
+
+function isProductInBusinessUnit(product, businessUnit) {
+  const target = normalizeProductBusinessUnit(businessUnit);
+  const productUnit = getProductBusinessUnit(product);
+  return Boolean(target && productUnit && target === productUnit);
+}
+
+function getQuoteProductSearchRank(product, query) {
+  const q = normalizeString(query);
+  if (!q) {
+    return 1000;
+  }
+  const sku = normalizeString(product.productId || product.sku || product.productCode || product.id);
+  const name = normalizeString(product.productName || product.name);
+  const brand = normalizeString(product.brand);
+  const description = normalizeString(product.description || product.itemDesc);
+  if (sku === q) return 0;
+  if (name === q) return 1;
+  if (name.indexOf(q) === 0) return 2;
+  if (name.indexOf(q) >= 0) return 3;
+  if (brand.indexOf(q) >= 0 || description.indexOf(q) >= 0) return 4;
+  return 9;
+}
+
+function getQuoteProductBusinessUnitPriority(product, primaryBusinessUnit) {
+  const primary = normalizeProductBusinessUnit(primaryBusinessUnit);
+  const productUnit = getProductBusinessUnit(product);
+  if (!primary || !productUnit) {
+    return 2;
+  }
+  return productUnit === primary ? 0 : 1;
+}
+
+function searchQuoteProducts(payload) {
+  try {
+    const data = payload && typeof payload === 'object' ? payload : { query: payload };
+    const primaryBusinessUnit = normalizeProductBusinessUnit(data.primaryBusinessUnit || data.businessUnit || data.quoteType || data.bu);
+    if (!primaryBusinessUnit) {
+      return validationError('primaryBusinessUnit must be WEBER or GYPROC');
+    }
+    const query = normalizeString(data.query || data.keyword || '');
+    const searchScope = String(data.searchScope || 'ALL_BU').trim().toUpperCase();
+    const limit = Math.max(1, Math.min(parseInt(data.limit || 30, 10) || 30, 30));
+    const productsResult = getProducts();
+    if (!productsResult.ok) {
+      return productsResult;
+    }
+    const products = Array.isArray(productsResult.data) ? productsResult.data : [];
+    const fields = ['productId', 'sku', 'productName', 'description', 'brand', 'discountGroup', 'groupCode', 'unit'];
+    const matches = products.filter(function (item) {
+      const productBusinessUnit = getProductBusinessUnit(item);
+      if (!productBusinessUnit) {
+        return false;
+      }
+      if (searchScope === 'PRIMARY_BU' && productBusinessUnit !== primaryBusinessUnit) {
+        return false;
+      }
+      if (!query) {
+        return true;
+      }
+      return fields.some(function (field) {
+        return normalizeString(item[field]).indexOf(query) >= 0;
+      });
+    }).sort(function (a, b) {
+      const unitDiff = getQuoteProductBusinessUnitPriority(a, primaryBusinessUnit) - getQuoteProductBusinessUnitPriority(b, primaryBusinessUnit);
+      if (unitDiff !== 0) {
+        return unitDiff;
+      }
+      const rankDiff = getQuoteProductSearchRank(a, query) - getQuoteProductSearchRank(b, query);
+      if (rankDiff !== 0) {
+        return rankDiff;
+      }
+      return String(a.productName || '').localeCompare(String(b.productName || ''));
+    }).map(function (item) {
+      return Object.assign({}, item, {
+        productBusinessUnit: getProductBusinessUnit(item)
+      });
+    });
+    return success({
+      primaryBusinessUnit: primaryBusinessUnit,
+      searchScope: searchScope,
+      products: matches.slice(0, limit),
+      total: matches.length,
+      limited: matches.length > limit
+    });
+  } catch (error) {
+    logError('searchQuoteProducts', error);
+    return fail(error && error.message ? error.message : 'Quote product search failed');
+  }
+}
+
 function getProductsByBrand(brand) {
   try {
     const brandValue = normalizeString(brand);
@@ -299,6 +405,8 @@ function normalizeProductObject(row) {
     category: groupCode,
     unit: String(source.unit || '').trim(),
     listPrice: listPrice,
+    productBusinessUnit: getProductBusinessUnit(source),
+    businessUnit: getProductBusinessUnit(source),
     imageUrl: String(source.imageUrl || '').trim(),
     active: String(source.active || source.status || '').trim(),
     notes: String(source.notes || '').trim(),

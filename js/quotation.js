@@ -1,10 +1,101 @@
-let CURRENT_QUOTE = { quoteId: '', customerId: '', customerName: '', shipping: 0, specialDiscount: 0, status: 'DRAFT' };
+let CURRENT_QUOTE = { quoteId: '', customerId: '', customerName: '', shipping: 0, specialDiscount: 0, status: 'DRAFT', quoteType: 'WEBER' };
+let CURRENT_QUOTE_TYPE = 'WEBER';
+let QUOTE_TYPE_SELECTED = false;
+let QUOTE_TYPE_RESOLVE = null;
 const QUOTE_LINE_PREFIX = 'LINE_';
 const DISCOUNT_CACHE = {};
 const DISCOUNT_PROMISES = {};
 const QUOTATION_LOAD_CACHE = {};
 const QUOTATION_LOAD_PROMISES = {};
 const QUOTATION_LOAD_TTL_MS = 10 * 60 * 1000;
+
+function normalizeQuoteType(value) {
+  const text = String(value || '').trim().toUpperCase();
+  return text === 'GYPROC' ? 'GYPROC' : 'WEBER';
+}
+
+function getQuoteTypeLabel(value) {
+  return normalizeQuoteType(value) === 'GYPROC' ? 'Gyproc' : 'Weber';
+}
+
+function getQuoteTypeClass(value) {
+  return normalizeQuoteType(value) === 'GYPROC' ? 'gyproc' : 'weber';
+}
+
+function getProductBusinessUnitClient(product) {
+  const source = product && typeof product === 'object' ? product : {};
+  const text = String(source.productBusinessUnit || source.businessUnit || source.quoteType || source.bu || source.brand || '').trim().toUpperCase();
+  if (text.indexOf('GYPROC') >= 0) return 'GYPROC';
+  if (text.indexOf('WEBER') >= 0) return 'WEBER';
+  return '';
+}
+
+function isProductForCurrentQuoteBusinessUnit(product) {
+  const productUnit = getProductBusinessUnitClient(product);
+  return productUnit && productUnit === normalizeQuoteType(CURRENT_QUOTE.quoteType || CURRENT_QUOTE_TYPE);
+}
+
+function getProductBusinessUnitLabel(productOrValue) {
+  const unit = typeof productOrValue === 'string' ? normalizeQuoteType(productOrValue) : getProductBusinessUnitClient(productOrValue);
+  return getQuoteTypeLabel(unit || 'WEBER');
+}
+
+function getCurrentQuoteBusinessUnit() {
+  return normalizeQuoteType(CURRENT_QUOTE.quoteType || CURRENT_QUOTE.businessUnit || CURRENT_QUOTE_TYPE);
+}
+
+function isQuoteBusinessUnitSelected() {
+  return QUOTE_TYPE_SELECTED || Boolean(CURRENT_QUOTE.quoteId && (CURRENT_QUOTE.quoteType || CURRENT_QUOTE.businessUnit));
+}
+
+function setCurrentQuoteType(value, explicit) {
+  const previousType = normalizeQuoteType(CURRENT_QUOTE.quoteType || CURRENT_QUOTE_TYPE);
+  CURRENT_QUOTE_TYPE = normalizeQuoteType(value);
+  CURRENT_QUOTE.quoteType = CURRENT_QUOTE_TYPE;
+  CURRENT_QUOTE.businessUnit = CURRENT_QUOTE_TYPE;
+  if (explicit) QUOTE_TYPE_SELECTED = true;
+  renderQuoteMeta();
+  if (typeof renderProductPicker === 'function') {
+    renderProductPicker();
+  }
+  return CURRENT_QUOTE_TYPE;
+}
+
+function openQuoteTypeModal() {
+  const modal = document.getElementById('quoteTypeModal');
+  if (modal) modal.classList.add('show');
+  return new Promise(resolve => {
+    QUOTE_TYPE_RESOLVE = resolve;
+  });
+}
+
+function selectQuoteType(value) {
+  const type = setCurrentQuoteType(value, true);
+  const modal = document.getElementById('quoteTypeModal');
+  if (modal) modal.classList.remove('show');
+  if (QUOTE_TYPE_RESOLVE) {
+    const resolve = QUOTE_TYPE_RESOLVE;
+    QUOTE_TYPE_RESOLVE = null;
+    resolve(type);
+  }
+  return type;
+}
+
+function closeQuoteTypeModal() {
+  const modal = document.getElementById('quoteTypeModal');
+  if (modal) modal.classList.remove('show');
+  if (QUOTE_TYPE_RESOLVE) {
+    const resolve = QUOTE_TYPE_RESOLVE;
+    QUOTE_TYPE_RESOLVE = null;
+    resolve('');
+  }
+}
+
+async function requestQuoteTypeSelection(force) {
+  if (!force && QUOTE_TYPE_SELECTED) return CURRENT_QUOTE_TYPE;
+  const selected = await openQuoteTypeModal();
+  return selected || '';
+}
 
 function getQuotationCacheId(quoteId) {
   return String(quoteId || '').trim();
@@ -136,10 +227,11 @@ function getSelectedCustomerIdForPricing() {
 
 async function getDiscountPercentForProduct(customerId, product) {
   const groupCode = String(product && product.groupCode || '').trim();
+  const productBusinessUnit = getProductBusinessUnitClient(product);
   if (!customerId || !groupCode) {
     return 0;
   }
-  const cacheKey = customerId + '|' + groupCode;
+  const cacheKey = customerId + '|' + (productBusinessUnit || '-') + '|' + groupCode;
   if (DISCOUNT_CACHE[cacheKey] !== undefined) {
     return Number(DISCOUNT_CACHE[cacheKey] || 0);
   }
@@ -154,7 +246,7 @@ async function getDiscountPercentForProduct(customerId, product) {
     return DISCOUNT_PROMISES[cacheKey];
   }
   try {
-    DISCOUNT_PROMISES[cacheKey] = callApi('discount', { customerId: customerId, groupCode: groupCode }).then(response => {
+    DISCOUNT_PROMISES[cacheKey] = callApi('discount', { customerId: customerId, groupCode: groupCode, productBusinessUnit: productBusinessUnit }).then(response => {
     const discountPercent = response && response.ok ? Number(response.data?.discountPercent || 0) : 0;
     DISCOUNT_CACHE[cacheKey] = discountPercent;
       if (typeof getCache === 'function' && typeof setCache === 'function') {
@@ -199,9 +291,12 @@ function recalcLineItem(item) {
 }
 
 function createCartLine(product, qty, discountPercent) {
+  const productBusinessUnit = getProductBusinessUnitClient(product);
   return recalcLineItem({
     lineId: createLineId(),
     productId: getProductId(product),
+    productBusinessUnit: productBusinessUnit,
+    businessUnit: productBusinessUnit,
     productName: String(product.productName || product.name || '').trim(),
     unit: String(product.unit || '').trim(),
     qty: Number(qty || 1),
@@ -256,13 +351,21 @@ async function newQuotation(customerId) {
     toast('กรุณาเลือกลูกค้าก่อนสร้างใบเสนอราคา');
     return;
   }
+  const selectedQuoteType = await requestQuoteTypeSelection(true);
+  if (!selectedQuoteType) {
+    toast('กรุณาเลือกประเภทใบเสนอราคา');
+    return;
+  }
   const customer = DB.customers.find(c => String(c.customerId || '').trim() === selectedCustomerId) || {};
-  const response = await callApi('createQuotation', selectedCustomerId);
+  const response = await callApi('createQuotation', { customerId: selectedCustomerId, quoteType: selectedQuoteType, businessUnit: selectedQuoteType });
   if (response.ok && response.data) {
     CURRENT_QUOTE = {
       quoteId: response.data.quoteId || CURRENT_QUOTE.quoteId,
+      quoteNo: response.data.quoteNo || CURRENT_QUOTE.quoteNo || '',
       customerId: selectedCustomerId,
       customerName: customer.customerName || '',
+      quoteType: normalizeQuoteType(response.data.quoteType || selectedQuoteType),
+      businessUnit: normalizeQuoteType(response.data.quoteType || selectedQuoteType),
       shipping: 0,
       specialDiscount: 0,
       status: 'DRAFT'
@@ -272,6 +375,8 @@ async function newQuotation(customerId) {
       quoteId: CURRENT_QUOTE.quoteId || '',
       customerId: selectedCustomerId,
       customerName: customer.customerName || '',
+      quoteType: selectedQuoteType,
+      businessUnit: selectedQuoteType,
       shipping: 0,
       specialDiscount: 0,
       status: 'DRAFT'
@@ -296,6 +401,13 @@ async function addProduct(productId, qty) {
   if (!product) {
     toast('ไม่พบสินค้า');
     return;
+  }
+  if (!isQuoteBusinessUnitSelected()) {
+    const selectedType = await requestQuoteTypeSelection(true);
+    if (!selectedType) {
+      toast('กรุณาเลือก BU ก่อนเพิ่มสินค้า');
+      return;
+    }
   }
   if (!CURRENT_QUOTE.customerId) {
     const sel = document.getElementById('quoteCustomer');
@@ -452,6 +564,8 @@ async function loadQuotationLegacy(quoteId) {
     CART.push({
       lineId: String(line.lineId || createLineId()),
       productId: String(line.productId || '').trim(),
+      productBusinessUnit: getProductBusinessUnitClient(line) || String(line.productBusinessUnit || line.businessUnit || '').trim(),
+      businessUnit: getProductBusinessUnitClient(line) || String(line.productBusinessUnit || line.businessUnit || '').trim(),
       productName: String(line.productName || '').trim(),
       unit: String(line.unit || '').trim(),
       qty: Number(line.qty || 0),
@@ -545,6 +659,13 @@ async function addProduct(productId, qty) {
   if (!product) {
     toast('ไม่พบสินค้า');
     return;
+  }
+  if (!isQuoteBusinessUnitSelected()) {
+    const selectedType = await requestQuoteTypeSelection(true);
+    if (!selectedType) {
+      toast('กรุณาเลือก BU ก่อนเพิ่มสินค้า');
+      return;
+    }
   }
   if (!CURRENT_QUOTE.customerId) {
     const customerId = getSelectedCustomerIdForPricing();
@@ -666,7 +787,9 @@ function renderQuoteMeta() {
   if (!meta) return;
   const quoteNo = CURRENT_QUOTE.quoteNo || CURRENT_QUOTE.quoteId || 'ยังไม่บันทึก';
   const status = CURRENT_QUOTE.status || 'DRAFT';
-  meta.innerHTML = `<span>เลขที่ใบเสนอราคา: <b>${quoteNo}</b></span><span>สถานะ: <b>${status}</b></span>`;
+  const quoteType = normalizeQuoteType(CURRENT_QUOTE.quoteType || CURRENT_QUOTE.businessUnit || CURRENT_QUOTE_TYPE);
+  const typeText = isQuoteBusinessUnitSelected() ? getQuoteTypeLabel(quoteType) + ' ▼' : 'เลือก BU ▼';
+  meta.innerHTML = `<button type="button" class="quote-type-switch ${getQuoteTypeClass(quoteType)}" onclick="openQuoteTypeModal()">${typeText}</button><span>เลขที่ใบเสนอราคา: <b>${quoteNo}</b></span><span>สถานะ: <b>${status}</b></span>`;
 }
 
 function buildQuotationPayload(status) {
@@ -674,6 +797,8 @@ function buildQuotationPayload(status) {
   return {
     quoteId: CURRENT_QUOTE.quoteId || '',
     quoteNo: CURRENT_QUOTE.quoteNo || '',
+    quoteType: normalizeQuoteType(CURRENT_QUOTE.quoteType || CURRENT_QUOTE_TYPE),
+    businessUnit: normalizeQuoteType(CURRENT_QUOTE.quoteType || CURRENT_QUOTE_TYPE),
     customerId: CURRENT_QUOTE.customerId,
     customerName: CURRENT_QUOTE.customerName,
     items: CART.map((item, index) => {
@@ -681,6 +806,7 @@ function buildQuotationPayload(status) {
       return {
         lineNo: index + 1,
         productId: item.productId,
+        productBusinessUnit: getProductBusinessUnitClient(item) || item.productBusinessUnit || '',
         productName: item.productName,
         unit: item.unit,
         qty: item.qty,
@@ -722,7 +848,10 @@ async function saveQuotationWithStatus(status) {
   }
   CURRENT_QUOTE.quoteId = response.data?.quoteId || CURRENT_QUOTE.quoteId;
   CURRENT_QUOTE.quoteNo = response.data?.quoteNo || CURRENT_QUOTE.quoteNo || CURRENT_QUOTE.quoteId;
+  CURRENT_QUOTE.quoteType = normalizeQuoteType(response.data?.quoteType || CURRENT_QUOTE.quoteType || CURRENT_QUOTE_TYPE);
+  CURRENT_QUOTE.businessUnit = CURRENT_QUOTE.quoteType;
   CURRENT_QUOTE.status = response.data?.status || status || CURRENT_QUOTE.status;
+  setCurrentQuoteType(CURRENT_QUOTE.quoteType, true);
   renderQuoteMeta();
   renderCart();
   toast((status === 'DRAFT' ? 'บันทึกแบบร่างแล้ว' : 'อัปเดตใบเสนอราคาแล้ว') + (CURRENT_QUOTE.quoteNo ? ': ' + CURRENT_QUOTE.quoteNo : ''));
@@ -788,15 +917,20 @@ function applyLoadedQuotationResponse(response, fallbackQuoteId) {
     quoteNo: String(quote.quoteNo || quote.quoteId || fallbackQuoteId).trim(),
     customerId: String(quote.customerId || '').trim(),
     customerName: String(quote.customerName || '').trim(),
+    quoteType: normalizeQuoteType(quote.quoteType || quote.businessUnit),
+    businessUnit: normalizeQuoteType(quote.quoteType || quote.businessUnit),
     shipping: Number(String(quote.shipping || 0).replace(/,/g, '')),
     specialDiscount: Number(String(quote.specialDiscount || 0).replace(/,/g, '')),
     status: String(quote.status || 'DRAFT').trim() || 'DRAFT'
   };
+  setCurrentQuoteType(CURRENT_QUOTE.quoteType, true);
   CART.length = 0;
   lines.forEach(line => {
     CART.push(recalcLineItem({
       lineId: String(line.lineId || line.lineNo || createLineId()),
       productId: String(line.productId || '').trim(),
+      productBusinessUnit: getProductBusinessUnitClient(line) || String(line.productBusinessUnit || line.businessUnit || '').trim(),
+      businessUnit: getProductBusinessUnitClient(line) || String(line.productBusinessUnit || line.businessUnit || '').trim(),
       productName: String(line.productName || '').trim(),
       unit: String(line.unit || '').trim(),
       qty: Number(String(line.qty || 0).replace(/,/g, '')),
@@ -880,6 +1014,8 @@ function getCurrentQuotationPrintData() {
   return {
     quote: Object.assign({}, quote, {
       quoteNo: quote.quoteNo || quote.quoteId || 'QT-PREVIEW',
+      quoteType: normalizeQuoteType(quote.quoteType || quote.businessUnit || CURRENT_QUOTE_TYPE),
+      businessUnit: normalizeQuoteType(quote.quoteType || quote.businessUnit || CURRENT_QUOTE_TYPE),
       customerId: quote.customerId || customer.customerId || customer.customerCode || '',
       customerName: quote.customerName || customer.customerName || '',
       createdAt: quote.createdAt || new Date().toISOString(),
@@ -904,10 +1040,17 @@ function buildQuotationPrintHtml(data) {
   const vat = quotePrintNumber(totals.vat !== undefined ? totals.vat : quote.vat);
   const grandTotal = quotePrintNumber(totals.grandTotal !== undefined ? totals.grandTotal : quote.grandTotal);
   const user = typeof USER !== 'undefined' && USER ? USER : {};
-  const salesName = quotePrintText(quote.createdBy || user.displayName || user.username, '-');
-  const salesPosition = quotePrintText(user.position, '-');
-  const companyName = 'SAINT-GOBAIN';
+  const salesName = quotePrintText(quote.createdBy || user.quoteDisplayName || user.displayName || user.fullName || user.username, '-');
+  const salesPosition = quotePrintText(user.jobTitle || user.position, '-');
+  const companyName = quotePrintText((typeof DB !== 'undefined' && DB.settings && DB.settings.companyName) || user.companyName, 'SAINT-GOBAIN');
   const remark = quotePrintText(quote.notes || quote.remark || quote.remarks, '-');
+  const quoteTypeLabel = getQuoteTypeLabel(quote.quoteType || quote.businessUnit || CURRENT_QUOTE.quoteType || CURRENT_QUOTE_TYPE);
+  const lineBusinessUnits = [];
+  lines.forEach(line => {
+    const unit = getProductBusinessUnitClient(line);
+    if (unit && lineBusinessUnits.indexOf(unit) < 0) lineBusinessUnits.push(unit);
+  });
+  const businessUnitsHtml = lineBusinessUnits.length > 1 ? `<p class="quote-business-units">Business Units: ${escapeQuotationPrintHtml(lineBusinessUnits.map(getQuoteTypeLabel).join(' / '))}</p>` : '';
   const rows = lines.length ? lines.map((line, index) => {
     const qty = quotePrintNumber(line.qty);
     const listPrice = quotePrintNumber(line.listPrice);
@@ -933,7 +1076,8 @@ function buildQuotationPrintHtml(data) {
     <header class="print-doc-header">
       <div class="print-doc-title">
         <h1>ใบเสนอราคา</h1>
-        <p>Quotation</p>
+        <p class="quote-type-subtitle">${escapeQuotationPrintHtml(quoteTypeLabel)} ▼</p>
+        ${businessUnitsHtml}
       </div>
       <div class="print-doc-meta">
         <div><span>เลขที่ใบเสนอราคา</span><b>${escapeQuotationPrintHtml(getQuotationPrintId(data))}</b></div>
@@ -985,17 +1129,26 @@ function getQuotationPrintContext(data) {
   const lines = Array.isArray(data && data.lines) ? data.lines : [];
   const totals = data && data.totals ? data.totals : {};
   const user = typeof USER !== 'undefined' && USER ? USER : {};
+  const lineBusinessUnits = [];
+  lines.forEach(line => {
+    const unit = getProductBusinessUnitClient(line);
+    if (unit && lineBusinessUnits.indexOf(unit) < 0) lineBusinessUnits.push(unit);
+  });
   return {
     data: data || {},
     quote: quote,
     lines: lines,
     quoteNo: getQuotationPrintId(data || {}),
     quoteDate: quotePrintDate(quote.createdAt || quote.updatedAt),
+    quoteType: normalizeQuoteType(quote.quoteType || quote.businessUnit || CURRENT_QUOTE.quoteType || CURRENT_QUOTE_TYPE),
+    quoteTypeLabel: getQuoteTypeLabel(quote.quoteType || quote.businessUnit || CURRENT_QUOTE.quoteType || CURRENT_QUOTE_TYPE),
+    lineBusinessUnits: lineBusinessUnits,
+    businessUnitsLabel: lineBusinessUnits.length > 1 ? lineBusinessUnits.map(getQuoteTypeLabel).join(' / ') : '',
     customerName: quotePrintText(quote.customerName || CURRENT_QUOTE.customerName, '-'),
     customerId: quotePrintText(quote.customerId || CURRENT_QUOTE.customerId, '-'),
-    salesName: quotePrintText(quote.createdBy || user.displayName || user.username, '-'),
-    salesPosition: quotePrintText(user.position, '-'),
-    companyName: 'SAINT-GOBAIN',
+    salesName: quotePrintText(quote.createdBy || user.quoteDisplayName || user.displayName || user.fullName || user.username, '-'),
+    salesPosition: quotePrintText(user.jobTitle || user.position, '-'),
+    companyName: quotePrintText((typeof DB !== 'undefined' && DB.settings && DB.settings.companyName) || user.companyName, 'SAINT-GOBAIN'),
     remark: quotePrintText(quote.notes || quote.remark || quote.remarks, '-'),
     subtotal: quotePrintNumber(totals.subtotal !== undefined ? totals.subtotal : quote.subtotal),
     vat: quotePrintNumber(totals.vat !== undefined ? totals.vat : quote.vat),
@@ -1048,10 +1201,12 @@ function buildQuotationPrintTableHtml(rowsHtml) {
 }
 
 function buildQuotationFullHeaderHtml(ctx) {
+  const businessUnitsHtml = ctx.businessUnitsLabel ? `<p class="quote-business-units">Business Units: ${escapeQuotationPrintHtml(ctx.businessUnitsLabel)}</p>` : '';
   return `<header class="print-doc-header">
     <div class="print-doc-title">
       <h1>ใบเสนอราคา</h1>
-      <p>Quotation</p>
+      <p class="quote-type-subtitle">${escapeQuotationPrintHtml(ctx.quoteTypeLabel || 'Weber')} ▼</p>
+      ${businessUnitsHtml}
     </div>
     <div class="print-doc-meta">
       <div><span>เลขที่ใบเสนอราคา</span><b>${escapeQuotationPrintHtml(ctx.quoteNo)}</b></div>
@@ -1719,10 +1874,13 @@ function renderCart() {
       ? '<span class="loading-text">กำลังโหลดส่วนลด...</span>'
       : `<input class="quote-discount-input" type="number" value="${it.discountPercent || 0}" onchange="changeDiscount('${it.lineId}', Number(this.value))"> %`;
     const freeBadge = it.isFree ? '<span class="pill yellow">FREE</span>' : '';
+    const productUnit = getProductBusinessUnitClient(it);
+    const productBuBadge = productUnit ? `<span class="quote-product-bu ${getQuoteTypeClass(productUnit)}">${getQuoteTypeLabel(productUnit)}</span>` : '';
+    const crossBuNote = productUnit && productUnit !== getCurrentQuoteBusinessUnit() ? '<small class="quote-cross-bu-note">สินค้าร่วมข้าม BU</small>' : '';
     return `<div class="row item-card quote-line" data-line-id="${it.lineId}">
       <button type="button" class="quote-drag-handle" aria-label="จัดเรียงสินค้า">☰</button>
       <div class="quote-line-main">
-        <b>${it.productName || '-'} ${freeBadge}</b><br>
+        <div class="quote-product-title">${productBuBadge}<b>${it.productName || '-'} ${freeBadge}</b>${crossBuNote}</div>
         <small>${it.productId || ''}${it.unit ? ' · ' + it.unit : ''}</small>
         <div class="quote-line-prices">
           <span>ราคาตั้ง ${money(it.listPrice)}</span>
@@ -1858,6 +2016,13 @@ async function addProduct(productId, qty) {
     toast('ไม่พบสินค้า');
     return;
   }
+  if (!isQuoteBusinessUnitSelected()) {
+    const selectedType = await requestQuoteTypeSelection(true);
+    if (!selectedType) {
+      toast('กรุณาเลือก BU ก่อนเพิ่มสินค้า');
+      return;
+    }
+  }
   if (!CURRENT_QUOTE.customerId) {
     const customerId = getSelectedCustomerIdForPricing();
     if (customerId) {
@@ -1867,6 +2032,8 @@ async function addProduct(productId, qty) {
         quoteNo: CURRENT_QUOTE.quoteNo || '',
         customerId: String(customerId).trim(),
         customerName: String(customer.customerName || '').trim(),
+        quoteType: getCurrentQuoteBusinessUnit(),
+        businessUnit: getCurrentQuoteBusinessUnit(),
         shipping: Number(document.getElementById('shipping')?.value || 0),
         specialDiscount: Number(document.getElementById('specialDiscount')?.value || 0),
         status: 'DRAFT'
@@ -1888,7 +2055,12 @@ async function addProduct(productId, qty) {
   line.discountLoading = true;
   CART.push(line);
   renderCart();
-  toast('กำลังโหลดส่วนลด...');
+  const addedProductUnit = getProductBusinessUnitClient(product);
+  if (addedProductUnit && addedProductUnit !== getCurrentQuoteBusinessUnit()) {
+    toast(`เพิ่มสินค้า ${getQuoteTypeLabel(addedProductUnit)} ในใบเสนอราคา ${getQuoteTypeLabel(getCurrentQuoteBusinessUnit())} แล้ว`);
+  } else {
+    toast('กำลังโหลดส่วนลด...');
+  }
   getDiscountPercentForProduct(CURRENT_QUOTE.customerId, product).then(discountPercent => {
     const target = CART.find(item => item.lineId === line.lineId);
     if (!target) return;
@@ -1925,7 +2097,10 @@ async function saveQuotationWithStatus(status) {
   }
   CURRENT_QUOTE.quoteId = response.data?.quoteId || CURRENT_QUOTE.quoteId;
   CURRENT_QUOTE.quoteNo = response.data?.quoteNo || CURRENT_QUOTE.quoteNo || CURRENT_QUOTE.quoteId;
+  CURRENT_QUOTE.quoteType = normalizeQuoteType(response.data?.quoteType || CURRENT_QUOTE.quoteType || CURRENT_QUOTE_TYPE);
+  CURRENT_QUOTE.businessUnit = CURRENT_QUOTE.quoteType;
   CURRENT_QUOTE.status = response.data?.status || status || CURRENT_QUOTE.status;
+  setCurrentQuoteType(CURRENT_QUOTE.quoteType, true);
   if (typeof clearQuotationCache === 'function') {
     clearQuotationCache(CURRENT_QUOTE.quoteId);
   }
@@ -1971,5 +2146,12 @@ window.cancelQuotation = cancelQuotation;
 window.duplicateCurrentQuotation = duplicateCurrentQuotation;
 window.cancelCurrentQuotation = cancelCurrentQuotation;
 window.renderQuoteMeta = renderQuoteMeta;
+window.openQuoteTypeModal = openQuoteTypeModal;
+window.closeQuoteTypeModal = closeQuoteTypeModal;
+window.selectQuoteType = selectQuoteType;
+window.getCurrentQuoteBusinessUnit = getCurrentQuoteBusinessUnit;
+window.isQuoteBusinessUnitSelected = isQuoteBusinessUnitSelected;
+window.getProductBusinessUnitClient = getProductBusinessUnitClient;
+window.isProductForCurrentQuoteBusinessUnit = isProductForCurrentQuoteBusinessUnit;
 window.changeDiscount = changeDiscount;
 window.toggleFreeItem = toggleFreeItem;

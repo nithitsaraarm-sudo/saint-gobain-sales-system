@@ -102,6 +102,47 @@
 @media(min-width:1024px){.hamb{display:none!important}}
 @media print{.product-price-modal,.quote-detail-modal{display:none!important;visibility:hidden!important}}
 
+/* Header profile + quotation type */
+.topbar-user-area{display:flex;align-items:center;gap:12px;justify-content:flex-end;min-width:0;margin-left:auto;padding-right:max(0px,env(safe-area-inset-right))}
+.header-profile{border:0;background:transparent;display:flex;align-items:center;gap:10px;min-width:0;max-width:min(360px,45vw);padding:6px 8px;border-radius:999px;color:var(--text);text-align:left}
+.header-profile:hover,.header-profile:focus{background:#fff;box-shadow:0 8px 24px rgba(15,42,82,.08);outline:none}
+.header-avatar{width:42px;height:42px;flex:0 0 42px;border-radius:50%;background:#fff;border:1px solid var(--line);display:grid;place-items:center;overflow:hidden;font-size:22px}
+.header-avatar img{width:100%;height:100%;object-fit:cover}
+.header-user-text{display:grid;min-width:0;line-height:1.15}
+.header-user-text b,.header-user-text small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.header-user-text b{font-size:14px;font-weight:900;color:var(--text)}
+.header-user-text small{font-size:12px;color:var(--muted);margin-top:2px}
+.header-separator{width:1px;height:28px;background:var(--line);display:block}
+.quote-type-modal-card p{margin:4px 0 16px;color:var(--muted)}
+.quote-type-options{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.quote-type-option{border:1px solid var(--line);border-radius:20px;background:#fff;padding:18px;text-align:left;display:grid;gap:4px;font-weight:900}
+.quote-type-option span{font-size:22px}
+.quote-type-option small{color:var(--muted);font-weight:800}
+.quote-type-option.gyproc{border-color:#c7ddf5;background:#eef6ff;color:var(--blue)}
+.quote-type-option.weber{border-color:#f3df64;background:#fff8c7;color:#514400}
+.quote-type-badge{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:5px 10px;font-size:12px;font-weight:900}
+.quote-type-badge.gyproc{background:#e8f3ff;color:var(--blue)}
+.quote-type-badge.weber{background:#fff4a8;color:#514400}
+.quote-business-units{margin:4px 0 0;color:#374151;font-size:13px;font-weight:800}
+.quote-product-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.quote-product-bu{display:inline-flex;align-items:center;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:900;background:#f1f5f9;color:#475569}
+.quote-product-bu.gyproc{background:#e8f3ff;color:var(--blue)}
+.quote-product-bu.weber{background:#fff4a8;color:#514400}
+.quote-cross-bu-note{color:var(--muted);font-weight:800}
+.quote-type-switch{border:1px solid var(--line);background:#fff;border-radius:999px;padding:8px 12px;font-weight:900;color:var(--blue);box-shadow:0 6px 18px rgba(15,42,82,.05)}
+.print-doc-title .quote-type-subtitle{font-size:20px!important;line-height:1.15!important;margin:6px 0 0!important;color:#6b7280!important;font-weight:800!important}
+
+@media(max-width:700px){
+  .topbar-user-area{gap:8px}
+  .header-profile{max-width:42vw;padding:4px 6px;gap:7px}
+  .header-avatar{width:36px;height:36px;flex-basis:36px;font-size:18px}
+  .header-user-text small{display:none}
+  .header-user-text b{font-size:12px}
+  .topbar-user-area .ghost{padding:10px 12px}
+  .header-separator{height:24px}
+  .quote-type-options{grid-template-columns:1fr}
+}
+
 /* Quotation screen ratio + cart reorder */
 @media(min-width:1024px){.quote-layout{grid-template-columns:calc(60% - 10px) calc(40% - 10px)!important;align-items:start}.quote-layout>*{min-width:0}.quote-layout>.card{min-width:0}}
 @media(max-width:1023px){.quote-layout{display:flex!important;flex-direction:column!important}}
@@ -159,4 +200,8 @@ body.quote-reordering{user-select:none;cursor:grabbing}
 .grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .user-row{align-items:center;gap:12px;flex-wrap:wrap}
 .user-row small{color:var(--muted)}
+
+/* Final quotation title sizing override */
+.print-doc-title h1{font-size:20px!important}
+.quotation-page .print-doc-header--continued .print-doc-title h2{font-size:18px!important}
 @media(max-width:720px){.grid2{grid-template-columns:1fr}.user-row{display:grid;grid-template-columns:1fr}}

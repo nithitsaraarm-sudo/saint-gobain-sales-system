@@ -14,6 +14,44 @@ const CACHE_KEYS = {
   quotation: 'sg_quotation_cache',
   quotationHistory: 'sg_quotation_history_cache'
 };
+const API_TIMEOUT_MS = 30000;
+const READ_ACTIONS = [
+  'bootstrap',
+  'customers',
+  'getCustomers',
+  'customer',
+  'searchCustomers',
+  'products',
+  'getProducts',
+  'searchQuoteProducts',
+  'product',
+  'discount',
+  'loadQuotation',
+  'getQuotationHistory',
+  'loadUsers'
+];
+const WRITE_ACTIONS = [
+  'login',
+  'demoLogin',
+  'logout',
+  'changePassword',
+  'createUser',
+  'updateUser',
+  'register',
+  'resetPassword',
+  'updateProfile',
+  'uploadProfileImage',
+  'saveCustomer',
+  'saveProduct',
+  'savePromotion',
+  'updateSettings',
+  'createQuotation',
+  'duplicateQuotation',
+  'cancelQuotation',
+  'updateQuotation',
+  'quotation',
+  'saveQuotation'
+];
 
 function isApiDebugEnabled() {
   try {
@@ -78,6 +116,9 @@ function isUsableBootstrapCache(data) {
 }
 
 function getRequestKey(action, payload) {
+  if (payload && typeof payload === 'object' && payload.profileImageData) {
+    return String(action || '').trim() + ':profileImage:' + String(payload.profileImageData || '').length;
+  }
   return String(action || '').trim() + JSON.stringify(payload || {});
 }
 
@@ -157,8 +198,27 @@ function clearQuotationCache(quoteId) {
   setCache(CACHE_KEYS.quotation, cached, 10);
 }
 
+function isWriteAction(action) {
+  return WRITE_ACTIONS.indexOf(String(action || '').trim()) >= 0;
+}
+
+function isReadAction(action) {
+  return READ_ACTIONS.indexOf(String(action || '').trim()) >= 0;
+}
+
 function runApiRequest(action, payload) {
-  return jsonpApi(action, payload);
+  return apiRequest(action, payload);
+}
+
+function apiRequest(action, payload, options) {
+  const normalizedAction = String(action || '').trim();
+  if (isWriteAction(normalizedAction)) {
+    return apiPost(normalizedAction, payload, options);
+  }
+  if (isReadAction(normalizedAction)) {
+    return apiJsonpGet(normalizedAction, payload, options);
+  }
+  return apiJsonpGet(normalizedAction, payload, options);
 }
 
 function callApi(action, payload) {
@@ -259,7 +319,7 @@ function gas(action, payload) {
   return callApi(action, payload);
 }
 
-function jsonpApi(action, payload) {
+function apiJsonpGet(action, payload) {
   return new Promise(function (resolve) {
     const callbackName = '__sgApiCallback_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
     const script = document.createElement('script');
@@ -272,7 +332,7 @@ function jsonpApi(action, payload) {
       removeScript();
       scheduleCallbackDelete();
       resolve({ ok: false, message: 'API request timeout' });
-    }, 30000);
+    }, API_TIMEOUT_MS);
 
     function removeScript() {
       if (script.parentNode) {
@@ -321,25 +381,79 @@ function jsonpApi(action, payload) {
   });
 }
 
+function apiPost(action, payload, options) {
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutMs = Number(options && options.timeoutMs || API_TIMEOUT_MS);
+  let timeoutId = null;
+  if (controller) {
+    timeoutId = window.setTimeout(function () {
+      controller.abort();
+    }, timeoutMs);
+  }
+
+  return fetch(GAS_WEB_APP_URL, {
+    method: 'POST',
+    redirect: 'follow',
+    headers: {
+      'Content-Type': 'text/plain;charset=utf-8'
+    },
+    body: JSON.stringify({
+      action: action,
+      payload: payload || {}
+    }),
+    signal: controller ? controller.signal : undefined
+  }).then(function (response) {
+    return response.text().then(function (text) {
+      if (!response.ok) {
+        return {
+          ok: false,
+          code: 'HTTP_ERROR',
+          message: 'HTTP ' + response.status,
+          detail: text ? text.slice(0, 500) : ''
+        };
+      }
+      try {
+        return text ? JSON.parse(text) : { ok: false, code: 'EMPTY_RESPONSE', message: 'Empty API response' };
+      } catch (error) {
+        return {
+          ok: false,
+          code: 'INVALID_JSON',
+          message: 'API response is not JSON',
+          detail: text ? text.slice(0, 500) : ''
+        };
+      }
+    });
+  }).catch(function (error) {
+    if (error && error.name === 'AbortError') {
+      return { ok: false, code: 'TIMEOUT', message: 'API request timeout' };
+    }
+    return { ok: false, code: 'NETWORK_ERROR', message: error && error.message ? error.message : 'API request failed' };
+  }).finally(function () {
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+    }
+  });
+}
+
 function mockApi(action, payload) {
   const data = payload || {};
   if (action === 'demoLogin') {
     return { ok: false, code: 'FORBIDDEN', message: 'Demo Login is disabled' };
   }
   if (action === 'login') {
-    return { ok: true, data: { sessionToken: 'mock-token', user: { userId: 'UDEMO', username: data.username || 'demo', fullName: 'Demo Sales', displayName: 'Demo Sales', role: 'ADMIN', branch: 'Demo', phone: '0800000000' } } };
+    return { ok: true, data: { sessionToken: 'mock-token', user: { userId: 'LOCAL_USER', username: data.username || 'local', fullName: 'Local User', displayName: 'Local User', role: 'VIEWER', branch: '', phone: '' } } };
   }
   if (action === 'loadUsers') {
-    return { ok: true, data: [{ userId: 'UDEMO', username: 'demo', fullName: 'Demo Sales', role: 'ADMIN', branch: 'Demo', status: 'Active', lastLogin: '' }] };
+    return { ok: true, data: [{ userId: 'LOCAL_USER', username: 'local', fullName: 'Local User', role: 'VIEWER', branch: '', status: 'Active', lastLogin: '' }] };
   }
   if (['createUser', 'updateUser', 'changePassword', 'logout'].indexOf(action) >= 0) {
     return { ok: true, data: data, message: 'Mock success' };
   }
   switch (action) {
     case 'login':
-      return { ok: true, data: { username: data.username || 'demo', displayName: 'ก้อย Sales', position: 'Sales Executive', phone: '0800000000' } };
+      return { ok: true, data: { username: data.username || 'local', displayName: 'Local User', position: '', phone: '' } };
     case 'demoLogin':
-      return { ok: true, data: { username: 'demo', displayName: 'ก้อย Sales', position: 'Sales Executive', phone: '0800000000' } };
+      return { ok: false, code: 'FORBIDDEN', message: 'Demo Login is disabled' };
     case 'bootstrap':
       return { ok: true, data: { settings: { companyName: 'SAINT-GOBAIN', appName: 'SALES SYSTEM', welcomeText: 'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ', vatRate: 7 }, counts: { customers: 0, products: 0 }, quotes: [], quoteLines: [], sheetInitialized: true } };
     case 'customers':
@@ -356,6 +470,8 @@ function mockApi(action, payload) {
       return { ok: true, message: 'Mock password reset successful' };
     case 'updateProfile':
       return { ok: true, data: data, message: 'Mock profile saved' };
+    case 'uploadProfileImage':
+      return { ok: true, data: { profileImageUrl: data.profileImageData || '', photoUrl: data.profileImageData || '' }, message: 'Mock profile image uploaded' };
     case 'updateSettings':
       return { ok: true, data: data, message: 'Mock settings saved' };
     case 'saveCustomer':
@@ -381,6 +497,10 @@ function mockApi(action, payload) {
 
 window.callApi = callApi;
 window.gas = gas;
+window.apiRequest = apiRequest;
+window.apiPost = apiPost;
+window.apiJsonpGet = apiJsonpGet;
+window.jsonpApi = apiJsonpGet;
 window.setCache = setCache;
 window.getCache = getCache;
 window.clearCache = clearCache;
