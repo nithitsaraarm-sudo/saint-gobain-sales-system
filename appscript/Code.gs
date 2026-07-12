@@ -21,10 +21,16 @@ function doGet(e) {
   }
 }
 
-function getBootstrapData() {
+function getBootstrapData(payload) {
   const timer = startPerformanceTimer('bootstrap');
   try {
-    const cacheKey = 'bootstrap:dashboard:v1';
+    const auth = requireApiUser(payload);
+    if (!auth.ok) {
+      return auth;
+    }
+    const currentUser = auth.data;
+    const permissions = getUserPermissions(currentUser);
+    const cacheKey = 'bootstrap:dashboard:v2:' + String(currentUser.userId || currentUser.username || 'anon');
     const cached = getServerCache(cacheKey);
     if (cached) {
       endPerformanceTimer(timer, 'cache=hit');
@@ -32,11 +38,14 @@ function getBootstrapData() {
     }
     const env = getCurrentEnvironment();
 
-    const quotes = getBootstrapQuoteHistoryRows(200);
+    const allQuotes = getBootstrapQuoteHistoryRows(200);
+    const quotes = filterQuotesForUser(allQuotes, currentUser);
     const quoteLines = getBootstrapQuoteLineRows(quotes);
     const data = {
       environment: env,
       sheetInitialized: true,
+      user: currentUser,
+      permissions: permissions,
       settings: {
         companyName: 'SAINT-GOBAIN',
         appName: 'SALES SYSTEM',
@@ -71,6 +80,23 @@ function countSheetDataRows(sheetName) {
     logError('countSheetDataRows', error);
     return 0;
   }
+}
+
+function filterQuotesForUser(quotes, user) {
+  const list = Array.isArray(quotes) ? quotes : [];
+  if (hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.VIEWER])) {
+    return list;
+  }
+  if (hasRole(user, [USER_ROLES.SALES])) {
+    const userId = String(user && user.userId || '').trim().toLowerCase();
+    const username = String(user && user.username || '').trim().toLowerCase();
+    return list.filter(function (quote) {
+      const createdById = String(quote.createdById || quote.updatedById || '').trim().toLowerCase();
+      const createdBy = String(quote.createdBy || quote.updatedBy || '').trim().toLowerCase();
+      return (userId && createdById === userId) || (username && createdBy === username);
+    });
+  }
+  return [];
 }
 
 function getBootstrapQuoteHistoryRows(limit) {

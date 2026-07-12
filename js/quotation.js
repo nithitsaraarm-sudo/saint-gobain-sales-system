@@ -676,9 +676,10 @@ function buildQuotationPayload(status) {
     quoteNo: CURRENT_QUOTE.quoteNo || '',
     customerId: CURRENT_QUOTE.customerId,
     customerName: CURRENT_QUOTE.customerName,
-    items: CART.map(item => {
+    items: CART.map((item, index) => {
       recalcLineItem(item);
       return {
+        lineNo: index + 1,
         productId: item.productId,
         productName: item.productName,
         unit: item.unit,
@@ -774,7 +775,14 @@ async function loadQuotation(quoteId) {
 function applyLoadedQuotationResponse(response, fallbackQuoteId) {
   const data = response.data || {};
   const quote = data.quote || {};
-  const lines = Array.isArray(data.lines) ? data.lines : [];
+  const lines = (Array.isArray(data.lines) ? data.lines : []).slice().sort((a, b) => {
+    const aNo = Number(String(a.lineNo || '').replace(/,/g, ''));
+    const bNo = Number(String(b.lineNo || '').replace(/,/g, ''));
+    if (aNo && bNo && aNo !== bNo) return aNo - bNo;
+    if (aNo && !bNo) return -1;
+    if (!aNo && bNo) return 1;
+    return 0;
+  });
   CURRENT_QUOTE = {
     quoteId: String(quote.quoteId || fallbackQuoteId).trim(),
     quoteNo: String(quote.quoteNo || quote.quoteId || fallbackQuoteId).trim(),
@@ -911,7 +919,7 @@ function buildQuotationPrintHtml(data) {
     const sku = quotePrintText(line.sku || line.productId || line.productCode, '-');
     return `<tr class="print-page-break">
       <td class="num">${index + 1}</td>
-      <td class="print-product-cell"><b class="product-name">${escapeQuotationPrintHtml(line.productName)}</b>${freeText}<span class="print-product-code">${escapeQuotationPrintHtml(sku)}</span></td>
+      <td class="print-product-cell"><b class="product-name">${escapeQuotationPrintHtml(line.productName)}</b><span class="print-product-code">${escapeQuotationPrintHtml(sku)}</span>${freeText}</td>
       <td class="num">${quotePrintMoney(listPrice)}</td>
       <td class="num print-discount">${isFree ? 'แถม' : discount.toLocaleString('th-TH') + '%'}</td>
       <td class="num">${quotePrintMoney(netPrice)}</td>
@@ -961,17 +969,279 @@ function buildQuotationPrintHtml(data) {
       </thead>
       <tbody>${rows}</tbody>
     </table>
-    <section class="print-summary">
-      <div class="print-note"><b>หมายเหตุ</b><div>${escapeQuotationPrintHtml(remark)}</div></div>
-      <div class="print-totals">
+    <section class="quotation-lower-section print-summary">
+      <div class="quotation-summary print-totals">
         <div class="print-total-row"><span>รวมก่อน VAT</span><b>${quotePrintMoney(subtotal)}</b></div>
         <div class="print-total-row"><span>VAT 7%</span><b>${quotePrintMoney(vat)}</b></div>
         <div class="print-total-row"><span>ยอดรวมสุทธิ</span><b>${quotePrintMoney(grandTotal)}</b></div>
       </div>
+      <div class="quotation-remarks print-note"><b>หมายเหตุ</b><div>${escapeQuotationPrintHtml(remark)}</div></div>
     </section>
     <section class="print-signature"></section>
   </article>`;
 }
+function getQuotationPrintContext(data) {
+  const quote = data && data.quote ? data.quote : {};
+  const lines = Array.isArray(data && data.lines) ? data.lines : [];
+  const totals = data && data.totals ? data.totals : {};
+  const user = typeof USER !== 'undefined' && USER ? USER : {};
+  return {
+    data: data || {},
+    quote: quote,
+    lines: lines,
+    quoteNo: getQuotationPrintId(data || {}),
+    quoteDate: quotePrintDate(quote.createdAt || quote.updatedAt),
+    customerName: quotePrintText(quote.customerName || CURRENT_QUOTE.customerName, '-'),
+    customerId: quotePrintText(quote.customerId || CURRENT_QUOTE.customerId, '-'),
+    salesName: quotePrintText(quote.createdBy || user.displayName || user.username, '-'),
+    salesPosition: quotePrintText(user.position, '-'),
+    companyName: 'SAINT-GOBAIN',
+    remark: quotePrintText(quote.notes || quote.remark || quote.remarks, '-'),
+    subtotal: quotePrintNumber(totals.subtotal !== undefined ? totals.subtotal : quote.subtotal),
+    vat: quotePrintNumber(totals.vat !== undefined ? totals.vat : quote.vat),
+    grandTotal: quotePrintNumber(totals.grandTotal !== undefined ? totals.grandTotal : quote.grandTotal)
+  };
+}
+
+function buildQuotationPrintRowHtml(line, index) {
+  const item = line || {};
+  const qty = quotePrintNumber(item.qty);
+  const listPrice = quotePrintNumber(item.listPrice);
+  const discount = quotePrintNumber(item.discountPercent || item.discount);
+  const isFree = Boolean(item.isFree || item.freeItem || String(item.free || '').toUpperCase() === 'FREE' || (listPrice > 0 && quotePrintNumber(item.lineTotal || 0) === 0));
+  const netPrice = isFree ? 0 : quotePrintNumber(item.unitPrice || item.netPrice || (listPrice * (1 - discount / 100)));
+  const lineTotal = isFree ? 0 : quotePrintNumber(item.lineTotal || netPrice * qty);
+  const freeText = isFree ? '<span class="print-free-badge">สินค้าโปรโมชั่นแถม</span>' : '';
+  const sku = quotePrintText(item.sku || item.productId || item.productCode, '-');
+  return `<tr class="quotation-item-row print-page-break">
+    <td class="num">${index + 1}</td>
+    <td class="print-product-cell"><b class="product-name">${escapeQuotationPrintHtml(item.productName || '-')}</b><span class="print-product-code">${escapeQuotationPrintHtml(sku)}</span>${freeText}</td>
+    <td class="num">${quotePrintMoney(listPrice)}</td>
+    <td class="num print-discount">${isFree ? 'แถม' : discount.toLocaleString('th-TH') + '%'}</td>
+    <td class="num">${quotePrintMoney(netPrice)}</td>
+    <td class="num">${qty.toLocaleString('th-TH')}</td>
+    <td class="num">${escapeQuotationPrintHtml(item.unit || '-')}</td>
+    <td class="num">${quotePrintMoney(lineTotal)}</td>
+  </tr>`;
+}
+
+function buildQuotationEmptyRowHtml() {
+  return '<tr class="quotation-item-row print-page-break"><td class="print-empty" colspan="8">ไม่มีรายการสินค้า</td></tr>';
+}
+
+function buildQuotationPrintTableHtml(rowsHtml) {
+  return `<table class="print-table">
+    <thead>
+      <tr>
+        <th class="num">#</th>
+        <th>สินค้า</th>
+        <th class="num">ราคาตั้ง</th>
+        <th class="num">ส่วนลด</th>
+        <th class="num">ราคาสุทธิ</th>
+        <th class="num">จำนวน</th>
+        <th class="num">หน่วย</th>
+        <th class="num">รวม</th>
+      </tr>
+    </thead>
+    <tbody>${rowsHtml || ''}</tbody>
+  </table>`;
+}
+
+function buildQuotationFullHeaderHtml(ctx) {
+  return `<header class="print-doc-header">
+    <div class="print-doc-title">
+      <h1>ใบเสนอราคา</h1>
+      <p>Quotation</p>
+    </div>
+    <div class="print-doc-meta">
+      <div><span>เลขที่ใบเสนอราคา</span><b>${escapeQuotationPrintHtml(ctx.quoteNo)}</b></div>
+      <div><span>วันที่</span><b>${escapeQuotationPrintHtml(ctx.quoteDate)}</b></div>
+    </div>
+  </header>
+  <div class="print-divider"></div>
+  <section class="print-party-grid">
+    <div class="print-party-box">
+      <span>เรียน</span>
+      <b>${escapeQuotationPrintHtml(ctx.customerName)}</b>
+      <p>รหัสลูกค้า: ${escapeQuotationPrintHtml(ctx.customerId)}</p>
+    </div>
+    <div class="print-party-box print-party-right">
+      <span>ผู้เสนอราคา</span>
+      <b>${escapeQuotationPrintHtml(ctx.salesName)}</b>
+      <p>ตำแหน่ง: ${escapeQuotationPrintHtml(ctx.salesPosition)}</p>
+      <p>บริษัท: ${escapeQuotationPrintHtml(ctx.companyName)}</p>
+    </div>
+  </section>`;
+}
+
+function buildQuotationContinuedHeaderHtml(ctx) {
+  return `<header class="print-doc-header print-doc-header--continued">
+    <div class="print-doc-title">
+      <h2>ใบเสนอราคา</h2>
+      <p>ต่อหน้า</p>
+    </div>
+    <div class="print-doc-meta">
+      <div><span>เลขที่ใบเสนอราคา</span><b>${escapeQuotationPrintHtml(ctx.quoteNo)}</b></div>
+      <div><span>วันที่</span><b>${escapeQuotationPrintHtml(ctx.quoteDate)}</b></div>
+    </div>
+  </header>
+  <div class="print-divider print-divider--continued"></div>`;
+}
+
+function buildQuotationLowerSectionHtml(ctx) {
+  return `<section class="quotation-lower-section print-summary">
+    <div class="quotation-summary print-totals">
+      <div class="print-total-row"><span>รวมก่อน VAT</span><b>${quotePrintMoney(ctx.subtotal)}</b></div>
+      <div class="print-total-row"><span>VAT 7%</span><b>${quotePrintMoney(ctx.vat)}</b></div>
+      <div class="print-total-row"><span>ยอดรวมสุทธิ</span><b>${quotePrintMoney(ctx.grandTotal)}</b></div>
+    </div>
+    <div class="quotation-remarks print-note"><b>หมายเหตุ</b><div>${escapeQuotationPrintHtml(ctx.remark)}</div></div>
+  </section>
+  <section class="print-signature"></section>`;
+}
+
+function buildQuotationPageHtml(ctx, rowsHtml, pageIndex, totalPages, options) {
+  const opts = options || {};
+  const classes = ['quotation-page'];
+  if (opts.first) classes.push('quotation-page--first');
+  if (!opts.first) classes.push('quotation-page--continued');
+  if (opts.last) classes.push('quotation-page--last');
+  return `<article class="${classes.join(' ')}">
+    <div class="quotation-page-content">
+      ${opts.first ? buildQuotationFullHeaderHtml(ctx) : buildQuotationContinuedHeaderHtml(ctx)}
+      ${buildQuotationPrintTableHtml(rowsHtml)}
+      ${opts.last ? buildQuotationLowerSectionHtml(ctx) : ''}
+    </div>
+    <div class="quotation-page-number">หน้า ${pageIndex + 1} / ${totalPages}</div>
+  </article>`;
+}
+
+function measureQuotationPrintLayout(ctx, rowHtmlList) {
+  if (!document || !document.body) {
+    return null;
+  }
+  const measurement = document.createElement('div');
+  measurement.className = 'quotation-measurement';
+  measurement.innerHTML = `
+    <div class="quotation-page quotation-page--first quotation-page--measure">
+      <div class="quotation-page-content quotation-measure-first">
+        ${buildQuotationFullHeaderHtml(ctx)}
+        ${buildQuotationPrintTableHtml(rowHtmlList.join(''))}
+      </div>
+    </div>
+    <div class="quotation-page quotation-page--continued quotation-page--measure">
+      <div class="quotation-page-content quotation-measure-continued">
+        ${buildQuotationContinuedHeaderHtml(ctx)}
+        ${buildQuotationPrintTableHtml('')}
+      </div>
+    </div>
+    <div class="quotation-page quotation-page--last quotation-page--measure">
+      <div class="quotation-page-content quotation-measure-lower">
+        ${buildQuotationLowerSectionHtml(ctx)}
+      </div>
+    </div>`;
+  document.body.appendChild(measurement);
+  try {
+    const firstContent = measurement.querySelector('.quotation-measure-first');
+    const continuedContent = measurement.querySelector('.quotation-measure-continued');
+    const lowerSection = measurement.querySelector('.quotation-measure-lower .quotation-lower-section');
+    const firstTable = firstContent ? firstContent.querySelector('.print-table') : null;
+    const continuedTable = continuedContent ? continuedContent.querySelector('.print-table') : null;
+    const firstThead = firstTable ? firstTable.querySelector('thead') : null;
+    const continuedThead = continuedTable ? continuedTable.querySelector('thead') : null;
+    const rowNodes = Array.prototype.slice.call(measurement.querySelectorAll('.quotation-measure-first tbody tr'));
+    const pageContentHeight = firstContent ? firstContent.clientHeight : 980;
+    const firstHeaderHeight = firstTable && firstContent && firstThead
+      ? (firstTable.getBoundingClientRect().top - firstContent.getBoundingClientRect().top) + firstThead.getBoundingClientRect().height
+      : 360;
+    const continuedHeaderHeight = continuedTable && continuedContent && continuedThead
+      ? (continuedTable.getBoundingClientRect().top - continuedContent.getBoundingClientRect().top) + continuedThead.getBoundingClientRect().height
+      : 105;
+    const lowerHeight = lowerSection ? lowerSection.getBoundingClientRect().height + 20 : 230;
+    return {
+      pageContentHeight: pageContentHeight,
+      firstHeaderHeight: firstHeaderHeight,
+      continuedHeaderHeight: continuedHeaderHeight,
+      lowerHeight: lowerHeight,
+      rowHeights: rowNodes.map(node => Math.ceil(node.getBoundingClientRect().height || node.offsetHeight || 44))
+    };
+  } finally {
+    measurement.remove();
+  }
+}
+
+function paginateQuotationPrintRows(ctx) {
+  const rows = ctx.lines.length
+    ? ctx.lines.map((line, index) => ({ html: buildQuotationPrintRowHtml(line, index), index: index }))
+    : [{ html: buildQuotationEmptyRowHtml(), index: 0 }];
+  const layout = measureQuotationPrintLayout(ctx, rows.map(row => row.html)) || {};
+  const rowHeights = layout.rowHeights && layout.rowHeights.length === rows.length
+    ? layout.rowHeights
+    : rows.map(() => 46);
+  const pageContentHeight = layout.pageContentHeight || 980;
+  const firstHeaderHeight = layout.firstHeaderHeight || 360;
+  const continuedHeaderHeight = layout.continuedHeaderHeight || 105;
+  const lowerHeight = layout.lowerHeight || 230;
+  const pageNumberReserve = 26;
+  const pages = [];
+  let cursor = 0;
+
+  while (cursor < rows.length) {
+    const isFirstPage = pages.length === 0;
+    const headerHeight = isFirstPage ? firstHeaderHeight : continuedHeaderHeight;
+    const availableWithoutLower = Math.max(80, pageContentHeight - headerHeight - pageNumberReserve);
+    let remainingHeight = 0;
+    for (let i = cursor; i < rows.length; i += 1) {
+      remainingHeight += rowHeights[i] || 46;
+    }
+
+    if (remainingHeight + lowerHeight <= availableWithoutLower) {
+      pages.push({ rows: rows.slice(cursor), first: isFirstPage, last: true });
+      cursor = rows.length;
+      break;
+    }
+
+    const pageRows = [];
+    let usedHeight = 0;
+    while (cursor < rows.length) {
+      const rowHeight = rowHeights[cursor] || 46;
+      if (pageRows.length && usedHeight + rowHeight > availableWithoutLower) {
+        break;
+      }
+      pageRows.push(rows[cursor]);
+      usedHeight += rowHeight;
+      cursor += 1;
+      if (usedHeight >= availableWithoutLower) {
+        break;
+      }
+    }
+    if (!pageRows.length && cursor < rows.length) {
+      pageRows.push(rows[cursor]);
+      cursor += 1;
+    }
+    pages.push({ rows: pageRows, first: isFirstPage, last: false });
+  }
+
+  if (!pages.length) {
+    pages.push({ rows: rows, first: true, last: true });
+  }
+  pages[pages.length - 1].last = true;
+  return pages;
+}
+
+function buildQuotationPrintHtmlPaginated(data) {
+  const ctx = getQuotationPrintContext(data);
+  const pages = paginateQuotationPrintRows(ctx);
+  const totalPages = pages.length;
+  return pages.map((page, index) => {
+    const rowsHtml = page.rows.map(row => row.html).join('');
+    return buildQuotationPageHtml(ctx, rowsHtml, index, totalPages, {
+      first: index === 0,
+      last: index === totalPages - 1
+    });
+  }).join('');
+}
+
 async function prepareQuotationPrintPreview(quoteId, showPreview) {
   const id = String(quoteId || '').trim();
   let response = null;
@@ -991,7 +1261,8 @@ async function prepareQuotationPrintPreview(quoteId, showPreview) {
     toast('ไม่พบพื้นที่ Print Preview');
     return null;
   }
-  documentNode.innerHTML = buildQuotationPrintHtml(printData || {});
+  toast('กำลังจัดหน้าเอกสาร...');
+  documentNode.innerHTML = buildQuotationPrintHtmlPaginated(printData || {});
   documentNode.dataset.quoteNo = getQuotationPrintId(printData || {});
   preview.classList.toggle('hidden', !showPreview);
   preview.classList.toggle('is-open', Boolean(showPreview));
@@ -1051,10 +1322,19 @@ async function exportQuotationPNG(quoteId) {
 async function captureQuotationSheet(documentNode) {
   const previousTransform = documentNode.style.transform;
   const previousTransformOrigin = documentNode.style.transformOrigin;
+  const previousWidth = documentNode.style.width;
+  const previousHeight = documentNode.style.height;
+  const previousMinHeight = documentNode.style.minHeight;
   const previousTransformPriority = documentNode.style.getPropertyPriority('transform');
   const previousTransformOriginPriority = documentNode.style.getPropertyPriority('transform-origin');
+  const previousWidthPriority = documentNode.style.getPropertyPriority('width');
+  const previousHeightPriority = documentNode.style.getPropertyPriority('height');
+  const previousMinHeightPriority = documentNode.style.getPropertyPriority('min-height');
   documentNode.style.setProperty('transform', 'none', 'important');
   documentNode.style.setProperty('transform-origin', 'top left', 'important');
+  documentNode.style.setProperty('width', '210mm', 'important');
+  documentNode.style.setProperty('height', '297mm', 'important');
+  documentNode.style.setProperty('min-height', '297mm', 'important');
   try {
     return await html2canvas(documentNode, {
       scale: 3,
@@ -1068,6 +1348,9 @@ async function captureQuotationSheet(documentNode) {
   } finally {
     documentNode.style.setProperty('transform', previousTransform, previousTransformPriority);
     documentNode.style.setProperty('transform-origin', previousTransformOrigin, previousTransformOriginPriority);
+    documentNode.style.setProperty('width', previousWidth, previousWidthPriority);
+    documentNode.style.setProperty('height', previousHeight, previousHeightPriority);
+    documentNode.style.setProperty('min-height', previousMinHeight, previousMinHeightPriority);
   }
 }
 
@@ -1215,6 +1498,154 @@ async function shareQuote(quoteId) {
   return { ok: true, shared: false };
 }
 
+function getQuotationPrintPages(documentNode) {
+  if (!documentNode) {
+    return [];
+  }
+  const pages = Array.prototype.slice.call(documentNode.querySelectorAll('.quotation-page'));
+  return pages.length ? pages : [documentNode];
+}
+
+function getQuotationExportBaseName(documentNode) {
+  const rawName = documentNode && documentNode.dataset ? documentNode.dataset.quoteNo || 'QT-PREVIEW' : 'QT-PREVIEW';
+  const safeName = String(rawName || 'QT-PREVIEW').replace(/[^A-Za-z0-9_-]/g, '-');
+  return safeName.indexOf('QT-') === 0 ? safeName : 'QT-' + safeName;
+}
+
+function getQuotationExportFileName(documentNode, pageIndex, pageCount) {
+  const baseName = getQuotationExportBaseName(documentNode);
+  return pageCount && pageCount > 1 ? `${baseName}-page${(pageIndex || 0) + 1}.png` : `${baseName}.png`;
+}
+
+async function exportQuotationPNG(quoteId) {
+  const preview = document.getElementById('quotationPrintPreview');
+  const currentDocument = document.getElementById('printQuotationSheet');
+  const hasPreview = currentDocument && currentDocument.innerHTML.trim();
+  const previewOpen = preview && preview.classList.contains('is-open');
+  const prepared = quoteId || !hasPreview || !previewOpen ? await prepareQuotationPrintPreview(quoteId, true) : { preview, documentNode: currentDocument };
+  if (!prepared || !prepared.documentNode) {
+    return null;
+  }
+  if (typeof html2canvas !== 'function') {
+    toast('ไม่พบ html2canvas สำหรับ Save PNG');
+    return null;
+  }
+  const pages = getQuotationPrintPages(prepared.documentNode);
+  const canvases = [];
+  for (let i = 0; i < pages.length; i += 1) {
+    toast(`กำลังสร้างรูปหน้า ${i + 1}/${pages.length}...`);
+    const canvas = await captureQuotationSheet(pages[i]);
+    canvases.push(canvas);
+    downloadQuotationCanvas(canvas, getQuotationExportFileName(prepared.documentNode, i, pages.length));
+  }
+  toast(pages.length > 1 ? 'บันทึกรูปใบเสนอราคาครบทุกหน้าแล้ว' : 'บันทึก PNG แล้ว');
+  return canvases.length === 1 ? canvases[0] : canvases;
+}
+
+async function saveQuotationPdf(quoteId) {
+  const preview = document.getElementById('quotationPrintPreview');
+  const currentDocument = document.getElementById('printQuotationSheet');
+  const hasPreview = currentDocument && currentDocument.innerHTML.trim();
+  const previewOpen = preview && preview.classList.contains('is-open');
+  const prepared = quoteId || !hasPreview || !previewOpen ? await prepareQuotationPrintPreview(quoteId, true) : { preview, documentNode: currentDocument };
+  if (!prepared || !prepared.documentNode) {
+    return null;
+  }
+  if (typeof html2canvas !== 'function') {
+    toast('ไม่พบ html2canvas สำหรับ Save PDF');
+    return null;
+  }
+  const jsPdfFactory = window.jspdf && window.jspdf.jsPDF;
+  if (typeof jsPdfFactory !== 'function') {
+    toast('ไม่พบ jsPDF สำหรับ Save PDF');
+    return null;
+  }
+  const pages = getQuotationPrintPages(prepared.documentNode);
+  const pdf = new jsPdfFactory({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  for (let i = 0; i < pages.length; i += 1) {
+    toast(`กำลังสร้างรูปหน้า ${i + 1}/${pages.length}...`);
+    const canvas = await captureQuotationSheet(pages[i]);
+    if (i > 0) {
+      pdf.addPage('a4', 'portrait');
+    }
+    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, 210, 297);
+  }
+  pdf.save(`${getQuotationExportBaseName(prepared.documentNode)}.pdf`);
+  toast('บันทึก PDF แล้ว');
+  return pdf;
+}
+
+async function shareQuote(quoteId) {
+  const preview = document.getElementById('quotationPrintPreview');
+  const currentDocument = document.getElementById('printQuotationSheet');
+  const hasPreview = currentDocument && currentDocument.innerHTML.trim();
+  const previewOpen = preview && preview.classList.contains('is-open');
+  const prepared = quoteId || !hasPreview || !previewOpen
+    ? await prepareQuotationPrintPreview(quoteId, true)
+    : { preview, documentNode: currentDocument, response: { ok: true, data: getCurrentQuotationPrintData() } };
+  if (!prepared || !prepared.documentNode) {
+    return null;
+  }
+  if (typeof html2canvas !== 'function') {
+    toast('ไม่พบ html2canvas สำหรับ Share');
+    return null;
+  }
+
+  const pages = getQuotationPrintPages(prepared.documentNode);
+  const printData = prepared.response && prepared.response.data ? prepared.response.data : getCurrentQuotationPrintData();
+  const shareText = getQuotationShareText(printData, prepared.documentNode);
+  const files = [];
+  const canvases = [];
+
+  for (let i = 0; i < pages.length; i += 1) {
+    toast(`กำลังสร้างรูปหน้า ${i + 1}/${pages.length}...`);
+    const canvas = await captureQuotationSheet(pages[i]);
+    canvases.push(canvas);
+    const blob = await quotationCanvasToBlob(canvas);
+    if (blob && typeof File === 'function') {
+      files.push(new File([blob], getQuotationExportFileName(prepared.documentNode, i, pages.length), { type: 'image/png' }));
+    }
+  }
+
+  if (files.length && navigator.share && navigator.canShare) {
+    const shareData = {
+      title: getQuotationExportBaseName(prepared.documentNode),
+      text: shareText,
+      files: files
+    };
+    try {
+      if (navigator.canShare({ files: files })) {
+        await navigator.share(shareData);
+        toast('เปิด Share Sheet แล้ว');
+        return { ok: true, shared: true, files: files.length };
+      }
+    } catch (error) {
+      console.warn('Native file share failed, using fallback', error);
+    }
+  }
+
+  canvases.forEach((canvas, index) => {
+    downloadQuotationCanvas(canvas, getQuotationExportFileName(prepared.documentNode, index, canvases.length));
+  });
+  await copyQuotationShareText(shareText);
+  toast(canvases.length > 1 ? 'บันทึกรูปใบเสนอราคาครบทุกหน้าแล้ว กรุณาเลือกส่งผ่าน LINE' : 'บันทึกรูปแล้ว กรุณาเลือกส่งผ่าน LINE');
+  return { ok: true, shared: false, files: canvases.length };
+}
+
+function getQuotationShareText(printData, documentNode) {
+  const data = printData || {};
+  const quote = data.quote || {};
+  const totals = data.totals || {};
+  const quoteNo = (documentNode && documentNode.dataset && documentNode.dataset.quoteNo) || quote.quoteNo || quote.quoteId || CURRENT_QUOTE.quoteNo || CURRENT_QUOTE.quoteId || 'QT-PREVIEW';
+  const customerName = quote.customerName || CURRENT_QUOTE.customerName || '-';
+  const grandTotal = totals.grandTotal ?? quote.grandTotal ?? quote.total ?? calcCart().total ?? 0;
+  return `ใบเสนอราคา: ${quoteNo}
+ร้านค้า: ${customerName || '-'}
+ยอดรวมสุทธิ: ${money(grandTotal)} บาท
+
+สร้างโดย Saint-Gobain Sales System`;
+}
+
 async function duplicateCurrentQuotation() {
   const id = String(CURRENT_QUOTE.quoteId || '').trim();
   if (!id) {
@@ -1288,7 +1719,8 @@ function renderCart() {
       ? '<span class="loading-text">กำลังโหลดส่วนลด...</span>'
       : `<input class="quote-discount-input" type="number" value="${it.discountPercent || 0}" onchange="changeDiscount('${it.lineId}', Number(this.value))"> %`;
     const freeBadge = it.isFree ? '<span class="pill yellow">FREE</span>' : '';
-    return `<div class="row item-card quote-line">
+    return `<div class="row item-card quote-line" data-line-id="${it.lineId}">
+      <button type="button" class="quote-drag-handle" aria-label="จัดเรียงสินค้า">☰</button>
       <div class="quote-line-main">
         <b>${it.productName || '-'} ${freeBadge}</b><br>
         <small>${it.productId || ''}${it.unit ? ' · ' + it.unit : ''}</small>
@@ -1309,6 +1741,111 @@ function renderCart() {
     </div>`;
   }).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
   calcCart();
+  setupCartReorder();
+}
+
+function setupCartReorder() {
+  const cartList = document.getElementById('cartList');
+  if (!cartList || cartList.dataset.reorderBound === 'true') {
+    return;
+  }
+  cartList.dataset.reorderBound = 'true';
+  let dragged = null;
+  let placeholder = null;
+  let pointerId = null;
+  let startY = 0;
+
+  function getLineElement(target) {
+    const handle = target && target.closest ? target.closest('.quote-drag-handle') : null;
+    return handle ? handle.closest('.quote-line') : null;
+  }
+  function getAfterElement(container, y) {
+    const elements = Array.from(container.querySelectorAll('.quote-line:not(.is-dragging)'));
+    return elements.reduce((closest, child) => {
+      const box = child.getBoundingClientRect();
+      const offset = y - box.top - box.height / 2;
+      if (offset < 0 && offset > closest.offset) {
+        return { offset, element: child };
+      }
+      return closest;
+    }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
+  }
+  function syncCartOrderFromDom() {
+    const ids = Array.from(cartList.querySelectorAll('.quote-line')).map(el => el.dataset.lineId);
+    if (!ids.length) return;
+    const byId = {};
+    CART.forEach(item => { byId[String(item.lineId)] = item; });
+    const next = ids.map(id => byId[String(id)]).filter(Boolean);
+    CART.forEach(item => {
+      if (next.indexOf(item) < 0) next.push(item);
+    });
+    CART.length = 0;
+    next.forEach(item => CART.push(item));
+  }
+  function cleanup() {
+    if (dragged) {
+      dragged.classList.remove('is-dragging');
+      dragged.style.width = '';
+      dragged.style.position = '';
+      dragged.style.left = '';
+      dragged.style.top = '';
+      dragged.style.zIndex = '';
+      dragged.style.pointerEvents = '';
+      dragged.style.transform = '';
+    }
+    if (placeholder && placeholder.parentNode) {
+      placeholder.parentNode.removeChild(placeholder);
+    }
+    dragged = null;
+    placeholder = null;
+    pointerId = null;
+    document.body.classList.remove('quote-reordering');
+  }
+  cartList.addEventListener('pointerdown', event => {
+    const line = getLineElement(event.target);
+    if (!line || event.button > 0) return;
+    dragged = line;
+    pointerId = event.pointerId;
+    startY = event.clientY;
+    placeholder = document.createElement('div');
+    placeholder.className = 'quote-drop-placeholder';
+    placeholder.style.height = dragged.offsetHeight + 'px';
+    dragged.parentNode.insertBefore(placeholder, dragged.nextSibling);
+    dragged.classList.add('is-dragging');
+    dragged.style.width = dragged.offsetWidth + 'px';
+    dragged.style.position = 'fixed';
+    dragged.style.left = dragged.getBoundingClientRect().left + 'px';
+    dragged.style.top = dragged.getBoundingClientRect().top + 'px';
+    dragged.style.zIndex = '220';
+    dragged.style.pointerEvents = 'none';
+    document.body.classList.add('quote-reordering');
+    try { event.target.setPointerCapture(pointerId); } catch (error) {}
+    event.preventDefault();
+  });
+  cartList.addEventListener('pointermove', event => {
+    if (!dragged || event.pointerId !== pointerId) return;
+    const dy = event.clientY - startY;
+    dragged.style.transform = `translateY(${dy}px)`;
+    const afterElement = getAfterElement(cartList, event.clientY);
+    if (afterElement == null) {
+      cartList.appendChild(placeholder);
+    } else {
+      cartList.insertBefore(placeholder, afterElement);
+    }
+    event.preventDefault();
+  });
+  function finish(event) {
+    if (!dragged || (event && event.pointerId !== pointerId)) return;
+    const target = dragged;
+    if (placeholder && placeholder.parentNode) {
+      placeholder.parentNode.insertBefore(target, placeholder);
+    }
+    cleanup();
+    syncCartOrderFromDom();
+    renderCart();
+  }
+  cartList.addEventListener('pointerup', finish);
+  cartList.addEventListener('pointercancel', finish);
 }
 async function addProduct(productId, qty) {
   const normalizedQty = Number(qty || 1);
