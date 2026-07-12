@@ -1,4 +1,4 @@
-const CACHE_NAME = 'koi-sales-system-v1';
+const CACHE_NAME = 'sales-system-v2';
 const ASSETS = [
   './',
   './index.html',
