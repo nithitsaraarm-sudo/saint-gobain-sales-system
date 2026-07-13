@@ -376,7 +376,7 @@ function getHeadersForSheet(sheetName) {
     return ['quoteId', 'quoteNo', 'quoteType', 'businessUnit', 'customerId', 'customerName', 'status', 'shipping', 'specialDiscount', 'subtotal', 'vat', 'grandTotal', 'createdBy', 'createdById', 'updatedBy', 'updatedById', 'createdAt', 'updatedAt'];
   }
   if (sheetName === SHEET_NAMES.QUOTE_LINES) {
-    return ['quoteId', 'lineId', 'lineNo', 'productId', 'productBusinessUnit', 'productName', 'unit', 'qty', 'listPrice', 'discountPercent', 'unitPrice', 'netPrice', 'lineTotal', 'vat', 'grandTotal', 'status', 'createdAt', 'updatedAt'];
+    return ['quoteId', 'lineId', 'lineNo', 'lineOrder', 'sortOrder', 'productId', 'productBusinessUnit', 'productName', 'unit', 'qty', 'listPrice', 'discountPercent', 'unitPrice', 'netPrice', 'lineTotal', 'vat', 'grandTotal', 'status', 'createdAt', 'updatedAt'];
   }
   if (sheetName === SHEET_NAMES.CUSTOMER_FREQUENT_PRODUCTS) {
     return ['customerId', 'productId', 'favorite', 'type', 'createdAt', 'updatedAt'];

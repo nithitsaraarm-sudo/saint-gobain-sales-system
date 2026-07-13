@@ -805,6 +805,8 @@ function buildQuotationPayload(status) {
       recalcLineItem(item);
       return {
         lineNo: index + 1,
+        lineOrder: index + 1,
+        sortOrder: index + 1,
         productId: item.productId,
         productBusinessUnit: getProductBusinessUnitClient(item) || item.productBusinessUnit || '',
         productName: item.productName,
@@ -905,8 +907,8 @@ function applyLoadedQuotationResponse(response, fallbackQuoteId) {
   const data = response.data || {};
   const quote = data.quote || {};
   const lines = (Array.isArray(data.lines) ? data.lines : []).slice().sort((a, b) => {
-    const aNo = Number(String(a.lineNo || '').replace(/,/g, ''));
-    const bNo = Number(String(b.lineNo || '').replace(/,/g, ''));
+    const aNo = Number(String(a.lineOrder || a.sortOrder || a.lineNo || '').replace(/,/g, ''));
+    const bNo = Number(String(b.lineOrder || b.sortOrder || b.lineNo || '').replace(/,/g, ''));
     if (aNo && bNo && aNo !== bNo) return aNo - bNo;
     if (aNo && !bNo) return -1;
     if (!aNo && bNo) return 1;
@@ -928,6 +930,9 @@ function applyLoadedQuotationResponse(response, fallbackQuoteId) {
   lines.forEach(line => {
     CART.push(recalcLineItem({
       lineId: String(line.lineId || line.lineNo || createLineId()),
+      lineNo: String(line.lineNo || '').trim(),
+      lineOrder: Number(String(line.lineOrder || line.sortOrder || line.lineNo || 0).replace(/,/g, '')) || 0,
+      sortOrder: Number(String(line.sortOrder || line.lineOrder || line.lineNo || 0).replace(/,/g, '')) || 0,
       productId: String(line.productId || '').trim(),
       productBusinessUnit: getProductBusinessUnitClient(line) || String(line.productBusinessUnit || line.businessUnit || '').trim(),
       businessUnit: getProductBusinessUnitClient(line) || String(line.productBusinessUnit || line.businessUnit || '').trim(),
@@ -1869,7 +1874,11 @@ function renderCart() {
     return;
   }
   CART.forEach(recalcLineItem);
-  cartList.innerHTML = CART.length ? CART.map(it => {
+  const showReorderHint = CART.length > 1 && (() => {
+    try { return localStorage.getItem('sg_quote_reorder_hint_seen') !== 'true'; } catch (error) { return true; }
+  })();
+  const reorderHint = showReorderHint ? '<div class="quote-reorder-hint">กดค้างที่การ์ดแล้วลากเพื่อเรียงสินค้า</div>' : '';
+  cartList.innerHTML = CART.length ? reorderHint + CART.map(it => {
     const discountText = it.discountLoading
       ? '<span class="loading-text">กำลังโหลดส่วนลด...</span>'
       : `<input class="quote-discount-input" type="number" value="${it.discountPercent || 0}" onchange="changeDiscount('${it.lineId}', Number(this.value))"> %`;
@@ -1877,25 +1886,24 @@ function renderCart() {
     const productUnit = getProductBusinessUnitClient(it);
     const productBuBadge = productUnit ? `<span class="quote-product-bu ${getQuoteTypeClass(productUnit)}">${getQuoteTypeLabel(productUnit)}</span>` : '';
     const crossBuNote = productUnit && productUnit !== getCurrentQuoteBusinessUnit() ? '<small class="quote-cross-bu-note">สินค้าร่วมข้าม BU</small>' : '';
-    return `<div class="row item-card quote-line" data-line-id="${it.lineId}">
-      <button type="button" class="quote-drag-handle" aria-label="จัดเรียงสินค้า">☰</button>
+    return `<div class="row item-card quote-line" data-line-id="${it.lineId}" role="listitem" tabindex="0" aria-label="กดค้างแล้วลากเพื่อเรียงสินค้า หรือกด Alt พร้อมลูกศรขึ้นลง" title="กดค้างแล้วลากเพื่อเรียงสินค้า">
       <div class="quote-line-main">
         <div class="quote-product-title">${productBuBadge}<b>${it.productName || '-'} ${freeBadge}</b>${crossBuNote}</div>
         <small>${it.productId || ''}${it.unit ? ' · ' + it.unit : ''}</small>
         <div class="quote-line-prices">
           <span>ราคาตั้ง ${money(it.listPrice)}</span>
-          <span>ส่วนลด ${discountText}</span>
+          <span data-no-drag>ส่วนลด ${discountText}</span>
           <span>ราคาสุทธิ ${it.isFree ? 'FREE' : money(it.unitPrice)}</span>
           <span>รวม ${it.isFree ? 'FREE' : money(it.lineTotal)}</span>
-          <label class="free-item-toggle"><input type="checkbox" ${it.isFree ? 'checked' : ''} onchange="toggleFreeItem('${it.lineId}', this.checked)"> สินค้าแถม</label>
+          <label class="free-item-toggle" data-no-drag><input type="checkbox" ${it.isFree ? 'checked' : ''} onchange="toggleFreeItem('${it.lineId}', this.checked)"> สินค้าแถม</label>
         </div>
       </div>
-      <div class="qty quote-qty-control">
+      <div class="qty quote-qty-control" data-no-drag>
         <button onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button>
         <input type="number" min="1" value="${Number(it.qty) || 1}" onchange="changeQty('${it.lineId}', this.value)">
         <button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button>
       </div>
-      <button class="ghost" onclick="removeProduct('${it.lineId}')">ลบ</button>
+      <button class="ghost" data-no-drag onclick="removeProduct('${it.lineId}')">ลบ</button>
     </div>`;
   }).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
   calcCart();
@@ -1912,10 +1920,21 @@ function setupCartReorder() {
   let placeholder = null;
   let pointerId = null;
   let startY = 0;
+  let startX = 0;
+  let dragStartTop = 0;
+  let pressTimer = null;
+  let pendingLine = null;
+  let isDragging = false;
+  const touchDelayMs = 380;
+  const moveTolerance = 8;
+  const noDragSelector = 'button,input,select,textarea,a,label,[data-no-drag]';
 
+  function isNoDragTarget(target) {
+    return Boolean(target && target.closest && target.closest(noDragSelector));
+  }
   function getLineElement(target) {
-    const handle = target && target.closest ? target.closest('.quote-drag-handle') : null;
-    return handle ? handle.closest('.quote-line') : null;
+    if (!target || !target.closest || isNoDragTarget(target)) return null;
+    return target.closest('.quote-line');
   }
   function getAfterElement(container, y) {
     const elements = Array.from(container.querySelectorAll('.quote-line:not(.is-dragging)'));
@@ -1938,11 +1957,81 @@ function setupCartReorder() {
       if (next.indexOf(item) < 0) next.push(item);
     });
     CART.length = 0;
-    next.forEach(item => CART.push(item));
+    next.forEach((item, index) => {
+      item.lineNo = index + 1;
+      item.lineOrder = index + 1;
+      item.sortOrder = index + 1;
+      CART.push(item);
+    });
+  }
+  function renumberCartItems() {
+    CART.forEach((item, index) => {
+      item.lineNo = index + 1;
+      item.lineOrder = index + 1;
+      item.sortOrder = index + 1;
+    });
+  }
+  function moveCartLineByKeyboard(line, direction) {
+    const id = line && line.dataset ? String(line.dataset.lineId || '') : '';
+    if (!id) return;
+    const index = CART.findIndex(item => String(item.lineId) === id);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= CART.length) return;
+    const item = CART.splice(index, 1)[0];
+    CART.splice(nextIndex, 0, item);
+    renumberCartItems();
+    renderCart();
+    const nextLine = cartList.querySelector(`.quote-line[data-line-id="${id}"]`);
+    if (nextLine && typeof nextLine.focus === 'function') nextLine.focus();
+  }
+  function clearPressTimer() {
+    if (pressTimer) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  }
+  function setReorderHintSeen() {
+    try { localStorage.setItem('sg_quote_reorder_hint_seen', 'true'); } catch (error) {}
+  }
+  function autoScroll(clientY) {
+    const margin = 72;
+    const maxSpeed = 18;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    if (clientY < margin) {
+      window.scrollBy(0, -Math.max(4, Math.round((margin - clientY) / margin * maxSpeed)));
+    } else if (viewportHeight && clientY > viewportHeight - margin) {
+      window.scrollBy(0, Math.max(4, Math.round((clientY - (viewportHeight - margin)) / margin * maxSpeed)));
+    }
+  }
+  function beginDrag(line, event) {
+    if (!line || dragged) return;
+    clearPressTimer();
+    dragged = line;
+    isDragging = true;
+    pointerId = event.pointerId;
+    startY = event.clientY;
+    startX = event.clientX;
+    const rect = dragged.getBoundingClientRect();
+    dragStartTop = rect.top;
+    placeholder = document.createElement('div');
+    placeholder.className = 'quote-drop-placeholder card--ghost';
+    placeholder.style.height = dragged.offsetHeight + 'px';
+    dragged.parentNode.insertBefore(placeholder, dragged.nextSibling);
+    dragged.classList.add('is-dragging', 'card--dragging', 'card--chosen');
+    dragged.style.width = dragged.offsetWidth + 'px';
+    dragged.style.position = 'fixed';
+    dragged.style.left = rect.left + 'px';
+    dragged.style.top = rect.top + 'px';
+    dragged.style.zIndex = '220';
+    dragged.style.pointerEvents = 'none';
+    document.body.classList.add('quote-reordering');
+    setReorderHintSeen();
+    try { line.setPointerCapture(pointerId); } catch (error) {}
   }
   function cleanup() {
+    clearPressTimer();
     if (dragged) {
-      dragged.classList.remove('is-dragging');
+      dragged.classList.remove('is-dragging', 'card--dragging', 'card--chosen', 'card--drag-ready');
       dragged.style.width = '';
       dragged.style.position = '';
       dragged.style.left = '';
@@ -1956,32 +2045,41 @@ function setupCartReorder() {
     }
     dragged = null;
     placeholder = null;
+    pendingLine = null;
     pointerId = null;
+    isDragging = false;
     document.body.classList.remove('quote-reordering');
+    cartList.querySelectorAll('.card--drag-ready').forEach(el => el.classList.remove('card--drag-ready'));
   }
   cartList.addEventListener('pointerdown', event => {
     const line = getLineElement(event.target);
     if (!line || event.button > 0) return;
-    dragged = line;
+    pendingLine = line;
     pointerId = event.pointerId;
     startY = event.clientY;
-    placeholder = document.createElement('div');
-    placeholder.className = 'quote-drop-placeholder';
-    placeholder.style.height = dragged.offsetHeight + 'px';
-    dragged.parentNode.insertBefore(placeholder, dragged.nextSibling);
-    dragged.classList.add('is-dragging');
-    dragged.style.width = dragged.offsetWidth + 'px';
-    dragged.style.position = 'fixed';
-    dragged.style.left = dragged.getBoundingClientRect().left + 'px';
-    dragged.style.top = dragged.getBoundingClientRect().top + 'px';
-    dragged.style.zIndex = '220';
-    dragged.style.pointerEvents = 'none';
-    document.body.classList.add('quote-reordering');
-    try { event.target.setPointerCapture(pointerId); } catch (error) {}
+    startX = event.clientX;
+    line.classList.add('card--drag-ready');
+    if (event.pointerType === 'touch' || event.pointerType === 'pen') {
+      clearPressTimer();
+      pressTimer = setTimeout(() => {
+        if (pendingLine === line) beginDrag(line, event);
+      }, touchDelayMs);
+      return;
+    }
+    beginDrag(line, event);
     event.preventDefault();
   });
   cartList.addEventListener('pointermove', event => {
-    if (!dragged || event.pointerId !== pointerId) return;
+    if (event.pointerId !== pointerId) return;
+    if (!isDragging) {
+      if (pendingLine && (Math.abs(event.clientY - startY) > moveTolerance || Math.abs(event.clientX - startX) > moveTolerance)) {
+        pendingLine.classList.remove('card--drag-ready');
+        pendingLine = null;
+        clearPressTimer();
+      }
+      return;
+    }
+    if (!dragged) return;
     const dy = event.clientY - startY;
     dragged.style.transform = `translateY(${dy}px)`;
     const afterElement = getAfterElement(cartList, event.clientY);
@@ -1990,10 +2088,15 @@ function setupCartReorder() {
     } else {
       cartList.insertBefore(placeholder, afterElement);
     }
+    autoScroll(event.clientY);
     event.preventDefault();
   });
   function finish(event) {
-    if (!dragged || (event && event.pointerId !== pointerId)) return;
+    if (event && event.pointerId !== pointerId) return;
+    if (!isDragging || !dragged) {
+      cleanup();
+      return;
+    }
     const target = dragged;
     if (placeholder && placeholder.parentNode) {
       placeholder.parentNode.insertBefore(target, placeholder);
@@ -2004,6 +2107,13 @@ function setupCartReorder() {
   }
   cartList.addEventListener('pointerup', finish);
   cartList.addEventListener('pointercancel', finish);
+  cartList.addEventListener('keydown', event => {
+    if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+    const line = event.target && event.target.closest ? event.target.closest('.quote-line') : null;
+    if (!line || isNoDragTarget(event.target)) return;
+    moveCartLineByKeyboard(line, event.key === 'ArrowUp' ? -1 : 1);
+    event.preventDefault();
+  });
 }
 async function addProduct(productId, qty) {
   const normalizedQty = Number(qty || 1);
@@ -2117,41 +2227,43 @@ async function saveQuotationWithStatus(status) {
   return response;
 }
 
-window.renderQuote = renderQuote;
-window.renderProductPicker = renderProductPicker;
-window.addCart = addCart;
-window.renderCart = renderCart;
-window.calcCart = calcCart;
-window.saveQuote = saveQuote;
-window.saveQuotation = saveQuotation;
-window.saveDraftQuotation = saveDraftQuotation;
-window.updateQuotation = updateQuotation;
-window.shareQuote = shareQuote;
-window.selectCustomer = selectCustomer;
-window.newQuotation = newQuotation;
-window.addProduct = addProduct;
-window.removeProduct = removeProduct;
-window.changeQty = changeQty;
-window.refreshQuotation = refreshQuotation;
-window.loadQuotation = loadQuotation;
-window.openQuotation = openQuotation;
-window.printQuotation = printQuotation;
-window.printQuotationSheet = printQuotationSheet;
-window.exportQuotationPNG = exportQuotationPNG;
-window.saveQuotationPng = saveQuotationPng;
-window.saveQuotationPdf = saveQuotationPdf;
-window.closeQuotationPrintPreview = closeQuotationPrintPreview;
-window.duplicateQuotation = duplicateQuotation;
-window.cancelQuotation = cancelQuotation;
-window.duplicateCurrentQuotation = duplicateCurrentQuotation;
-window.cancelCurrentQuotation = cancelCurrentQuotation;
-window.renderQuoteMeta = renderQuoteMeta;
-window.openQuoteTypeModal = openQuoteTypeModal;
-window.closeQuoteTypeModal = closeQuoteTypeModal;
-window.selectQuoteType = selectQuoteType;
-window.getCurrentQuoteBusinessUnit = getCurrentQuoteBusinessUnit;
-window.isQuoteBusinessUnitSelected = isQuoteBusinessUnitSelected;
-window.getProductBusinessUnitClient = getProductBusinessUnitClient;
-window.isProductForCurrentQuoteBusinessUnit = isProductForCurrentQuoteBusinessUnit;
-window.changeDiscount = changeDiscount;
-window.toggleFreeItem = toggleFreeItem;
+if (typeof window !== 'undefined') {
+  window.renderQuote = renderQuote;
+  window.renderProductPicker = renderProductPicker;
+  window.addCart = addCart;
+  window.renderCart = renderCart;
+  window.calcCart = calcCart;
+  window.saveQuote = saveQuote;
+  window.saveQuotation = saveQuotation;
+  window.saveDraftQuotation = saveDraftQuotation;
+  window.updateQuotation = updateQuotation;
+  window.shareQuote = shareQuote;
+  window.selectCustomer = selectCustomer;
+  window.newQuotation = newQuotation;
+  window.addProduct = addProduct;
+  window.removeProduct = removeProduct;
+  window.changeQty = changeQty;
+  window.refreshQuotation = refreshQuotation;
+  window.loadQuotation = loadQuotation;
+  window.openQuotation = openQuotation;
+  window.printQuotation = printQuotation;
+  window.printQuotationSheet = printQuotationSheet;
+  window.exportQuotationPNG = exportQuotationPNG;
+  window.saveQuotationPng = saveQuotationPng;
+  window.saveQuotationPdf = saveQuotationPdf;
+  window.closeQuotationPrintPreview = closeQuotationPrintPreview;
+  window.duplicateQuotation = duplicateQuotation;
+  window.cancelQuotation = cancelQuotation;
+  window.duplicateCurrentQuotation = duplicateCurrentQuotation;
+  window.cancelCurrentQuotation = cancelCurrentQuotation;
+  window.renderQuoteMeta = renderQuoteMeta;
+  window.openQuoteTypeModal = openQuoteTypeModal;
+  window.closeQuoteTypeModal = closeQuoteTypeModal;
+  window.selectQuoteType = selectQuoteType;
+  window.getCurrentQuoteBusinessUnit = getCurrentQuoteBusinessUnit;
+  window.isQuoteBusinessUnitSelected = isQuoteBusinessUnitSelected;
+  window.getProductBusinessUnitClient = getProductBusinessUnitClient;
+  window.isProductForCurrentQuoteBusinessUnit = isProductForCurrentQuoteBusinessUnit;
+  window.changeDiscount = changeDiscount;
+  window.toggleFreeItem = toggleFreeItem;
+}

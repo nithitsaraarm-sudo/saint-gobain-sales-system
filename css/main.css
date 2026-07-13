@@ -146,12 +146,14 @@
 /* Quotation screen ratio + cart reorder */
 @media(min-width:1024px){.quote-layout{grid-template-columns:calc(60% - 10px) calc(40% - 10px)!important;align-items:start}.quote-layout>*{min-width:0}.quote-layout>.card{min-width:0}}
 @media(max-width:1023px){.quote-layout{display:flex!important;flex-direction:column!important}}
-.quote-line{cursor:default;transition:transform .16s ease,opacity .16s ease,box-shadow .16s ease}
-.quote-drag-handle{flex:0 0 auto;width:34px;height:34px;border:1px solid var(--line);border-radius:12px;background:#f8fbff;color:var(--blue);font-weight:900;cursor:grab;touch-action:none}
-.quote-drag-handle:active{cursor:grabbing}
-.quote-line.is-dragging{opacity:.7;box-shadow:0 24px 54px rgba(15,42,82,.22);cursor:grabbing}
-.quote-drop-placeholder{border:2px dashed #8bbce8;border-radius:18px;background:#eef6ff;margin:6px 0;min-height:54px}
-body.quote-reordering{user-select:none;cursor:grabbing}
+.quote-reorder-hint{color:var(--muted);background:#fff;border:1px dashed var(--line);border-radius:16px;padding:10px 12px;font-size:13px;font-weight:800}
+.quote-line{cursor:grab;transition:transform .16s ease,opacity .16s ease,box-shadow .16s ease;touch-action:pan-y}
+.quote-line button,.quote-line input,.quote-line select,.quote-line textarea,.quote-line a,.quote-line label,.quote-line [data-no-drag]{cursor:auto}
+.quote-line.card--drag-ready,.quote-line.card--chosen{box-shadow:0 12px 30px rgba(15,42,82,.12);transform:translateY(-1px)}
+.quote-line.is-dragging,.quote-line.card--dragging{opacity:.7;box-shadow:0 24px 54px rgba(15,42,82,.22);cursor:grabbing}
+.quote-drop-placeholder,.quote-drop-placeholder.card--ghost{border:2px dashed #8bbce8;border-radius:18px;background:#eef6ff;margin:6px 0;min-height:54px}
+body.quote-reordering{user-select:none;cursor:grabbing;overscroll-behavior:contain}
+body.quote-reordering .quote-line{touch-action:none}
 
 /* Refined quotation PNG/PDF output */
 .print-product-code{margin-top:3px!important}

@@ -127,9 +127,17 @@ function addQuotationItem(quoteId, productId, qty) {
     const lineTotal = roundCurrency(netPrice * quantity);
     const lineId = generateId('LINE');
     const now = new Date().toISOString();
+    const existingLinesResult = getQuoteLines(quoteId);
+    const existingLines = existingLinesResult.ok && Array.isArray(existingLinesResult.data) ? existingLinesResult.data : [];
+    const lineOrder = existingLines.filter(function (item) {
+      return normalizeString(item.status) !== normalizeString(LINE_STATUSES.REMOVED);
+    }).length + 1;
     const row = {
       quoteId: quoteId,
       lineId: lineId,
+      lineNo: lineOrder,
+      lineOrder: lineOrder,
+      sortOrder: lineOrder,
       productId: String(productId).trim(),
       productBusinessUnit: lineProductCheck.data && lineProductCheck.data.productBusinessUnit || '',
       productName: String(product.productName || product.name || product.product || '').trim(),
@@ -413,6 +421,8 @@ function saveQuotationPayload(payload) {
       const lineResult = appendQuotationObject(QUOTE_LINES_SHEET, getQuoteLineHeaders(), {
         quoteId: quoteId,
         lineNo: item.lineNo,
+        lineOrder: item.lineOrder,
+        sortOrder: item.sortOrder,
         productId: item.productId,
         productBusinessUnit: item.productBusinessUnit,
         productName: item.productName,
@@ -462,6 +472,8 @@ function normalizeQuotationPayloadItem(item, lineNo, productBusinessUnit) {
   const grandTotal = roundCurrency(data.grandTotal !== undefined ? parseQuotationNumericValue(data.grandTotal) : lineTotal + vat);
   return {
     lineNo: lineNo,
+    lineOrder: lineNo,
+    sortOrder: lineNo,
     productId: String(data.productId || '').trim(),
     productBusinessUnit: getQuotationProductBusinessUnit({ businessUnit: productBusinessUnit || data.productBusinessUnit || data.businessUnit || data.quoteType || data.brand }),
     productName: String(data.productName || '').trim(),
@@ -685,7 +697,7 @@ function getQuoteHistoryHeaders() {
 }
 
 function getQuoteLineHeaders() {
-  return ['quoteId', 'lineNo', 'productId', 'productBusinessUnit', 'productName', 'unit', 'qty', 'listPrice', 'discountPercent', 'unitPrice', 'lineTotal', 'vat', 'grandTotal', 'status'];
+  return ['quoteId', 'lineNo', 'lineOrder', 'sortOrder', 'productId', 'productBusinessUnit', 'productName', 'unit', 'qty', 'listPrice', 'discountPercent', 'unitPrice', 'lineTotal', 'vat', 'grandTotal', 'status'];
 }
 
 function extractQuoteId(payload) {
@@ -712,7 +724,9 @@ function normalizeLoadedQuotationLine(line) {
     }
   }
   return Object.assign({}, item, {
-    lineNo: String(item.lineNo || '').trim(),
+    lineNo: String(item.lineNo || item.lineOrder || item.sortOrder || '').trim(),
+    lineOrder: String(item.lineOrder || item.sortOrder || item.lineNo || '').trim(),
+    sortOrder: String(item.sortOrder || item.lineOrder || item.lineNo || '').trim(),
     productId: String(item.productId || '').trim(),
     productBusinessUnit: productBusinessUnit,
     productName: String(item.productName || '').trim(),
@@ -726,6 +740,22 @@ function normalizeLoadedQuotationLine(line) {
     vat: vat,
     grandTotal: grandTotal,
     status: String(item.status || LINE_STATUSES.ACTIVE).trim() || LINE_STATUSES.ACTIVE
+  });
+}
+
+function getQuotationLineOrderValue(line, fallbackIndex) {
+  const item = line || {};
+  const value = parseInt(String(item.lineOrder || item.sortOrder || item.lineNo || '').replace(/,/g, ''), 10);
+  return !isNaN(value) && value > 0 ? value : (fallbackIndex + 1);
+}
+
+function sortQuotationLinesByOrder(lines) {
+  return (Array.isArray(lines) ? lines : []).map(function (line, index) {
+    return { line: line, index: index, order: getQuotationLineOrderValue(line, index) };
+  }).sort(function (a, b) {
+    return a.order - b.order || a.index - b.index;
+  }).map(function (entry) {
+    return entry.line;
   });
 }
 
@@ -814,9 +844,9 @@ function loadQuotation(payload) {
       return linesResult;
     }
     const lines = Array.isArray(linesResult.data) ? linesResult.data.map(normalizeLoadedQuotationLine) : [];
-    const activeLines = lines.filter(function (item) {
+    const activeLines = sortQuotationLinesByOrder(lines.filter(function (item) {
       return normalizeString(item.status) !== normalizeString(LINE_STATUSES.REMOVED);
-    });
+    }));
     const subtotal = roundCurrency(parseQuotationNumericValue(quote.subtotal || sumQuotationItems(activeLines, 'lineTotal')));
     const vat = roundCurrency(parseQuotationNumericValue(quote.vat || sumQuotationItems(activeLines, 'vat')));
     const shipping = roundCurrency(parseQuotationNumericValue(quote.shipping || 0));
@@ -863,6 +893,8 @@ function duplicateQuotation(payload) {
       items: Array.isArray(original.lines) ? original.lines.map(function (line) {
         return {
           productId: line.productId,
+          lineOrder: line.lineOrder || line.sortOrder || line.lineNo,
+          sortOrder: line.sortOrder || line.lineOrder || line.lineNo,
           productBusinessUnit: getQuotationProductBusinessUnit(line),
           productName: line.productName,
           unit: line.unit,
