@@ -59,6 +59,14 @@ function getUserFavoriteCustomersSheetName() {
   return SHEET_NAMES.USER_FAVORITE_CUSTOMERS;
 }
 
+function getUserFavoriteProductsSheetName() {
+  return SHEET_NAMES.USER_FAVORITE_PRODUCTS;
+}
+
+function getUserPinnedProductsSheetName() {
+  return SHEET_NAMES.USER_PINNED_PRODUCTS;
+}
+
 function getQuoteHistorySheetName() {
   return SHEET_NAMES.QUOTE_HISTORY;
 }

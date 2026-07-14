@@ -4,6 +4,76 @@
 
 > หมายเหตุ: `CHANGELOG.md` มีอยู่แล้วและเหมาะสำหรับบันทึกการเปลี่ยนแปลงระดับ release ส่วนไฟล์นี้ใช้เป็น working notes / handoff notes ระหว่างพัฒนา
 
+## 2026-07-14 - Favorite and pinned products for quotation product picker
+
+### Branch
+
+`feature/favorite-and-pinned-products`
+
+### Files changed
+
+- `appscript/FavoriteProduct.gs`
+- `appscript/Api.gs`
+- `appscript/Product.gs`
+- `appscript/Constants.gs`
+- `appscript/Config.gs`
+- `appscript/Database.gs`
+- `js/api.js`
+- `js/app.js`
+- `js/quotation.js`
+- `css/main.css`
+
+### Summary
+
+- Added per-user product preference sheets: `UserFavoriteProducts` and `UserPinnedProducts`.
+- Added API actions: `getProductPreferences`, `addFavoriteProduct`, `removeFavoriteProduct`, `addPinnedProduct`, `removePinnedProduct`, and `reorderPinnedProducts`.
+- Favorite products are limited to 20 per user; pinned products are limited to 5 per user.
+- Product preferences are scoped to the current session user via `requireApiUser()`.
+- Pinned products sort above normal quote product search results, then favorite products, while preserving the existing BU-aware ranking.
+- Quotation product picker now renders pinned/favorite sections, toggle buttons, and add-to-quote through the existing quote flow.
+- Pinned products can be reordered by drag/drop and long-press drag on touch devices; order persists via `reorderPinnedProducts`.
+- Viewer role can view preference data but does not see quote edit/add/pin/favorite actions.
+- Added SystemLogs actions: `FAVORITE_PRODUCT_ADDED`, `FAVORITE_PRODUCT_REMOVED`, `PINNED_PRODUCT_ADDED`, `PINNED_PRODUCT_REMOVED`, and `PINNED_PRODUCT_REORDERED`.
+
+### Notes
+
+- No localStorage is used as the primary preference database.
+- Existing pricing, discount, promotion, add-to-cart, and quotation save logic remain connected to the original quote flow.
+- `index.html` was not changed; `js/app.js` creates the preference containers near `productPicker` if they are missing.
+- `js/quotation.js` keeps `window.renderProductPicker` pointed at the enhanced picker after script load order applies.
+
+## 2026-07-14 - Scroll to newly added quotation item
+
+### Branch
+
+`feature/scroll-to-added-quote-item`
+
+### Files changed
+
+- `js/quotation.js`
+- `css/main.css`
+- `WORK_HISTORY.md`
+
+### Summary
+
+- Connected the existing `addProduct(productId, qty)` flow to auto-scroll after a product is added.
+- The target quote item uses existing `lineId` and `.quote-line[data-line-id]`, not product name or productId.
+- Duplicate products keep the existing merge behavior: quantity increases on the existing line and scroll targets that same line.
+- New products scroll to the newly created line after `renderCart()` completes.
+- Async discount refreshes re-render the cart and re-scroll only if that line is still the latest requested target.
+- Added bounded retry after DOM render using `requestAnimationFrame()` plus short retry delay.
+- Added race-condition guard with `QUOTE_ITEM_SCROLL_SEQUENCE` and `QUOTE_ITEM_PENDING_SCROLL_LINE_ID`.
+- Added temporary highlight class `.is-newly-added`.
+- Added `scroll-margin-top` / `scroll-margin-bottom` to avoid fixed/sticky UI covering the card.
+
+### Test checklist
+
+- Add first product, verify it scrolls to the item card and highlights.
+- Add product from lower search results, verify the newly added card is visible.
+- Add the same product again, verify quantity increases and scroll stays on the existing line.
+- Rapidly add multiple products, verify the latest clicked product wins the scroll.
+- Verify quantity, discount, free item, totals, save draft, update quotation, PDF, PNG, and drag reorder still work.
+
 ## 2026-07-14 - User role, area, password confirmation, and quotation seller snapshot
 
 ### Branch

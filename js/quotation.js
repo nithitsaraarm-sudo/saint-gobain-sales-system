@@ -8,6 +8,9 @@ const DISCOUNT_PROMISES = {};
 const QUOTATION_LOAD_CACHE = {};
 const QUOTATION_LOAD_PROMISES = {};
 const QUOTATION_LOAD_TTL_MS = 10 * 60 * 1000;
+let QUOTE_ITEM_SCROLL_SEQUENCE = 0;
+let QUOTE_ITEM_HIGHLIGHT_TIMER = null;
+let QUOTE_ITEM_PENDING_SCROLL_LINE_ID = '';
 
 function normalizeQuoteType(value) {
   const text = String(value || '').trim().toUpperCase();
@@ -1919,6 +1922,80 @@ function renderCart() {
   setupCartReorder();
 }
 
+function getQuoteItemElement(lineId) {
+  const id = String(lineId || '').trim();
+  const cartList = document.getElementById('cartList');
+  if (!id || !cartList) {
+    return null;
+  }
+  return Array.prototype.slice.call(cartList.querySelectorAll('.quote-line[data-line-id]')).find(element => {
+    return String(element.dataset.lineId || '').trim() === id;
+  }) || null;
+}
+
+function highlightQuoteItem(lineId) {
+  const element = getQuoteItemElement(lineId);
+  if (!element) {
+    return false;
+  }
+  if (QUOTE_ITEM_HIGHLIGHT_TIMER) {
+    clearTimeout(QUOTE_ITEM_HIGHLIGHT_TIMER);
+    QUOTE_ITEM_HIGHLIGHT_TIMER = null;
+  }
+  document.querySelectorAll('.quote-line.is-newly-added').forEach(item => item.classList.remove('is-newly-added'));
+  element.classList.add('is-newly-added');
+  QUOTE_ITEM_HIGHLIGHT_TIMER = setTimeout(() => {
+    element.classList.remove('is-newly-added');
+    QUOTE_ITEM_HIGHLIGHT_TIMER = null;
+  }, 1800);
+  return true;
+}
+
+function scrollToQuoteItem(lineId, options) {
+  const element = getQuoteItemElement(lineId);
+  if (!element) {
+    return false;
+  }
+  try {
+    element.scrollIntoView({
+      behavior: options && options.instant ? 'auto' : 'smooth',
+      block: 'center',
+      inline: 'nearest'
+    });
+  } catch (error) {
+    element.scrollIntoView();
+  }
+  highlightQuoteItem(lineId);
+  return true;
+}
+
+function scheduleScrollToAddedItem(lineId) {
+  const id = String(lineId || '').trim();
+  if (!id) {
+    return;
+  }
+  const sequence = ++QUOTE_ITEM_SCROLL_SEQUENCE;
+  QUOTE_ITEM_PENDING_SCROLL_LINE_ID = id;
+  var attempts = 0;
+  function tryScroll() {
+    if (sequence !== QUOTE_ITEM_SCROLL_SEQUENCE) {
+      return;
+    }
+    attempts += 1;
+    if (scrollToQuoteItem(id)) {
+      return;
+    }
+    if (attempts < 4) {
+      setTimeout(() => {
+        requestAnimationFrame(tryScroll);
+      }, 40);
+    }
+  }
+  requestAnimationFrame(() => {
+    requestAnimationFrame(tryScroll);
+  });
+}
+
 function setupCartReorder() {
   const cartList = document.getElementById('cartList');
   if (!cartList || cartList.dataset.reorderBound === 'true') {
@@ -2168,12 +2245,14 @@ async function addProduct(productId, qty) {
     existing.qty = Number(existing.qty || 0) + normalizedQty;
     recalcLineItem(existing);
     renderCart();
+    scheduleScrollToAddedItem(existing.lineId);
     return;
   }
   const line = createCartLine(product, normalizedQty, 0);
   line.discountLoading = true;
   CART.push(line);
   renderCart();
+  scheduleScrollToAddedItem(line.lineId);
   const addedProductUnit = getProductBusinessUnitClient(product);
   if (addedProductUnit && addedProductUnit !== getCurrentQuoteBusinessUnit()) {
     toast(`เพิ่มสินค้า ${getQuoteTypeLabel(addedProductUnit)} ในใบเสนอราคา ${getQuoteTypeLabel(getCurrentQuoteBusinessUnit())} แล้ว`);
@@ -2188,6 +2267,9 @@ async function addProduct(productId, qty) {
     target.discount = target.discountPercent;
     recalcLineItem(target);
     renderCart();
+    if (QUOTE_ITEM_PENDING_SCROLL_LINE_ID === line.lineId) {
+      scheduleScrollToAddedItem(line.lineId);
+    }
   }).catch(error => {
     console.error(error);
     const target = CART.find(item => item.lineId === line.lineId);
@@ -2195,6 +2277,9 @@ async function addProduct(productId, qty) {
     target.discountLoading = false;
     recalcLineItem(target);
     renderCart();
+    if (QUOTE_ITEM_PENDING_SCROLL_LINE_ID === line.lineId) {
+      scheduleScrollToAddedItem(line.lineId);
+    }
   });
 }
 
@@ -2275,4 +2360,7 @@ if (typeof window !== 'undefined') {
   window.isProductForCurrentQuoteBusinessUnit = isProductForCurrentQuoteBusinessUnit;
   window.changeDiscount = changeDiscount;
   window.toggleFreeItem = toggleFreeItem;
+  if (typeof window.renderQuoteProductPicker === 'function') {
+    window.renderProductPicker = window.renderQuoteProductPicker;
+  }
 }

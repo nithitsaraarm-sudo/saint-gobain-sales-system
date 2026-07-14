@@ -1,4 +1,4 @@
-window.APP_VERSION = window.APP_VERSION || '0.5.0';
+window.APP_VERSION = window.APP_VERSION || '0.5.1';
 const APP_ENV = String(window.APP_ENV || 'production').trim().toLowerCase();
 const API_MOCK_MODE = APP_ENV === 'development';
 const GAS_WEB_APP_URL =
@@ -29,7 +29,8 @@ const READ_ACTIONS = [
   'loadQuotation',
   'getQuotationHistory',
   'loadUsers',
-  'getFavoriteCustomers'
+  'getFavoriteCustomers',
+  'getProductPreferences'
 ];
 const WRITE_ACTIONS = [
   'login',
@@ -47,6 +48,11 @@ const WRITE_ACTIONS = [
   'addFavoriteCustomer',
   'removeFavoriteCustomer',
   'reorderFavoriteCustomers',
+  'addFavoriteProduct',
+  'removeFavoriteProduct',
+  'addPinnedProduct',
+  'removePinnedProduct',
+  'reorderPinnedProducts',
   'saveProduct',
   'savePromotion',
   'updateSettings',
@@ -496,6 +502,29 @@ function mockApi(action, payload) {
     case 'reorderFavoriteCustomers':
       window.__mockFavoriteCustomers=(data.customerIds||[]).map(id=>(window.__mockFavoriteCustomers||[]).find(c=>c.customerId===id)).filter(Boolean);
       return {ok:true,data:data,message:'จัดลำดับร้านค้าโปรดแล้ว'};
+    case 'getProductPreferences':
+      window.__mockFavoriteProducts=window.__mockFavoriteProducts||[];
+      window.__mockPinnedProducts=window.__mockPinnedProducts||[];
+      return {ok:true,data:{favorites:window.__mockFavoriteProducts,pinned:window.__mockPinnedProducts}};
+    case 'addFavoriteProduct':
+      window.__mockFavoriteProducts=window.__mockFavoriteProducts||[];
+      if(window.__mockFavoriteProducts.length>=20)return {ok:false,message:'Maximum favorite products reached'};
+      if(!window.__mockFavoriteProducts.some(p=>String(p.productId||p.sku||p.id)===String(data.productId))){const product=(window.DB?.products||[]).find(p=>String(p.productId||p.sku||p.id)===String(data.productId));if(product)window.__mockFavoriteProducts.push(Object.assign({},product,{isFavoriteProduct:true}));}
+      return {ok:true,data:data,message:'Favorite product saved'};
+    case 'removeFavoriteProduct':
+      window.__mockFavoriteProducts=(window.__mockFavoriteProducts||[]).filter(p=>String(p.productId||p.sku||p.id)!==String(data.productId));
+      return {ok:true,data:data,message:'Favorite product removed'};
+    case 'addPinnedProduct':
+      window.__mockPinnedProducts=window.__mockPinnedProducts||[];
+      if(window.__mockPinnedProducts.length>=5)return {ok:false,message:'Maximum pinned products reached'};
+      if(!window.__mockPinnedProducts.some(p=>String(p.productId||p.sku||p.id)===String(data.productId))){const product=(window.DB?.products||[]).find(p=>String(p.productId||p.sku||p.id)===String(data.productId));if(product)window.__mockPinnedProducts.push(Object.assign({},product,{isPinnedProduct:true,pinnedSortOrder:window.__mockPinnedProducts.length+1}));}
+      return {ok:true,data:data,message:'Pinned product saved'};
+    case 'removePinnedProduct':
+      window.__mockPinnedProducts=(window.__mockPinnedProducts||[]).filter(p=>String(p.productId||p.sku||p.id)!==String(data.productId)).map((p,i)=>Object.assign({},p,{pinnedSortOrder:i+1}));
+      return {ok:true,data:data,message:'Pinned product removed'};
+    case 'reorderPinnedProducts':
+      window.__mockPinnedProducts=(data.productIds||[]).map((id,i)=>{const product=(window.__mockPinnedProducts||[]).find(p=>String(p.productId||p.sku||p.id)===String(id));return product?Object.assign({},product,{pinnedSortOrder:i+1}):null;}).filter(Boolean);
+      return {ok:true,data:data,message:'Pinned products reordered'};
     case 'saveProduct':
       return { ok: true, data: data, message: 'Mock product saved' };
     case 'savePromotion':

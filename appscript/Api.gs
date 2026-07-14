@@ -50,7 +50,26 @@ function api(action, payload) {
         return authorizeAction(getProducts, []);
       case 'searchQuoteProducts':
         if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES])) return forbidden('Insufficient permission');
+        if (payload && typeof payload === 'object') payload.currentUser = user;
         return authorizeAction(searchQuoteProducts, [payload]);
+      case 'getProductPreferences':
+        if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES, USER_ROLES.VIEWER])) return forbidden('Insufficient permission');
+        return authorizeAction(getProductPreferences, [payload]);
+      case 'addFavoriteProduct':
+        if (!permissions.canCreateQuotations) return forbidden('Insufficient permission');
+        return authorizeAction(addFavoriteProduct, [payload]);
+      case 'removeFavoriteProduct':
+        if (!permissions.canCreateQuotations) return forbidden('Insufficient permission');
+        return authorizeAction(removeFavoriteProduct, [payload]);
+      case 'addPinnedProduct':
+        if (!permissions.canCreateQuotations) return forbidden('Insufficient permission');
+        return authorizeAction(addPinnedProduct, [payload]);
+      case 'removePinnedProduct':
+        if (!permissions.canCreateQuotations) return forbidden('Insufficient permission');
+        return authorizeAction(removePinnedProduct, [payload]);
+      case 'reorderPinnedProducts':
+        if (!permissions.canCreateQuotations) return forbidden('Insufficient permission');
+        return authorizeAction(reorderPinnedProducts, [payload]);
       case 'product':
         if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES])) return forbidden('Insufficient permission');
         return authorizeAction(getProduct, [payload && (payload.productId || payload.value)]);

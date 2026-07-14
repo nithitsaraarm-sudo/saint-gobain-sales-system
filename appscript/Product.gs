@@ -134,6 +134,10 @@ function searchQuoteProducts(payload) {
     const query = normalizeString(data.query || data.keyword || '');
     const searchScope = String(data.searchScope || 'ALL_BU').trim().toUpperCase();
     const limit = Math.max(1, Math.min(parseInt(data.limit || 30, 10) || 30, 30));
+    const currentUser = data.currentUser || {};
+    const preferenceState = currentUser && currentUser.userId && typeof getUserProductPreferenceState_ === 'function'
+      ? getUserProductPreferenceState_(currentUser.userId)
+      : null;
     const productsResult = getProducts();
     if (!productsResult.ok) {
       return productsResult;
@@ -155,6 +159,16 @@ function searchQuoteProducts(payload) {
         return normalizeString(item[field]).indexOf(query) >= 0;
       });
     }).sort(function (a, b) {
+      const aId = normalizeString(a.productId || a.id || a.sku || a.productCode);
+      const bId = normalizeString(b.productId || b.id || b.sku || b.productCode);
+      const aPinned = preferenceState && preferenceState.pinnedOrders ? Number(preferenceState.pinnedOrders[aId] || 0) : 0;
+      const bPinned = preferenceState && preferenceState.pinnedOrders ? Number(preferenceState.pinnedOrders[bId] || 0) : 0;
+      if (aPinned && bPinned && aPinned !== bPinned) return aPinned - bPinned;
+      if (aPinned && !bPinned) return -1;
+      if (!aPinned && bPinned) return 1;
+      const aFavorite = preferenceState && preferenceState.favoriteIds && preferenceState.favoriteIds[aId] ? 1 : 0;
+      const bFavorite = preferenceState && preferenceState.favoriteIds && preferenceState.favoriteIds[bId] ? 1 : 0;
+      if (aFavorite !== bFavorite) return bFavorite - aFavorite;
       const unitDiff = getQuoteProductBusinessUnitPriority(a, primaryBusinessUnit) - getQuoteProductBusinessUnitPriority(b, primaryBusinessUnit);
       if (unitDiff !== 0) {
         return unitDiff;
@@ -165,7 +179,10 @@ function searchQuoteProducts(payload) {
       }
       return String(a.productName || '').localeCompare(String(b.productName || ''));
     }).map(function (item) {
-      return Object.assign({}, item, {
+      const decorated = preferenceState && typeof decorateProductPreference_ === 'function'
+        ? decorateProductPreference_(item, preferenceState)
+        : Object.assign({}, item);
+      return Object.assign({}, decorated, {
         productBusinessUnit: getProductBusinessUnit(item)
       });
     });

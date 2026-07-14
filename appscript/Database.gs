@@ -378,6 +378,12 @@ function getHeadersForSheet(sheetName) {
   if (sheetName === SHEET_NAMES.USER_FAVORITE_CUSTOMERS) {
     return ['favoriteId', 'userId', 'customerId', 'sortOrder', 'createdAt', 'updatedAt'];
   }
+  if (sheetName === SHEET_NAMES.USER_FAVORITE_PRODUCTS) {
+    return ['favoriteId', 'userId', 'productId', 'productBusinessUnit', 'createdAt', 'updatedAt'];
+  }
+  if (sheetName === SHEET_NAMES.USER_PINNED_PRODUCTS) {
+    return ['pinnedId', 'userId', 'productId', 'productBusinessUnit', 'sortOrder', 'createdAt', 'updatedAt'];
+  }
   if (sheetName === SHEET_NAMES.QUOTE_LINES) {
     return ['quoteId', 'lineId', 'lineNo', 'lineOrder', 'sortOrder', 'productId', 'productBusinessUnit', 'productName', 'unit', 'qty', 'listPrice', 'discountPercent', 'unitPrice', 'netPrice', 'lineTotal', 'vat', 'grandTotal', 'status', 'createdAt', 'updatedAt'];
   }
