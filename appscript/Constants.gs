@@ -1,5 +1,5 @@
 const APP_ENV = 'APP_ENV';
-const APP_VERSION = '0.5.1';
+const APP_VERSION = '0.5.2';
 
 const SHEET_NAMES = {
   USERS: 'Users',
