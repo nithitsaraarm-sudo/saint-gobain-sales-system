@@ -202,11 +202,17 @@ body.quote-reordering .quote-line{touch-action:none}
 .grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .user-row{align-items:center;gap:12px;flex-wrap:wrap}
 .user-row small{color:var(--muted)}
-.password-field{display:flex;gap:8px;align-items:center}
-.password-field input{min-width:0;flex:1}
-.password-field .tiny{white-space:nowrap}
+.password-pair{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
+.password-field{position:relative;display:flex;align-items:center}
+.password-field input{min-width:0;width:100%;padding-right:48px}
+.password-toggle{position:absolute;right:4px;top:50%;transform:translateY(-50%);display:grid;place-items:center;width:40px;height:40px;padding:0;border:0;border-radius:10px;background:transparent;color:var(--muted);cursor:pointer}
+.password-toggle:hover{background:#e8f0fb;color:var(--primary)}
+.password-toggle:focus-visible,.phone-link:focus-visible{outline:3px solid rgba(30,103,210,.28);outline-offset:2px}
+.password-toggle svg{width:22px;height:22px;pointer-events:none}
+.phone-link{display:inline-flex;align-items:center;min-height:36px;color:var(--primary);font-weight:700;text-decoration:none}
+.phone-link:hover{text-decoration:underline}
 
 /* Final quotation title sizing override */
 .print-doc-title h1{font-size:20px!important}
 .quotation-page .print-doc-header--continued .print-doc-title h2{font-size:18px!important}
-@media(max-width:720px){.grid2{grid-template-columns:1fr}.user-row{display:grid;grid-template-columns:1fr}}
+@media(max-width:720px){.grid2,.password-pair{grid-template-columns:1fr}.user-row{display:grid;grid-template-columns:1fr}}

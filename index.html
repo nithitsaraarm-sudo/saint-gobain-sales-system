@@ -90,7 +90,7 @@
           <div class="field"><label>ชื่อที่แสดง</label><input id="setDisplay"></div>
           <div class="field"><label>Quote Display Name</label><input id="setQuoteDisplayName"></div>
           <div class="field"><label>ตำแหน่งงาน</label><input id="setPosition"></div>
-          <div class="field"><label>เบอร์โทร</label><input id="setPhone"></div>
+          <div class="field"><label>เบอร์โทร</label><input id="setPhone" type="tel" inputmode="tel" autocomplete="tel"><div id="setPhoneLink"></div></div>
           <div class="field"><label>Email</label><input id="setEmail" type="email"></div>
           <div class="field"><label>ลิงก์รูปโปรไฟล์ หรือรูปที่อัพโหลด</label><input id="setPhoto" placeholder="วาง URL รูปภาพ หรืออัพโหลดรูปจากมือถือด้านบน" oninput="updateProfilePreview(this.value)"></div>
           <button id="saveProfileBtn" class="primary" onclick="saveProfile()">บันทึกโปรไฟล์</button>

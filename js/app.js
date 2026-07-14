@@ -1095,6 +1095,8 @@ renderSettings=function(){
   set('setQuoteDisplayName',USER.quoteDisplayName||USER.displayName||USER.fullName||USER.username);
   set('setPosition',USER.jobTitle||USER.position||'');
   set('setPhone',USER.phone);
+  const phoneLink=$('setPhoneLink');
+  if(phoneLink)phoneLink.innerHTML=renderPhoneLink(USER.phone);
   set('setEmail',USER.email);
   set('setPhoto',USER.profileImageUrl||USER.photoUrl);
   set('setCompany',s.companyName||'SAINT-GOBAIN');
@@ -1155,11 +1157,13 @@ saveProfile=async function(){
       }
       profileImageUrl=uploadResponse.data?.profileImageUrl||uploadResponse.data?.photoUrl||'';
     }
+    const phone=normalizePhone($('setPhone')?.value||'');
+    if(phone&&!isValidPhone(phone)){toast('กรุณากรอกเบอร์โทรศัพท์ให้ถูกต้อง');return;}
     let p={
       displayName: $('setDisplay')?.value||'',
       quoteDisplayName: $('setQuoteDisplayName')?.value||'',
       jobTitle: $('setPosition')?.value||'',
-      phone: $('setPhone')?.value||'',
+      phone: phone,
       profileImageUrl: profileImageUrl
     };
     let r=await gas('updateProfile',p);
@@ -1251,7 +1255,7 @@ async function saveModal(type){
 }
 function toast(msg){const el=document.getElementById('toast'); if(!el)return; el.textContent=msg; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),2600)}
 
-function renderCustomers(){ensureCustomerCrmUi();let q=$('customerSearch')?.value||'';let type=($('customerTypeFilter')?.value||'');let fields=['customerId','customerCode','customerName','province','customerType','phone','notes','address'];let customers=DB.customers.filter(c=>smartMatch(c,q,fields)&&(!type||c.customerType===type));let limited=limitList(customers,LIST_RENDER_LIMIT);renderCustomerSummary(DB.customers);let grid=$('customerGrid'); if(!grid)return; if(!customersLoaded&&!DB.customers.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(c=>`<div class="card"><h3>${c.customerName||'-'}</h3><p>รหัสร้านค้า: ${c.customerCode||c.customerId||c.id||'-'}</p><p>ประเภท: ${c.customerType||'-'}</p><p>จังหวัด: ${c.province||'-'}</p><p>โทร: ${c.phone||'-'}</p><p>ที่อยู่: ${c.address||'-'}</p><p>หมายเหตุ: ${c.notes||'-'}</p><button class="ghost" onclick="selectCustomer('${c.customerId}')">ออกใบเสนอราคา</button></div>`).join('')}
+function renderCustomers(){ensureCustomerCrmUi();let q=$('customerSearch')?.value||'';let type=($('customerTypeFilter')?.value||'');let fields=['customerId','customerCode','customerName','province','customerType','phone','notes','address'];let customers=DB.customers.filter(c=>smartMatch(c,q,fields)&&(!type||c.customerType===type));let limited=limitList(customers,LIST_RENDER_LIMIT);renderCustomerSummary(DB.customers);let grid=$('customerGrid'); if(!grid)return; if(!customersLoaded&&!DB.customers.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(c=>`<div class="card"><h3>${escapeHtml(c.customerName||'-')}</h3><p>รหัสร้านค้า: ${escapeHtml(c.customerCode||c.customerId||c.id||'-')}</p><p>ประเภท: ${escapeHtml(c.customerType||'-')}</p><p>จังหวัด: ${escapeHtml(c.province||'-')}</p><p>โทร: ${renderPhoneLink(c.phone)||'-'}</p><p>ที่อยู่: ${escapeHtml(c.address||'-')}</p><p>หมายเหตุ: ${escapeHtml(c.notes||'-')}</p><button class="ghost" onclick="selectCustomer('${escapeHtml(c.customerId||'')}')">ออกใบเสนอราคา</button></div>`).join('')}
 
 function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); if(!productsLoaded&&!DB.products.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>{const id=encodeURIComponent(String(p.productId||p.sku||p.id||''));return `<div class="card product-card-clickable" role="button" tabindex="0" onclick="openProductCalculator(decodeURIComponent('${id}'))" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProductCalculator(decodeURIComponent('${id}'))}"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${p.brand||'-'}</span><h3>${p.productName||'-'}</h3><p>รหัสสินค้า: ${p.sku||p.productId||p.id||'-'}</p><p>${p.unit||'-'}</p><b>${money(p.listPrice)}</b><br><button class="ghost" onclick="addProductCardToQuote(decodeURIComponent('${id}'),event)">เพิ่มลงใบเสนอราคา</button></div>`}).join('')}
 
@@ -1311,11 +1315,20 @@ function getManageableRoleOptions(existingRole){
 }
 function escapeHtml(value){return String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 function getUserArea(user){return String(user&&user.area||user&&user.branch||'').trim()}
+function normalizePhone(value){const raw=String(value==null?'':value).trim();const prefix=raw.charAt(0)==='+'?'+':'';return prefix+raw.replace(/\D/g,'')}
+function isValidPhone(value){return /^\+?\d{8,15}$/.test(normalizePhone(value))}
+function formatPhoneForDisplay(value){const phone=normalizePhone(value);return /^0\d{9}$/.test(phone)?`${phone.slice(0,3)}-${phone.slice(3,6)}-${phone.slice(6)}`:phone}
+function buildTelHref(value){const phone=normalizePhone(value);return isValidPhone(phone)?`tel:${phone}`:''}
+function renderPhoneLink(value){const href=buildTelHref(value);if(!href)return '';const label=formatPhoneForDisplay(value);return `<a class="phone-link" href="${escapeHtml(href)}" aria-label="โทรหา ${escapeHtml(label)}">${escapeHtml(label)}</a>`}
+function passwordEyeIcon(visible){return visible?'<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3 3l18 18M10.6 10.6a2 2 0 002.8 2.8M9.9 4.2A10.7 10.7 0 0112 4c5.5 0 9 5 9 5a16 16 0 01-2.1 2.5M6.2 6.2C4.2 7.5 3 9 3 9s3.5 5 9 5c1 0 1.9-.2 2.7-.4"/></svg>':'<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" d="M3 12s3.5-5 9-5 9 5 9 5-3.5 5-9 5-9-5-9-5z"/><circle cx="12" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>'}
 function toggleUserPasswordVisibility(inputId,button){
   const input=$(inputId);
   if(!input)return;
   const show=input.type==='password';
   input.type=show?'text':'password';
+  button.innerHTML=passwordEyeIcon(show);
+  button.setAttribute('aria-label',show?'ซ่อนรหัสผ่าน':'แสดงรหัสผ่าน');
+  button.setAttribute('aria-pressed',String(show));
   if(button){
     button.textContent=show?'ซ่อนรหัสผ่าน':'แสดงรหัสผ่าน';
     button.setAttribute('aria-label',button.textContent);
@@ -1385,7 +1398,7 @@ renderUsers=function(){
   const users=(Array.isArray(DB.users)?DB.users:[]).filter(u=>!q||smartMatch(Object.assign({},u,{area:getUserArea(u)}),q,['fullName','displayName','username','role','area','status','email','phone']));
   list.innerHTML=users.length?users.map(u=>{
     const canEdit=canManageUserRole(u.role);
-    return `<div class="row user-row"><div><b>${escapeHtml(u.fullName||u.displayName||u.username||'-')}</b><br><small>${escapeHtml(u.username||'-')} · ${escapeHtml(u.email||'-')}</small></div><span class="pill blue">${escapeHtml(u.role||'-')}</span><span>${escapeHtml(getUserArea(u)||'-')}</span><span>${escapeHtml(u.status||'-')}</span><small>${escapeHtml(u.lastLogin||'-')}</small><button class="tiny" ${canEdit?'':'disabled'} onclick="openUserForm('${escapeHtml(u.userId||'')}')">${canEdit?'แก้ไข':'ไม่มีสิทธิ์'}</button></div>`;
+    return `<div class="row user-row"><div><b>${escapeHtml(u.fullName||u.displayName||u.username||'-')}</b><br><small>${escapeHtml(u.username||'-')} · ${escapeHtml(u.email||'-')}</small><br>${renderPhoneLink(u.phone)||'<small>-</small>'}</div><span class="pill blue">${escapeHtml(u.role||'-')}</span><span>${escapeHtml(getUserArea(u)||'-')}</span><span>${escapeHtml(u.status||'-')}</span><small>${escapeHtml(u.lastLogin||'-')}</small><button class="tiny" ${canEdit?'':'disabled'} onclick="openUserForm('${escapeHtml(u.userId||'')}')">${canEdit?'แก้ไข':'ไม่มีสิทธิ์'}</button></div>`;
   }).join(''):'<p class="loading-text">No users</p>';
 };
 openUserForm=function(userId){
@@ -1395,7 +1408,7 @@ openUserForm=function(userId){
   form.classList.remove('hidden');
   const roleOptions=getManageableRoleOptions(user.role).map(r=>`<option value="${r}">${r}</option>`).join('');
   const passwordHelp=user.userId?'เว้นว่างไว้หากไม่ต้องการเปลี่ยนรหัสผ่าน':'ต้องกรอกรหัสผ่านและยืนยันรหัสผ่าน';
-  form.innerHTML=`<div class="grid2"><div class="field"><label>ชื่อ-นามสกุล</label><input id="userFullName" maxlength="150" value="${escapeHtml(user.fullName||user.displayName||'')}"></div><div class="field"><label>Username</label><input id="userUsername" value="${escapeHtml(user.username||'')}" ${user.userId?'disabled':''}></div><div class="field"><label>รหัสผ่าน ${user.userId?'(ไม่กรอก = ใช้รหัสเดิม)':''}</label><div class="password-field"><input id="userPassword" type="password" autocomplete="new-password" aria-describedby="userPasswordHelp"><button type="button" class="tiny" onclick="toggleUserPasswordVisibility('userPassword',this)" aria-label="แสดงรหัสผ่าน">แสดงรหัสผ่าน</button></div><small id="userPasswordHelp">${passwordHelp}</small></div><div class="field"><label>ยืนยันรหัสผ่าน</label><div class="password-field"><input id="userConfirmPassword" type="password" autocomplete="new-password"><button type="button" class="tiny" onclick="toggleUserPasswordVisibility('userConfirmPassword',this)" aria-label="แสดงรหัสผ่าน">แสดงรหัสผ่าน</button></div></div><div class="field"><label>Email</label><input id="userEmail" value="${escapeHtml(user.email||'')}"></div><div class="field"><label>เบอร์โทรศัพท์</label><input id="userPhone" value="${escapeHtml(user.phone||'')}"></div><div class="field"><label>สิทธิ์ผู้ใช้งาน</label><select id="userRole">${roleOptions}</select></div><div class="field"><label>Area</label><input id="userArea" value="${escapeHtml(getUserArea(user))}"><small>พื้นที่ที่ใช้กำหนดขอบเขตข้อมูล Dashboard รายงาน และผู้ใช้งาน</small></div><div class="field"><label>สถานะ</label><select id="userStatus"><option>Active</option><option>Inactive</option><option>Locked</option></select></div></div><div class="actions"><button id="saveUserButton" class="primary" onclick="saveUserForm('${escapeHtml(user.userId||'')}')">${user.userId?'บันทึกผู้ใช้งาน':'สร้างผู้ใช้งาน'}</button><button class="ghost" onclick="$('userForm').classList.add('hidden')">ยกเลิก</button></div>`;
+  form.innerHTML=`<div class="grid2"><div class="field"><label>ชื่อ-นามสกุล</label><input id="userFullName" maxlength="150" value="${escapeHtml(user.fullName||user.displayName||'')}"></div><div class="field"><label>Username</label><input id="userUsername" value="${escapeHtml(user.username||'')}" ${user.userId?'disabled':''}></div><div class="password-pair"><div class="field"><label>รหัสผ่าน ${user.userId?'(ไม่กรอก = ใช้รหัสเดิม)':''}</label><div class="password-field"><input id="userPassword" type="password" autocomplete="new-password" aria-describedby="userPasswordHelp"><button type="button" class="password-toggle" onclick="toggleUserPasswordVisibility('userPassword',this)" aria-label="แสดงรหัสผ่าน" aria-pressed="false">${passwordEyeIcon(false)}</button></div><small id="userPasswordHelp">${passwordHelp}</small></div><div class="field"><label>ยืนยันรหัสผ่าน</label><div class="password-field"><input id="userConfirmPassword" type="password" autocomplete="new-password"><button type="button" class="password-toggle" onclick="toggleUserPasswordVisibility('userConfirmPassword',this)" aria-label="แสดงรหัสผ่าน" aria-pressed="false">${passwordEyeIcon(false)}</button></div></div></div><div class="field"><label>Email</label><input id="userEmail" value="${escapeHtml(user.email||'')}"></div><div class="field"><label>เบอร์โทรศัพท์</label><input id="userPhone" type="tel" inputmode="tel" autocomplete="tel" value="${escapeHtml(user.phone||'')}"></div><div class="field"><label>สิทธิ์ผู้ใช้งาน</label><select id="userRole">${roleOptions}</select></div><div class="field"><label>Area</label><input id="userArea" value="${escapeHtml(getUserArea(user))}"><small>พื้นที่ที่ใช้กำหนดขอบเขตข้อมูล Dashboard รายงาน และผู้ใช้งาน</small></div><div class="field"><label>สถานะ</label><select id="userStatus"><option>Active</option><option>Inactive</option><option>Locked</option></select></div></div><div class="actions"><button id="saveUserButton" class="primary" onclick="saveUserForm('${escapeHtml(user.userId||'')}')">${user.userId?'บันทึกผู้ใช้งาน':'สร้างผู้ใช้งาน'}</button><button class="ghost" onclick="$('userForm').classList.add('hidden')">ยกเลิก</button></div>`;
   $('userRole').value=normalizeRole(user.role||'SALES');
   $('userStatus').value=user.status||'Active';
 };
@@ -1410,7 +1423,9 @@ saveUserForm=async function(userId){
   if((password||confirmPassword)&&password!==confirmPassword){toast('รหัสผ่านและยืนยันรหัสผ่านไม่ตรงกัน');return {ok:false,message:'PASSWORD_CONFIRM_MISMATCH'};}
   const button=$('saveUserButton');
   if(button)button.disabled=true;
-  const payload={userId:userId||'',fullName:fullName,displayName:fullName,username:$('userUsername')?.value||'',password:password,confirmPassword:confirmPassword,email:$('userEmail')?.value||'',phone:$('userPhone')?.value||'',role:$('userRole')?.value||'Sales',area:area,branch:area,status:$('userStatus')?.value||'Active'};
+  const phone=normalizePhone($('userPhone')?.value||'');
+  if(phone&&!isValidPhone(phone)){toast('กรุณากรอกเบอร์โทรศัพท์ให้ถูกต้อง');return {ok:false,message:'Invalid phone format'};}
+  const payload={userId:userId||'',fullName:fullName,displayName:fullName,username:$('userUsername')?.value||'',password:password,confirmPassword:confirmPassword,email:$('userEmail')?.value||'',phone:phone,role:$('userRole')?.value||'Sales',area:area,branch:area,status:$('userStatus')?.value||'Active'};
   const action=userId?'updateUser':'createUser';
   try{
     const response=await callApi(action,payload);

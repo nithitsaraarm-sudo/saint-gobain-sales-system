@@ -9,6 +9,30 @@ function sanitizeUserInputText(value, maxLength) {
   return text.length > limit ? text.slice(0, limit) : text;
 }
 
+// Phone numbers are identifiers, not quantities. Keep them as text end-to-end.
+function normalizePhone(value) {
+  const raw = String(value === null || value === undefined ? '' : value).trim();
+  const hasInternationalPrefix = raw.charAt(0) === '+';
+  const digits = raw.replace(/\D/g, '');
+  return (hasInternationalPrefix ? '+' : '') + digits;
+}
+
+function formatPhoneForDisplay(value) {
+  const phone = normalizePhone(value);
+  if (/^0\d{9}$/.test(phone)) return phone.slice(0, 3) + '-' + phone.slice(3, 6) + '-' + phone.slice(6);
+  return phone;
+}
+
+function buildTelHref(value) {
+  const phone = normalizePhone(value);
+  return isValidPhone(phone) ? 'tel:' + phone : '';
+}
+
+function isValidPhone(value) {
+  const phone = normalizePhone(value);
+  return /^\+?\d{8,15}$/.test(phone);
+}
+
 function normalizeUserRole(role) {
   const value = String(role || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
   if (value === 'SUPERADMIN') return USER_ROLES.SUPER_ADMIN;
@@ -68,7 +92,7 @@ function normalizeUserAccount(user) {
     fullName: fullName,
     displayName: displayName,
     email: sanitizeUserText(source.email),
-    phone: sanitizeUserText(source.phone),
+    phone: normalizePhone(source.phone),
     jobTitle: jobTitle,
     position: jobTitle,
     profileImageUrl: profileImageUrl,
@@ -298,6 +322,8 @@ function createUser(payload) {
       const existingEmail = getUserByUsername(email);
       if (existingEmail.ok) return validationError('email already exists');
     }
+    const phone = normalizePhone(data.phone);
+    if (phone && !isValidPhone(phone)) return validationError('Invalid phone format');
     const now = new Date().toISOString();
     const passwordSalt = createPasswordSalt();
     const row = {
@@ -308,7 +334,7 @@ function createUser(payload) {
       fullName: fullNameCheck.data,
       displayName: sanitizeUserText(data.displayName || fullNameCheck.data || username),
       email: email,
-      phone: sanitizeUserText(data.phone),
+      phone: phone,
       jobTitle: sanitizeUserText(data.jobTitle || data.position),
       profileImageUrl: sanitizeUserText(data.profileImageUrl || data.photoUrl),
       photoUrl: sanitizeUserText(data.profileImageUrl || data.photoUrl),
@@ -381,11 +407,13 @@ function updateUser(payload) {
         return validationError('email already exists');
       }
     }
+    const phone = normalizePhone(data.phone);
+    if (phone && !isValidPhone(phone)) return validationError('Invalid phone format');
     const updateObject = {
       fullName: fullNameCheck.data,
       displayName: sanitizeUserText(data.displayName || fullNameCheck.data || current.displayName),
       email: email,
-      phone: sanitizeUserText(data.phone),
+      phone: phone,
       jobTitle: sanitizeUserText(data.jobTitle || data.position || current.jobTitle),
       profileImageUrl: sanitizeUserText(data.profileImageUrl || data.photoUrl || current.profileImageUrl),
       photoUrl: sanitizeUserText(data.profileImageUrl || data.photoUrl || current.profileImageUrl),
@@ -480,10 +508,12 @@ function updateProfile(payload) {
     const displayName = sanitizeUserText(body.displayName || auth.data.displayName || auth.data.username);
     const jobTitle = sanitizeUserText(body.jobTitle || body.position || auth.data.jobTitle || auth.data.position);
     const profileImageUrl = sanitizeUserText(body.profileImageUrl || body.photoUrl || auth.data.profileImageUrl || auth.data.photoUrl);
+    const phone = normalizePhone(body.phone);
+    if (phone && !isValidPhone(phone)) return validationError('Invalid phone format');
     const updateObject = {
       fullName: displayName,
       displayName: displayName,
-      phone: sanitizeUserText(body.phone),
+      phone: phone,
       jobTitle: jobTitle,
       profileImageUrl: profileImageUrl,
       photoUrl: profileImageUrl,
@@ -561,12 +591,34 @@ function migrateUsersSheet() {
   try {
     const sheet = ensureSheet(getUsersSheetName(), getDefaultUserHeaders());
     if (!sheet) return fail('Unable to access Users sheet');
-    ensureUserSheetColumns(sheet, getDefaultUserHeaders());
-    return success({ headers: getDefaultUserHeaders() }, 'Users sheet checked');
+    const headers = ensureUserSheetColumns(sheet, getDefaultUserHeaders());
+    const phoneMigration = migrateUserPhoneColumn_(sheet, headers);
+    return success({ headers: headers, phoneReviewRows: phoneMigration.phoneReviewRows }, 'Users sheet checked');
   } catch (error) {
     logError('migrateUsersSheet', error);
     return fail(error && error.message ? error.message : 'Users migration failed');
   }
+}
+
+function migrateUserPhoneColumn_(sheet, headers) {
+  const phoneIndex = headers.indexOf('phone');
+  const reviewRows = [];
+  if (phoneIndex < 0) return { phoneReviewRows: reviewRows };
+  const lastRow = sheet.getLastRow();
+  const range = sheet.getRange(2, phoneIndex + 1, Math.max(lastRow - 1, 1), 1);
+  range.setNumberFormat('@');
+  if (lastRow < 2) return { phoneReviewRows: reviewRows };
+  const displayed = range.getDisplayValues();
+  const normalized = displayed.map(function (row, index) {
+    const original = String(row[0] || '').trim();
+    const phone = normalizePhone(original);
+    if (original && (!isValidPhone(phone) || phone.charAt(0) !== '0' && phone.charAt(0) !== '+')) {
+      reviewRows.push(index + 2);
+    }
+    return [phone];
+  });
+  range.setValues(normalized);
+  return { phoneReviewRows: reviewRows };
 }
 
 function ensureUserSheetColumns(sheet, requiredHeaders) {
