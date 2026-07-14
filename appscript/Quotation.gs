@@ -68,10 +68,14 @@ function createQuotation(customerId) {
       subtotal: 0,
       vat: 0,
       grandTotal: 0,
-      createdBy: String(auth.data.fullName || auth.data.displayName || auth.data.username || '').trim(),
+      createdBy: String(auth.data.quoteDisplayName || auth.data.fullName || auth.data.displayName || auth.data.username || '').trim(),
       createdById: String(auth.data.userId || '').trim(),
-      updatedBy: String(auth.data.fullName || auth.data.displayName || auth.data.username || '').trim(),
+      createdByUserId: String(auth.data.userId || '').trim(),
+      createdByUsername: String(auth.data.username || '').trim(),
+      quoteDisplayName: String(auth.data.quoteDisplayName || auth.data.fullName || auth.data.displayName || auth.data.username || '').trim(),
+      updatedBy: String(auth.data.quoteDisplayName || auth.data.fullName || auth.data.displayName || auth.data.username || '').trim(),
       updatedById: String(auth.data.userId || '').trim(),
+      updatedByUsername: String(auth.data.username || '').trim(),
       createdAt: now,
       updatedAt: now
     };
@@ -377,10 +381,14 @@ function saveQuotationPayload(payload) {
     }
     const productBusinessUnits = businessUnitCheck.data && businessUnitCheck.data.productBusinessUnits || {};
     const auditUser = auth.ok ? auth.data : {};
-    const auditName = String(auditUser.fullName || auditUser.displayName || auditUser.username || data.createdBy || data.sales || '').trim();
+    const auditName = String(auditUser.quoteDisplayName || auditUser.fullName || auditUser.displayName || auditUser.username || data.createdBy || data.sales || '').trim();
     const auditId = String(auditUser.userId || data.createdById || '').trim();
+    const auditUsername = String(auditUser.username || data.createdByUsername || '').trim();
     const createdBy = String(existingQuote && existingQuote.createdBy || data.createdBy || auditName).trim();
     const createdById = String(existingQuote && existingQuote.createdById || data.createdById || auditId).trim();
+    const createdByUserId = String(existingQuote && (existingQuote.createdByUserId || existingQuote.createdById) || data.createdByUserId || data.createdById || auditId).trim();
+    const createdByUsername = String(existingQuote && existingQuote.createdByUsername || data.createdByUsername || auditUsername).trim();
+    const quoteDisplayName = String(existingQuote && existingQuote.quoteDisplayName || data.quoteDisplayName || createdBy || auditName).trim();
     const headerObject = {
       quoteId: quoteId,
       quoteNo: quoteNo,
@@ -396,8 +404,12 @@ function saveQuotationPayload(payload) {
       status: status,
       createdBy: createdBy,
       createdById: createdById,
+      createdByUserId: createdByUserId,
+      createdByUsername: createdByUsername,
+      quoteDisplayName: quoteDisplayName,
       updatedBy: auditName,
       updatedById: auditId,
+      updatedByUsername: auditUsername,
       createdAt: String(existingQuote && existingQuote.createdAt || data.createdAt || now).trim(),
       updatedAt: now
     };
@@ -693,7 +705,7 @@ function getQuotationSheetHeaders(sheet) {
 }
 
 function getQuoteHistoryHeaders() {
-  return ['quoteId', 'quoteNo', 'quoteType', 'businessUnit', 'customerId', 'customerName', 'subtotal', 'vat', 'shipping', 'specialDiscount', 'grandTotal', 'status', 'createdBy', 'createdById', 'updatedBy', 'updatedById', 'createdAt', 'updatedAt'];
+  return ['quoteId', 'quoteNo', 'quoteType', 'businessUnit', 'customerId', 'customerName', 'subtotal', 'vat', 'shipping', 'specialDiscount', 'grandTotal', 'status', 'createdBy', 'createdById', 'createdByUserId', 'createdByUsername', 'quoteDisplayName', 'updatedBy', 'updatedById', 'updatedByUsername', 'createdAt', 'updatedAt'];
 }
 
 function getQuoteLineHeaders() {
@@ -998,16 +1010,23 @@ function getQuotationHistory(payload) {
     const grandTotalIndex = headers.indexOf('grandTotal');
     const createdByIndex = headers.indexOf('createdBy');
     const createdByIdIndex = headers.indexOf('createdById');
+    const createdByUserIdIndex = headers.indexOf('createdByUserId');
+    const createdByUsernameIndex = headers.indexOf('createdByUsername');
+    const quoteDisplayNameIndex = headers.indexOf('quoteDisplayName');
     const updatedByIndex = headers.indexOf('updatedBy');
     const updatedByIdIndex = headers.indexOf('updatedById');
+    const updatedByUsernameIndex = headers.indexOf('updatedByUsername');
     const currentUser = filter.currentUser || null;
 
     const matches = values.filter(function (row) {
       const rowQuote = {
         createdBy: createdByIndex >= 0 ? row[createdByIndex] : '',
         createdById: createdByIdIndex >= 0 ? row[createdByIdIndex] : '',
+        createdByUserId: createdByUserIdIndex >= 0 ? row[createdByUserIdIndex] : '',
+        createdByUsername: createdByUsernameIndex >= 0 ? row[createdByUsernameIndex] : '',
         updatedBy: updatedByIndex >= 0 ? row[updatedByIndex] : '',
-        updatedById: updatedByIdIndex >= 0 ? row[updatedByIdIndex] : ''
+        updatedById: updatedByIdIndex >= 0 ? row[updatedByIdIndex] : '',
+        updatedByUsername: updatedByUsernameIndex >= 0 ? row[updatedByUsernameIndex] : ''
       };
       if (!canAccessQuotationRecord(currentUser, rowQuote).ok) {
         return false;
@@ -1062,8 +1081,12 @@ function getQuotationHistory(payload) {
         status: String(statusIndex >= 0 ? row[statusIndex] || '' : '').trim(),
         createdBy: String(createdByIndex >= 0 ? row[createdByIndex] || '' : '').trim(),
         createdById: String(createdByIdIndex >= 0 ? row[createdByIdIndex] || '' : '').trim(),
+        createdByUserId: String(createdByUserIdIndex >= 0 ? row[createdByUserIdIndex] || '' : '').trim(),
+        createdByUsername: String(createdByUsernameIndex >= 0 ? row[createdByUsernameIndex] || '' : '').trim(),
+        quoteDisplayName: String(quoteDisplayNameIndex >= 0 ? row[quoteDisplayNameIndex] || '' : '').trim(),
         updatedBy: String(updatedByIndex >= 0 ? row[updatedByIndex] || '' : '').trim(),
         updatedById: String(updatedByIdIndex >= 0 ? row[updatedByIdIndex] || '' : '').trim(),
+        updatedByUsername: String(updatedByUsernameIndex >= 0 ? row[updatedByUsernameIndex] || '' : '').trim(),
         createdAt: String(createdAtIndex >= 0 ? row[createdAtIndex] || '' : '').trim(),
         updatedAt: String(updatedAtIndex >= 0 ? row[updatedAtIndex] || '' : '').trim()
       };
@@ -1088,9 +1111,10 @@ function canAccessQuotationRecord(user, quote) {
   if (hasRole(user, [USER_ROLES.SALES])) {
     const userId = normalizeString(user.userId);
     const username = normalizeString(user.username);
-    const createdById = normalizeString(quote && (quote.createdById || quote.updatedById));
+    const createdById = normalizeString(quote && (quote.createdByUserId || quote.createdById || quote.updatedById));
+    const createdByUsername = normalizeString(quote && (quote.createdByUsername || quote.updatedByUsername));
     const createdBy = normalizeString(quote && (quote.createdBy || quote.updatedBy));
-    if ((userId && createdById === userId) || (username && createdBy === username)) {
+    if ((userId && createdById === userId) || (username && (createdByUsername === username || createdBy === username))) {
       return success(true);
     }
   }

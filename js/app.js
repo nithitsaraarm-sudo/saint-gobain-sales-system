@@ -269,7 +269,7 @@ function renderBrand(){let s=DB.settings||{}; document.getElementById('brandComp
 function greeting(){let h=new Date().getHours(),s=DB.settings||{}; if(h<12)return s.greetingMorning||'สวัสดีตอนเช้า'; if(h<17)return s.greetingAfternoon||'สวัสดีตอนบ่าย'; if(h<21)return s.greetingEvening||'สวัสดีตอนเย็น'; return s.greetingNight||'สวัสดีตอนดึก';}
 function currentProfileImage(){return USER&&(USER.profileImageUrl||USER.photoUrl)||''}
 function currentDisplayName(){return USER&&(USER.displayName||USER.fullName||USER.username)||'-'}
-function currentJobTitle(){return USER&&(USER.jobTitle||USER.position||USER.branch)||'-'}
+function currentJobTitle(){return USER&&(USER.jobTitle||USER.position||USER.area||USER.branch)||'-'}
 function renderProfile(){if(!USER)return; const displayName=currentDisplayName(); const jobTitle=currentJobTitle(); const photo=currentProfileImage(); const setAvatar=el=>{if(!el)return; el.innerHTML=photo?`<img src="${photo}" onerror="this.parentNode.textContent='👤'">`:'👤';}; const sideName=$('sideName'),sidePosition=$('sidePosition'),sideAvatar=$('sideAvatar'),topName=$('topName'),topPosition=$('topPosition'),topAvatar=$('topAvatar'); if(sideName)sideName.textContent=displayName; if(sidePosition)sidePosition.textContent=jobTitle; if(topName)topName.textContent=displayName; if(topPosition)topPosition.textContent=jobTitle; setAvatar(sideAvatar); setAvatar(topAvatar);}
 function renderHome(){let name=(currentDisplayName()||'-').split(' ')[0];const customerCount=DB.customers.length||parseClientNumber(DB.counts?.customers);const productCount=DB.products.length||parseClientNumber(DB.counts?.products); document.getElementById('greetingText').textContent=`${greeting()}, ${name} 👋`; document.getElementById('welcomeText').textContent=DB.settings?.welcomeText||'-'; document.getElementById('statQuotes').textContent=DB.quotes.length; document.getElementById('statSales').textContent=Number(DB.quotes.reduce((s,q)=>s+Number(q.total||0),0)).toLocaleString('th-TH'); document.getElementById('statCustomers').textContent=customerCount; document.getElementById('statPending').textContent=DB.quotes.filter(q=>q.status==='รออนุมัติ').length; document.getElementById('latestCustomers').innerHTML=DB.customers.slice(0,4).map(c=>`<div class="row">🏪 <b>${c.customerName||'-'}</b><span style="margin-left:auto;color:var(--muted)">${c.province||''}</span></div>`).join(''); document.getElementById('activePromos').innerHTML=DB.promotions.slice(0,4).map(p=>`<div class="row"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${p.brand||'-'}</span><div><b>${p.productName||'-'}</b><br><small>${p.description||p.discountText||''}</small></div></div>`).join(''); document.getElementById('bestProducts').innerHTML=DB.products.slice(0,3).map((p,i)=>`<div><div class="product-img">${p.brand==='Weber'?'🟨':'🟦'}</div><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${i+1}</span><h3>${p.productName||'-'}</h3><p style="color:var(--muted)">${p.brand||''}</p></div>`).join(''); document.getElementById('rProducts').textContent=productCount; document.getElementById('rCustomers').textContent=customerCount; document.getElementById('rPromos').textContent=DB.promotions.length; document.getElementById('rQuotes').textContent=DB.quotes.length;}
 function ensureCustomerCrmUi(){
@@ -1299,6 +1299,28 @@ function renderQuoteProductPicker(){
 
 function normalizeRole(role){const text=String(role||'').trim().toLowerCase().replace(/[\s-]+/g,'_');if(text==='super_admin'||text==='superadmin')return'SUPER_ADMIN';if(text==='admin')return'ADMIN';if(text==='manager')return'MANAGER';if(text==='viewer')return'VIEWER';return'SALES'}
 function currentRole(){return normalizeRole(USER&&USER.role)}
+function getRoleLevel(role){const levels={SUPER_ADMIN:50,ADMIN:40,MANAGER:30,SALES:20,VIEWER:10};return levels[normalizeRole(role)]||0}
+function canManageUserRole(targetRole){return getRoleLevel(currentRole())>getRoleLevel(targetRole)}
+function getManageableRoleOptions(existingRole){
+  const roles=['SUPER_ADMIN','ADMIN','MANAGER','SALES','VIEWER'];
+  if(currentRole()==='SUPER_ADMIN')return roles;
+  const allowed=roles.filter(role=>getRoleLevel(currentRole())>getRoleLevel(role));
+  const current=normalizeRole(existingRole||'');
+  if(current&&allowed.indexOf(current)<0&&canManageUserRole(current))allowed.unshift(current);
+  return allowed;
+}
+function escapeHtml(value){return String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+function getUserArea(user){return String(user&&user.area||user&&user.branch||'').trim()}
+function toggleUserPasswordVisibility(inputId,button){
+  const input=$(inputId);
+  if(!input)return;
+  const show=input.type==='password';
+  input.type=show?'text':'password';
+  if(button){
+    button.textContent=show?'ซ่อนรหัสผ่าน':'แสดงรหัสผ่าน';
+    button.setAttribute('aria-label',button.textContent);
+  }
+}
 function canAccessPage(page){const role=currentRole();const access={SUPER_ADMIN:['home','quote','customers','products','promos','quotes','users','report','settings'],ADMIN:['home','quote','customers','products','promos','quotes','users','report','settings'],MANAGER:['home','customers','quotes','report','settings'],SALES:['home','quote','customers','products','promos','quotes','settings'],VIEWER:['home','quotes','report','settings']};return (access[role]||access.VIEWER).indexOf(page)>=0}
 function applyRolePermissions(){
   document.querySelectorAll('.nav button[data-page]').forEach(btn=>{const page=btn.getAttribute('data-page');btn.classList.toggle('hidden',!canAccessPage(page));});
@@ -1356,6 +1378,49 @@ async function saveUserForm(userId){
   if(response&&response.ok){$('userForm')?.classList.add('hidden');await loadUsers();}
   return response;
 }
+renderUsers=function(){
+  const list=$('userList');if(!list)return;
+  if(['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0){list.innerHTML='<p class="loading-text">Admin only</p>';return;}
+  const q=normalizeSearchText($('userSearch')?.value||'');
+  const users=(Array.isArray(DB.users)?DB.users:[]).filter(u=>!q||smartMatch(Object.assign({},u,{area:getUserArea(u)}),q,['fullName','displayName','username','role','area','status','email','phone']));
+  list.innerHTML=users.length?users.map(u=>{
+    const canEdit=canManageUserRole(u.role);
+    return `<div class="row user-row"><div><b>${escapeHtml(u.fullName||u.displayName||u.username||'-')}</b><br><small>${escapeHtml(u.username||'-')} · ${escapeHtml(u.email||'-')}</small></div><span class="pill blue">${escapeHtml(u.role||'-')}</span><span>${escapeHtml(getUserArea(u)||'-')}</span><span>${escapeHtml(u.status||'-')}</span><small>${escapeHtml(u.lastLogin||'-')}</small><button class="tiny" ${canEdit?'':'disabled'} onclick="openUserForm('${escapeHtml(u.userId||'')}')">${canEdit?'แก้ไข':'ไม่มีสิทธิ์'}</button></div>`;
+  }).join(''):'<p class="loading-text">No users</p>';
+};
+openUserForm=function(userId){
+  const form=$('userForm');if(!form)return;
+  const user=(Array.isArray(DB.users)?DB.users:[]).find(u=>String(u.userId||'')===String(userId||''))||{};
+  if(user.userId&&!canManageUserRole(user.role)){toast('ไม่มีสิทธิ์แก้ไขผู้ใช้งาน Role นี้');return;}
+  form.classList.remove('hidden');
+  const roleOptions=getManageableRoleOptions(user.role).map(r=>`<option value="${r}">${r}</option>`).join('');
+  const passwordHelp=user.userId?'เว้นว่างไว้หากไม่ต้องการเปลี่ยนรหัสผ่าน':'ต้องกรอกรหัสผ่านและยืนยันรหัสผ่าน';
+  form.innerHTML=`<div class="grid2"><div class="field"><label>ชื่อ-นามสกุล</label><input id="userFullName" maxlength="150" value="${escapeHtml(user.fullName||user.displayName||'')}"></div><div class="field"><label>Username</label><input id="userUsername" value="${escapeHtml(user.username||'')}" ${user.userId?'disabled':''}></div><div class="field"><label>รหัสผ่าน ${user.userId?'(ไม่กรอก = ใช้รหัสเดิม)':''}</label><div class="password-field"><input id="userPassword" type="password" autocomplete="new-password" aria-describedby="userPasswordHelp"><button type="button" class="tiny" onclick="toggleUserPasswordVisibility('userPassword',this)" aria-label="แสดงรหัสผ่าน">แสดงรหัสผ่าน</button></div><small id="userPasswordHelp">${passwordHelp}</small></div><div class="field"><label>ยืนยันรหัสผ่าน</label><div class="password-field"><input id="userConfirmPassword" type="password" autocomplete="new-password"><button type="button" class="tiny" onclick="toggleUserPasswordVisibility('userConfirmPassword',this)" aria-label="แสดงรหัสผ่าน">แสดงรหัสผ่าน</button></div></div><div class="field"><label>Email</label><input id="userEmail" value="${escapeHtml(user.email||'')}"></div><div class="field"><label>เบอร์โทรศัพท์</label><input id="userPhone" value="${escapeHtml(user.phone||'')}"></div><div class="field"><label>สิทธิ์ผู้ใช้งาน</label><select id="userRole">${roleOptions}</select></div><div class="field"><label>Area</label><input id="userArea" value="${escapeHtml(getUserArea(user))}"><small>พื้นที่ที่ใช้กำหนดขอบเขตข้อมูล Dashboard รายงาน และผู้ใช้งาน</small></div><div class="field"><label>สถานะ</label><select id="userStatus"><option>Active</option><option>Inactive</option><option>Locked</option></select></div></div><div class="actions"><button id="saveUserButton" class="primary" onclick="saveUserForm('${escapeHtml(user.userId||'')}')">${user.userId?'บันทึกผู้ใช้งาน':'สร้างผู้ใช้งาน'}</button><button class="ghost" onclick="$('userForm').classList.add('hidden')">ยกเลิก</button></div>`;
+  $('userRole').value=normalizeRole(user.role||'SALES');
+  $('userStatus').value=user.status||'Active';
+};
+saveUserForm=async function(userId){
+  const fullName=String($('userFullName')?.value||'').trim();
+  const password=$('userPassword')?.value||'';
+  const confirmPassword=$('userConfirmPassword')?.value||'';
+  const area=String($('userArea')?.value||'').trim();
+  if(!fullName){toast('กรุณากรอกชื่อ-นามสกุล');return {ok:false,message:'fullName is required'};}
+  if(!area){toast('กรุณากรอก Area');return {ok:false,message:'area is required'};}
+  if(!userId&&(!password||!confirmPassword)){toast('กรุณากรอกรหัสผ่านและยืนยันรหัสผ่าน');return {ok:false,message:'password is required'};}
+  if((password||confirmPassword)&&password!==confirmPassword){toast('รหัสผ่านและยืนยันรหัสผ่านไม่ตรงกัน');return {ok:false,message:'PASSWORD_CONFIRM_MISMATCH'};}
+  const button=$('saveUserButton');
+  if(button)button.disabled=true;
+  const payload={userId:userId||'',fullName:fullName,displayName:fullName,username:$('userUsername')?.value||'',password:password,confirmPassword:confirmPassword,email:$('userEmail')?.value||'',phone:$('userPhone')?.value||'',role:$('userRole')?.value||'Sales',area:area,branch:area,status:$('userStatus')?.value||'Active'};
+  const action=userId?'updateUser':'createUser';
+  try{
+    const response=await callApi(action,payload);
+    toast(response.message || (response.ok ? 'บันทึกผู้ใช้งานแล้ว' : 'บันทึกไม่สำเร็จ'));
+    if(response&&response.ok){$('userForm')?.classList.add('hidden');await loadUsers();}
+    return response;
+  }finally{
+    if(button)button.disabled=false;
+  }
+};
 const baseRenderHistoryForAuth=renderHistory;
 renderHistory=function(){baseRenderHistoryForAuth();if(currentRole()==='VIEWER'){document.querySelectorAll('#quoteHistory button').forEach(btn=>{if(!/เปิดดู|Open/i.test(btn.textContent||''))btn.classList.add('hidden');});}};
 const baseRenderHomeForAuth=renderHome;

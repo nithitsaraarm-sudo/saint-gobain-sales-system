@@ -509,7 +509,10 @@ async function saveQuotation() {
     customerId: CURRENT_QUOTE.customerId,
     customerName: CURRENT_QUOTE.customerName,
     sales: USER?.displayName,
-    createdBy: USER?.username,
+    createdBy: USER?.quoteDisplayName || USER?.fullName || USER?.displayName || USER?.username,
+    createdByUserId: USER?.userId || '',
+    createdByUsername: USER?.username || '',
+    quoteDisplayName: USER?.quoteDisplayName || USER?.fullName || USER?.displayName || USER?.username,
     items: CART.map(item => ({
       productId: item.productId,
       productName: item.productName,
@@ -765,7 +768,10 @@ async function saveQuotation() {
     specialDiscount: totals.specialDiscount,
     shipping: totals.shipping,
     status: 'SAVED',
-    createdBy: USER?.username || USER?.displayName || ''
+    createdBy: USER?.quoteDisplayName || USER?.fullName || USER?.displayName || USER?.username || '',
+    createdByUserId: USER?.userId || '',
+    createdByUsername: USER?.username || '',
+    quoteDisplayName: USER?.quoteDisplayName || USER?.fullName || USER?.displayName || USER?.username || ''
   };
   const response = await callApi('saveQuotation', payload);
   if (!response.ok) {
@@ -829,7 +835,10 @@ function buildQuotationPayload(status) {
     specialDiscount: totals.specialDiscount,
     shipping: totals.shipping,
     status: status || 'SAVED',
-    createdBy: USER?.username || USER?.displayName || ''
+    createdBy: USER?.quoteDisplayName || USER?.fullName || USER?.displayName || USER?.username || '',
+    createdByUserId: USER?.userId || '',
+    createdByUsername: USER?.username || '',
+    quoteDisplayName: USER?.quoteDisplayName || USER?.fullName || USER?.displayName || USER?.username || ''
   };
 }
 
@@ -1045,7 +1054,7 @@ function buildQuotationPrintHtml(data) {
   const vat = quotePrintNumber(totals.vat !== undefined ? totals.vat : quote.vat);
   const grandTotal = quotePrintNumber(totals.grandTotal !== undefined ? totals.grandTotal : quote.grandTotal);
   const user = typeof USER !== 'undefined' && USER ? USER : {};
-  const salesName = quotePrintText(quote.createdBy || user.quoteDisplayName || user.displayName || user.fullName || user.username, '-');
+  const salesName = quotePrintText(quote.quoteDisplayName || quote.createdBy || user.quoteDisplayName || user.displayName || user.fullName || user.username, '-');
   const salesPosition = quotePrintText(user.jobTitle || user.position, '-');
   const companyName = quotePrintText((typeof DB !== 'undefined' && DB.settings && DB.settings.companyName) || user.companyName, 'SAINT-GOBAIN');
   const remark = quotePrintText(quote.notes || quote.remark || quote.remarks, '-');
@@ -1151,7 +1160,7 @@ function getQuotationPrintContext(data) {
     businessUnitsLabel: lineBusinessUnits.length > 1 ? lineBusinessUnits.map(getQuoteTypeLabel).join(' / ') : '',
     customerName: quotePrintText(quote.customerName || CURRENT_QUOTE.customerName, '-'),
     customerId: quotePrintText(quote.customerId || CURRENT_QUOTE.customerId, '-'),
-    salesName: quotePrintText(quote.createdBy || user.quoteDisplayName || user.displayName || user.fullName || user.username, '-'),
+    salesName: quotePrintText(quote.quoteDisplayName || quote.createdBy || user.quoteDisplayName || user.displayName || user.fullName || user.username, '-'),
     salesPosition: quotePrintText(user.jobTitle || user.position, '-'),
     companyName: quotePrintText((typeof DB !== 'undefined' && DB.settings && DB.settings.companyName) || user.companyName, 'SAINT-GOBAIN'),
     remark: quotePrintText(quote.notes || quote.remark || quote.remarks, '-'),

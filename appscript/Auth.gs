@@ -107,6 +107,34 @@ function logoutUser(sessionToken) {
   }
 }
 
+function revokeUserSessions(userId) {
+  try {
+    const targetUserId = String(userId || '').trim();
+    if (!targetUserId) return success({ revoked: 0 });
+    const store = getSessionStore();
+    const properties = store.getProperties();
+    var revoked = 0;
+    Object.keys(properties || {}).forEach(function (key) {
+      if (key.indexOf('sg_session:') !== 0) return;
+      try {
+        const session = JSON.parse(properties[key] || '{}');
+        const sessionUserId = String(session.user && session.user.userId || '').trim();
+        if (sessionUserId === targetUserId) {
+          getAuthCache().remove(key);
+          store.deleteProperty(key);
+          revoked += 1;
+        }
+      } catch (parseError) {
+        logWarning('revokeUserSessions', 'Unable to parse stored session for cleanup');
+      }
+    });
+    return success({ revoked: revoked });
+  } catch (error) {
+    logError('revokeUserSessions', error);
+    return fail('Unable to revoke sessions');
+  }
+}
+
 function isAuthenticated(sessionToken) {
   return getSession(sessionToken).ok;
 }

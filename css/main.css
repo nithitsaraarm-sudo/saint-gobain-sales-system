@@ -202,6 +202,9 @@ body.quote-reordering .quote-line{touch-action:none}
 .grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .user-row{align-items:center;gap:12px;flex-wrap:wrap}
 .user-row small{color:var(--muted)}
+.password-field{display:flex;gap:8px;align-items:center}
+.password-field input{min-width:0;flex:1}
+.password-field .tiny{white-space:nowrap}
 
 /* Final quotation title sizing override */
 .print-doc-title h1{font-size:20px!important}
