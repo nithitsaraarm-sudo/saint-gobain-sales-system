@@ -77,6 +77,7 @@ function searchCustomers(keyword) {
 
 function saveCustomer(payload) {
   try {
+    migrateCustomersSheet();
     const check = validatePayload(payload, ['customerId', 'customerName']);
     if (!check.ok) {
       return check;
@@ -91,7 +92,8 @@ function saveCustomer(payload) {
       customerId: String(data.customerId || '').trim(),
       customerName: String(data.customerName || '').trim(),
       province: String(data.province || '').trim(),
-      phone: String(data.phone || '').trim(),
+      phone: typeof normalizePhone === 'function' ? normalizePhone(data.phone) : String(data.phone || '').trim(),
+      notes: String(data.notes || '').trim(),
       address: String(data.address || '').trim(),
       group: String(data.group || '').trim(),
       active: 'TRUE',
@@ -112,6 +114,7 @@ function saveCustomer(payload) {
 
 function updateCustomer(customerId, payload) {
   try {
+    migrateCustomersSheet();
     const idCheck = requireValue(customerId, 'customerId');
     if (!idCheck.ok) {
       return idCheck;
@@ -124,9 +127,9 @@ function updateCustomer(customerId, payload) {
       return customerResult;
     }
     const updateObject = {};
-    ['customerName', 'province', 'phone', 'address', 'group', 'active'].forEach(function (field) {
+    ['customerName', 'province', 'phone', 'address', 'notes', 'group', 'active'].forEach(function (field) {
       if (payload[field] !== undefined) {
-        updateObject[field] = String(payload[field]).trim();
+        updateObject[field] = field === 'phone' && typeof normalizePhone === 'function' ? normalizePhone(payload[field]) : String(payload[field]).trim();
       }
     });
     updateObject.updatedAt = new Date().toISOString();
@@ -134,12 +137,26 @@ function updateCustomer(customerId, payload) {
     if (!result.ok) {
       return result;
     }
-    logInfo('updateCustomer', 'Customer updated ' + customerId);
+    const actor = payload && payload.currentUser ? payload.currentUser : {};
+    logActivity(actor.userId || '', 'CUSTOMER_UPDATED', 'Customer updated ' + customerId);
     return success(updateObject, 'Customer updated');
   } catch (error) {
     logError('updateCustomer', error);
     return fail(error && error.message ? error.message : 'Failed to update customer');
   }
+}
+
+function migrateCustomersSheet() {
+  const requiredHeaders = getHeadersForSheet(CUSTOMERS_SHEET);
+  const sheet = ensureSheet(CUSTOMERS_SHEET, requiredHeaders);
+  if (!sheet) return fail('Unable to access Customers sheet');
+  const headers = getHeaders(sheet);
+  var nextHeaders = headers.slice();
+  requiredHeaders.forEach(function (header) { if (nextHeaders.indexOf(header) < 0) nextHeaders.push(header); });
+  if (nextHeaders.length !== headers.length) sheet.getRange(1, 1, 1, nextHeaders.length).setValues([nextHeaders]);
+  const phoneIndex = nextHeaders.indexOf('phone');
+  if (phoneIndex >= 0) sheet.getRange(2, phoneIndex + 1, Math.max(sheet.getMaxRows() - 1, 1), 1).setNumberFormat('@');
+  return success({ headers: nextHeaders });
 }
 
 function deactivateCustomer(customerId) {
@@ -159,6 +176,7 @@ function deactivateCustomer(customerId) {
     if (!result.ok) {
       return result;
     }
+    if (typeof removeCustomerFromAllFavorites_ === 'function') removeCustomerFromAllFavorites_(customerId);
     logInfo('deactivateCustomer', 'Customer deactivated ' + customerId);
     return success({ customerId: customerId }, 'Customer deactivated');
   } catch (error) {

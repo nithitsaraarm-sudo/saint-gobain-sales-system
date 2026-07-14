@@ -211,6 +211,16 @@ body.quote-reordering .quote-line{touch-action:none}
 .password-toggle svg{width:22px;height:22px;pointer-events:none}
 .phone-link{display:inline-flex;align-items:center;min-height:36px;color:var(--primary);font-weight:700;text-decoration:none}
 .phone-link:hover{text-decoration:underline}
+.favorite-customers{margin:18px 0 22px}
+.favorite-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.favorite-head h2{margin:0}.favorite-head small{color:var(--muted);font-weight:800}
+.favorite-grid{display:grid;grid-template-columns:repeat(5,minmax(220px,1fr));gap:12px;overflow-x:auto;padding:4px 2px 12px;scroll-snap-type:x proximity}
+.favorite-card{scroll-snap-align:start;cursor:grab;touch-action:pan-y;border-color:#f0d84b;background:#fffdf0}
+.favorite-card.is-dragging{opacity:.55;cursor:grabbing;box-shadow:0 22px 48px rgba(15,42,82,.18)}
+.favorite-empty{padding:18px;border:1px dashed var(--line);border-radius:18px;color:var(--muted);background:#fff}
+.customer-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.customer-actions button{flex:1;min-width:130px}
+.favorite-toggle{width:100%;margin-top:10px;border:0;border-radius:14px;padding:9px 12px;background:#fff7bd;color:#5c4c00;font-weight:800}
+@media(max-width:720px){.favorite-grid{grid-template-columns:repeat(5,minmax(78vw,1fr));overscroll-behavior-x:contain}.customer-actions{display:grid;grid-template-columns:1fr 1fr}.customer-actions button{min-width:0;padding-left:10px;padding-right:10px}}
 
 /* Final quotation title sizing override */
 .print-doc-title h1{font-size:20px!important}

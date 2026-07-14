@@ -28,7 +28,8 @@ const READ_ACTIONS = [
   'discount',
   'loadQuotation',
   'getQuotationHistory',
-  'loadUsers'
+  'loadUsers',
+  'getFavoriteCustomers'
 ];
 const WRITE_ACTIONS = [
   'login',
@@ -42,6 +43,10 @@ const WRITE_ACTIONS = [
   'updateProfile',
   'uploadProfileImage',
   'saveCustomer',
+  'updateCustomer',
+  'addFavoriteCustomer',
+  'removeFavoriteCustomer',
+  'reorderFavoriteCustomers',
   'saveProduct',
   'savePromotion',
   'updateSettings',
@@ -475,7 +480,22 @@ function mockApi(action, payload) {
     case 'updateSettings':
       return { ok: true, data: data, message: 'Mock settings saved' };
     case 'saveCustomer':
+    case 'updateCustomer':
       return { ok: true, data: data, message: 'Mock customer saved' };
+    case 'getFavoriteCustomers':
+      window.__mockFavoriteCustomers=window.__mockFavoriteCustomers||[];
+      return {ok:true,data:window.__mockFavoriteCustomers};
+    case 'addFavoriteCustomer':
+      window.__mockFavoriteCustomers=window.__mockFavoriteCustomers||[];
+      if(window.__mockFavoriteCustomers.length>=5)return {ok:false,message:'สามารถปักร้านค้าโปรดได้สูงสุด 5 ร้าน'};
+      if(!window.__mockFavoriteCustomers.some(c=>c.customerId===data.customerId)){const customer=(window.DB?.customers||[]).find(c=>c.customerId===data.customerId);if(customer)window.__mockFavoriteCustomers.push(customer);}
+      return {ok:true,data:data,message:'เพิ่มร้านค้าโปรดเรียบร้อย'};
+    case 'removeFavoriteCustomer':
+      window.__mockFavoriteCustomers=(window.__mockFavoriteCustomers||[]).filter(c=>c.customerId!==data.customerId);
+      return {ok:true,data:data,message:'นำร้านค้าออกจากรายการโปรดแล้ว'};
+    case 'reorderFavoriteCustomers':
+      window.__mockFavoriteCustomers=(data.customerIds||[]).map(id=>(window.__mockFavoriteCustomers||[]).find(c=>c.customerId===id)).filter(Boolean);
+      return {ok:true,data:data,message:'จัดลำดับร้านค้าโปรดแล้ว'};
     case 'saveProduct':
       return { ok: true, data: data, message: 'Mock product saved' };
     case 'savePromotion':

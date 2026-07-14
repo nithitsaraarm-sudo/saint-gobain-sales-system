@@ -36,13 +36,13 @@ function api(action, payload) {
         return authorizeAction(uploadProfileImage, [payload]);
       case 'customers':
       case 'getCustomers':
-        if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES])) return forbidden('Insufficient permission');
+        if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES, USER_ROLES.VIEWER])) return forbidden('Insufficient permission');
         return authorizeAction(getCustomers, []);
       case 'customer':
-        if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES])) return forbidden('Insufficient permission');
+        if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES, USER_ROLES.VIEWER])) return forbidden('Insufficient permission');
         return authorizeAction(getCustomer, [payload && (payload.customerId || payload.value)]);
       case 'searchCustomers':
-        if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES])) return forbidden('Insufficient permission');
+        if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES, USER_ROLES.VIEWER])) return forbidden('Insufficient permission');
         return authorizeAction(searchCustomers, [payload && payload.keyword]);
       case 'products':
       case 'getProducts':
@@ -59,6 +59,18 @@ function api(action, payload) {
       case 'saveCustomer':
         if (!permissions.canManageCustomers) return forbidden('Insufficient permission');
         return authorizeAction(saveCustomer, [payload]);
+      case 'updateCustomer':
+        if (!permissions.canManageCustomers) return forbidden('Insufficient permission');
+        if (payload && typeof payload === 'object') payload.currentUser = user;
+        return authorizeAction(updateCustomer, [payload && payload.customerId, payload]);
+      case 'getFavoriteCustomers':
+        return authorizeAction(getFavoriteCustomers, [payload]);
+      case 'addFavoriteCustomer':
+        return authorizeAction(addFavoriteCustomer, [payload]);
+      case 'removeFavoriteCustomer':
+        return authorizeAction(removeFavoriteCustomer, [payload]);
+      case 'reorderFavoriteCustomers':
+        return authorizeAction(reorderFavoriteCustomers, [payload]);
       case 'saveProduct':
         if (!permissions.canManageProducts) return forbidden('Insufficient permission');
         return authorizeAction(saveProduct, [payload]);

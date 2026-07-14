@@ -367,13 +367,16 @@ function getHeadersForSheet(sheetName) {
     return ['userId', 'action', 'detail', 'createdAt'];
   }
   if (sheetName === SHEET_NAMES.CUSTOMERS) {
-    return ['customerId', 'customerName', 'province', 'status', 'defaultGyprocDiscount', 'defaultWeberDiscount', 'notes', 'address'];
+    return ['customerId', 'customerName', 'province', 'phone', 'status', 'active', 'defaultGyprocDiscount', 'defaultWeberDiscount', 'notes', 'address', 'group', 'createdAt', 'updatedAt'];
   }
   if (sheetName === SHEET_NAMES.PRODUCTS) {
     return ['productId', 'brand', 'discountGroup', 'groupCode', 'itemName', 'itemDesc', 'unit', 'listPrice', 'imageUrl', 'status', 'active', 'notes', 'promoText'];
   }
   if (sheetName === SHEET_NAMES.QUOTE_HISTORY) {
     return ['quoteId', 'quoteNo', 'quoteType', 'businessUnit', 'customerId', 'customerName', 'status', 'shipping', 'specialDiscount', 'subtotal', 'vat', 'grandTotal', 'createdBy', 'createdById', 'createdByUserId', 'createdByUsername', 'quoteDisplayName', 'updatedBy', 'updatedById', 'updatedByUsername', 'createdAt', 'updatedAt'];
+  }
+  if (sheetName === SHEET_NAMES.USER_FAVORITE_CUSTOMERS) {
+    return ['favoriteId', 'userId', 'customerId', 'sortOrder', 'createdAt', 'updatedAt'];
   }
   if (sheetName === SHEET_NAMES.QUOTE_LINES) {
     return ['quoteId', 'lineId', 'lineNo', 'lineOrder', 'sortOrder', 'productId', 'productBusinessUnit', 'productName', 'unit', 'qty', 'listPrice', 'discountPercent', 'unitPrice', 'netPrice', 'lineTotal', 'vat', 'grandTotal', 'status', 'createdAt', 'updatedAt'];
