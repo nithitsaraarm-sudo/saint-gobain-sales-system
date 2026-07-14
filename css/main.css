@@ -146,12 +146,17 @@
 /* Quotation screen ratio + cart reorder */
 @media(min-width:1024px){.quote-layout{grid-template-columns:calc(60% - 10px) calc(40% - 10px)!important;align-items:start}.quote-layout>*{min-width:0}.quote-layout>.card{min-width:0}}
 @media(max-width:1023px){.quote-layout{display:flex!important;flex-direction:column!important}}
-.quote-line{cursor:default;transition:transform .16s ease,opacity .16s ease,box-shadow .16s ease}
-.quote-drag-handle{flex:0 0 auto;width:34px;height:34px;border:1px solid var(--line);border-radius:12px;background:#f8fbff;color:var(--blue);font-weight:900;cursor:grab;touch-action:none}
-.quote-drag-handle:active{cursor:grabbing}
-.quote-line.is-dragging{opacity:.7;box-shadow:0 24px 54px rgba(15,42,82,.22);cursor:grabbing}
-.quote-drop-placeholder{border:2px dashed #8bbce8;border-radius:18px;background:#eef6ff;margin:6px 0;min-height:54px}
-body.quote-reordering{user-select:none;cursor:grabbing}
+.quote-reorder-hint{color:var(--muted);background:#fff;border:1px dashed var(--line);border-radius:16px;padding:10px 12px;font-size:13px;font-weight:800}
+.quote-line{cursor:grab;transition:transform .16s ease,opacity .16s ease,box-shadow .16s ease;touch-action:pan-y}
+.quote-line{scroll-margin-top:calc(env(safe-area-inset-top,0px) + 92px);scroll-margin-bottom:96px}
+.quote-line button,.quote-line input,.quote-line select,.quote-line textarea,.quote-line a,.quote-line label,.quote-line [data-no-drag]{cursor:auto}
+.quote-line.card--drag-ready,.quote-line.card--chosen{box-shadow:0 12px 30px rgba(15,42,82,.12);transform:translateY(-1px)}
+.quote-line.is-dragging,.quote-line.card--dragging{opacity:.7;box-shadow:0 24px 54px rgba(15,42,82,.22);cursor:grabbing}
+.quote-line.is-newly-added{animation:quote-item-highlight 1.8s ease;border-color:#f0d84b!important;box-shadow:0 0 0 4px rgba(240,216,75,.34),0 18px 42px rgba(15,42,82,.18)!important}
+@keyframes quote-item-highlight{0%{transform:translateY(-2px);background:#fff7bd}45%{background:#fffdf0}100%{transform:translateY(0);background:#fff}}
+.quote-drop-placeholder,.quote-drop-placeholder.card--ghost{border:2px dashed #8bbce8;border-radius:18px;background:#eef6ff;margin:6px 0;min-height:54px}
+body.quote-reordering{user-select:none;cursor:grabbing;overscroll-behavior:contain}
+body.quote-reordering .quote-line{touch-action:none}
 
 /* Refined quotation PNG/PDF output */
 .print-product-code{margin-top:3px!important}
@@ -195,13 +200,46 @@ body.quote-reordering{user-select:none;cursor:grabbing}
 @media print{@page{size:A4 portrait;margin:0}html,body{width:210mm!important;min-height:297mm!important;height:auto!important;background:#fff!important;margin:0!important;padding:0!important}body *{visibility:hidden!important}#quotationPrintPreview,#quotationPrintPreview *{visibility:visible!important}.quotation-print-actions,.sidebar,.topbar,.no-print,.overlay,#modal,#toast,.product-price-modal,.quote-detail-modal{display:none!important;visibility:hidden!important}#quotationPrintPreview{display:block!important;position:static!important;inset:auto!important;background:#fff!important;padding:0!important;margin:0!important;overflow:visible!important}#quotationPrintPreview .quotation-print-shell{display:block!important;width:210mm!important;height:auto!important;min-width:0!important;min-height:0!important;margin:0!important;padding:0!important;overflow:visible!important}#quotationPrintPreview #printQuotationSheet{display:block!important;position:static!important;left:auto!important;top:auto!important;width:210mm!important;height:auto!important;min-height:0!important;margin:0!important;padding:0!important;background:#fff!important;box-shadow:none!important;overflow:visible!important;transform:none!important}#quotationPrintPreview .quotation-page{display:block!important;position:relative!important;width:210mm!important;height:297mm!important;min-height:297mm!important;margin:0!important;padding:14mm 16mm!important;box-shadow:none!important;background:#fff!important;overflow:hidden!important;break-after:page!important;page-break-after:always!important}#quotationPrintPreview .quotation-page:last-child{break-after:auto!important;page-break-after:auto!important}.quotation-page .print-table tr,.quotation-page .print-page-break,.quotation-item-row{break-inside:avoid!important;page-break-inside:avoid!important}}
 
 /* User management + role permissions */
+.quote-product-preferences{margin:10px 0 12px}
+.quote-preference-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0;color:#0f2a52}
+.quote-preference-head b{font-size:14px;font-weight:900}.quote-preference-head small{color:var(--muted);font-weight:800}
+.quote-preference-list{display:grid;gap:8px}
+.quote-product-pref-card{align-items:center;gap:10px;border:1px solid var(--line);background:#fff;border-radius:16px;padding:10px;transition:box-shadow .16s ease,opacity .16s ease,transform .16s ease}
+.quote-product-pref-main{min-width:0;flex:1}.quote-product-pref-main b{display:inline;word-break:break-word}.quote-product-pref-main small{display:block;color:var(--muted);font-weight:700;line-height:1.35}
+.quote-product-actions{margin-left:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.quote-product-pref-button{border:1px solid var(--line);border-radius:999px;background:#fff;color:#475467;min-width:36px;height:36px;padding:0 10px;font-weight:900}
+.quote-product-pref-button.is-active{border-color:#f0d84b;background:#fff7bd;color:#6b5600}
+.pinned-product-card{border-color:#f0d84b;background:#fffdf0;cursor:grab;touch-action:pan-y}
+.pinned-product-card.is-dragging{opacity:.6;cursor:grabbing;box-shadow:0 22px 48px rgba(15,42,82,.18)}
+.quote-preference-empty{border:1px dashed var(--line);border-radius:16px;background:#fff;color:var(--muted);padding:12px;font-weight:800}
+@media(max-width:720px){.quote-product-pref-card{align-items:flex-start}.quote-product-actions{width:100%;margin-left:0;justify-content:flex-start}.quote-product-actions .tiny{flex:1}.quote-product-pref-button{min-width:42px}}
+
 .nav button.hidden,.main-action.hidden,.actions.hidden,#quoteHistory button.hidden{display:none!important}
 .user-form{border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:16px;background:#f8fbff}
 .grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .user-row{align-items:center;gap:12px;flex-wrap:wrap}
 .user-row small{color:var(--muted)}
+.password-pair{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
+.password-field{position:relative;display:flex;align-items:center}
+.password-field input{min-width:0;width:100%;padding-right:48px}
+.password-toggle{position:absolute;right:4px;top:50%;transform:translateY(-50%);display:grid;place-items:center;width:40px;height:40px;padding:0;border:0;border-radius:10px;background:transparent;color:var(--muted);cursor:pointer}
+.password-toggle:hover{background:#e8f0fb;color:var(--primary)}
+.password-toggle:focus-visible,.phone-link:focus-visible{outline:3px solid rgba(30,103,210,.28);outline-offset:2px}
+.password-toggle svg{width:22px;height:22px;pointer-events:none}
+.phone-link{display:inline-flex;align-items:center;min-height:36px;color:var(--primary);font-weight:700;text-decoration:none}
+.phone-link:hover{text-decoration:underline}
+.favorite-customers{margin:18px 0 22px}
+.favorite-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.favorite-head h2{margin:0}.favorite-head small{color:var(--muted);font-weight:800}
+.favorite-grid{display:grid;grid-template-columns:repeat(5,minmax(220px,1fr));gap:12px;overflow-x:auto;padding:4px 2px 12px;scroll-snap-type:x proximity}
+.favorite-card{scroll-snap-align:start;cursor:grab;touch-action:pan-y;border-color:#f0d84b;background:#fffdf0}
+.favorite-card.is-dragging{opacity:.55;cursor:grabbing;box-shadow:0 22px 48px rgba(15,42,82,.18)}
+.favorite-empty{padding:18px;border:1px dashed var(--line);border-radius:18px;color:var(--muted);background:#fff}
+.customer-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.customer-actions button{flex:1;min-width:130px}
+.favorite-toggle{width:100%;margin-top:10px;border:0;border-radius:14px;padding:9px 12px;background:#fff7bd;color:#5c4c00;font-weight:800}
+@media(max-width:720px){.favorite-grid{grid-template-columns:repeat(5,minmax(78vw,1fr));overscroll-behavior-x:contain}.customer-actions{display:grid;grid-template-columns:1fr 1fr}.customer-actions button{min-width:0;padding-left:10px;padding-right:10px}}
 
 /* Final quotation title sizing override */
 .print-doc-title h1{font-size:20px!important}
 .quotation-page .print-doc-header--continued .print-doc-title h2{font-size:18px!important}
-@media(max-width:720px){.grid2{grid-template-columns:1fr}.user-row{display:grid;grid-template-columns:1fr}}
+@media(max-width:720px){.grid2,.password-pair{grid-template-columns:1fr}.user-row{display:grid;grid-template-columns:1fr}}

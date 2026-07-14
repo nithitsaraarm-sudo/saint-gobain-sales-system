@@ -3,6 +3,36 @@ function sanitizeUserText(value) {
   return String(value || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function sanitizeUserInputText(value, maxLength) {
+  const text = sanitizeUserText(value).replace(/[<>]/g, '');
+  const limit = maxLength || 150;
+  return text.length > limit ? text.slice(0, limit) : text;
+}
+
+// Phone numbers are identifiers, not quantities. Keep them as text end-to-end.
+function normalizePhone(value) {
+  const raw = String(value === null || value === undefined ? '' : value).trim();
+  const hasInternationalPrefix = raw.charAt(0) === '+';
+  const digits = raw.replace(/\D/g, '');
+  return (hasInternationalPrefix ? '+' : '') + digits;
+}
+
+function formatPhoneForDisplay(value) {
+  const phone = normalizePhone(value);
+  if (/^0\d{9}$/.test(phone)) return phone.slice(0, 3) + '-' + phone.slice(3, 6) + '-' + phone.slice(6);
+  return phone;
+}
+
+function buildTelHref(value) {
+  const phone = normalizePhone(value);
+  return isValidPhone(phone) ? 'tel:' + phone : '';
+}
+
+function isValidPhone(value) {
+  const phone = normalizePhone(value);
+  return /^\+?\d{8,15}$/.test(phone);
+}
+
 function normalizeUserRole(role) {
   const value = String(role || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
   if (value === 'SUPERADMIN') return USER_ROLES.SUPER_ADMIN;
@@ -11,6 +41,28 @@ function normalizeUserRole(role) {
   if (value === USER_ROLES.MANAGER) return USER_ROLES.MANAGER;
   if (value === USER_ROLES.VIEWER) return USER_ROLES.VIEWER;
   return USER_ROLES.SALES;
+}
+
+function getRoleLevel(role) {
+  const normalizedRole = normalizeUserRole(role);
+  const levels = {};
+  levels[USER_ROLES.SUPER_ADMIN] = 50;
+  levels[USER_ROLES.ADMIN] = 40;
+  levels[USER_ROLES.MANAGER] = 30;
+  levels[USER_ROLES.SALES] = 20;
+  levels[USER_ROLES.VIEWER] = 10;
+  return levels[normalizedRole] || 0;
+}
+
+function canManageRole(actorRole, targetRole) {
+  const actor = normalizeUserRole(actorRole);
+  const target = normalizeUserRole(targetRole);
+  if (actor === USER_ROLES.SUPER_ADMIN) return true;
+  return getRoleLevel(actor) > getRoleLevel(target);
+}
+
+function canCreateRole(actorRole, requestedRole) {
+  return canManageRole(actorRole, requestedRole);
 }
 
 function normalizeUserStatus(status, active) {
@@ -24,11 +76,12 @@ function normalizeUserStatus(status, active) {
 
 function normalizeUserAccount(user) {
   const source = user && typeof user === 'object' ? user : {};
-  const fullName = sanitizeUserText(source.fullName || source.displayName || source.name || source.username);
+  const fullName = sanitizeUserInputText(source.fullName || source['Full Name'] || source.displayName || source.name || source.username, 150);
   const displayName = sanitizeUserText(source.displayName || fullName || source.username);
-  const jobTitle = sanitizeUserText(source.jobTitle || source.position || source.title || source.branch);
+  const area = sanitizeUserInputText(source.area || source.Area || source.branch || source.Branch, 80);
+  const jobTitle = sanitizeUserText(source.jobTitle || source.position || source.title || area || source.branch);
   const profileImageUrl = sanitizeUserText(source.profileImageUrl || source.photoUrl || source.imageUrl);
-  const quoteDisplayName = sanitizeUserText(source.quoteDisplayName || displayName || fullName || source.username);
+  const quoteDisplayName = sanitizeUserInputText(source.quoteDisplayName || fullName || displayName || source.username, 150);
   const status = normalizeUserStatus(source.status, source.active);
   const role = normalizeUserRole(source.role);
   return Object.assign({}, source, {
@@ -39,7 +92,7 @@ function normalizeUserAccount(user) {
     fullName: fullName,
     displayName: displayName,
     email: sanitizeUserText(source.email),
-    phone: sanitizeUserText(source.phone),
+    phone: normalizePhone(source.phone),
     jobTitle: jobTitle,
     position: jobTitle,
     profileImageUrl: profileImageUrl,
@@ -48,7 +101,8 @@ function normalizeUserAccount(user) {
     companyName: sanitizeUserText(source.companyName),
     greetingText: sanitizeUserText(source.greetingText),
     role: role,
-    branch: sanitizeUserText(source.branch),
+    area: area,
+    branch: sanitizeUserText(source.branch || area),
     status: status,
     mustChangePassword: normalizeBooleanFlag(source.mustChangePassword),
     createdBy: sanitizeUserText(source.createdBy),
@@ -79,6 +133,7 @@ function sanitizeUser(user) {
     companyName: item.companyName,
     greetingText: item.greetingText,
     role: item.role,
+    area: item.area,
     branch: item.branch,
     status: item.status,
     mustChangePassword: item.mustChangePassword,
@@ -156,9 +211,22 @@ function countActiveSuperAdmins(excludeUserId) {
 }
 
 function canActorManageTargetRole(actor, targetRole) {
-  if (hasRole(actor, [USER_ROLES.SUPER_ADMIN])) return true;
-  if (hasRole(actor, [USER_ROLES.ADMIN])) return normalizeUserRole(targetRole) !== USER_ROLES.SUPER_ADMIN;
-  return false;
+  return canManageRole(actor && actor.role, targetRole);
+}
+
+function canEditUserRole(actorUser, targetUser, requestedRole) {
+  const actor = actorUser || {};
+  const target = targetUser || {};
+  if (String(actor.userId || '').trim() === String(target.userId || '').trim()) {
+    return forbidden('Users cannot change their own role or status');
+  }
+  if (!canManageRole(actor.role, target.role)) {
+    return forbidden('CANNOT_MANAGE_HIGHER_ROLE');
+  }
+  if (!canManageRole(actor.role, requestedRole)) {
+    return forbidden('FORBIDDEN_ROLE_ASSIGNMENT');
+  }
+  return success(true);
 }
 
 function validateUserPasswordForCreate(password) {
@@ -167,13 +235,57 @@ function validateUserPasswordForCreate(password) {
   return success(value);
 }
 
+function validateUserFullName(value) {
+  const fullName = sanitizeUserInputText(value, 150);
+  if (!fullName) return validationError('กรุณากรอกชื่อ-นามสกุล');
+  return success(fullName);
+}
+
+function validateUserArea(value) {
+  const area = sanitizeUserInputText(value, 80);
+  if (!area) return validationError('area is required');
+  return success(area);
+}
+
+function canActorUseArea(actor, area) {
+  if (hasRole(actor, [USER_ROLES.SUPER_ADMIN])) return true;
+  const actorArea = normalizeString(actor && (actor.area || actor.branch));
+  if (!actorArea || actorArea === normalizeString('System')) return true;
+  return actorArea === normalizeString(area);
+}
+
+function validateActorAreaScope(actor, area) {
+  return canActorUseArea(actor, area) ? success(true) : forbidden('AREA_SCOPE_VIOLATION');
+}
+
+function validateUserPasswordConfirmation(password, confirmPassword, required) {
+  const value = String(password || '').trim();
+  const confirm = String(confirmPassword || '').trim();
+  if (required || value || confirm) {
+    if (!value) return validationError('password is required');
+    if (!confirm) return validationError('confirmPassword is required');
+    if (value !== confirm) return validationError('PASSWORD_CONFIRM_MISMATCH');
+    return validateUserPasswordForCreate(value);
+  }
+  return success(true);
+}
+
 function loadUsers(payload) {
   try {
     const auth = requireApiRole(payload, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN]);
     if (!auth.ok) return auth;
     const result = listUserAccounts();
     if (!result.ok) return result;
-    return success(result.data.map(sanitizeUser));
+    const actor = normalizeUserAccount(auth.data);
+    const actorArea = normalizeString(actor.area || actor.branch);
+    const users = result.data.filter(function (user) {
+      const item = normalizeUserAccount(user);
+      if (hasRole(actor, [USER_ROLES.SUPER_ADMIN])) return true;
+      if (!canManageRole(actor.role, item.role)) return false;
+      if (!actorArea || actorArea === normalizeString('System')) return true;
+      return normalizeString(item.area || item.branch) === actorArea;
+    });
+    return success(users.map(sanitizeUser));
   } catch (error) {
     logError('loadUsers', error);
     return fail(error && error.message ? error.message : 'Failed to load users');
@@ -192,16 +304,26 @@ function createUser(payload) {
     const role = normalizeUserRole(data.role);
     const status = normalizeUserStatus(data.status);
     if (!username) return validationError('username is required');
-    const passwordCheck = validateUserPasswordForCreate(password);
+    const fullNameCheck = validateUserFullName(data.fullName || data.displayName);
+    if (!fullNameCheck.ok) return fullNameCheck;
+    const areaCheck = validateUserArea(data.area || data.branch);
+    if (!areaCheck.ok) return areaCheck;
+    const areaScopeCheck = validateActorAreaScope(actor, areaCheck.data);
+    if (!areaScopeCheck.ok) return areaScopeCheck;
+    const passwordCheck = validateUserPasswordConfirmation(password, data.confirmPassword, true);
     if (!passwordCheck.ok) return passwordCheck;
-    if (!canActorManageTargetRole(actor, role)) return forbidden('ADMIN cannot create SUPER_ADMIN');
+    if (!canCreateRole(actor.role, role)) return forbidden('FORBIDDEN_ROLE_ASSIGNMENT');
     const existing = getUserByUsername(username);
     if (existing.ok) return validationError('username already exists');
     const email = sanitizeUserText(data.email);
+    const emailCheck = validateEmail(email);
+    if (!emailCheck.ok) return emailCheck;
     if (email) {
       const existingEmail = getUserByUsername(email);
       if (existingEmail.ok) return validationError('email already exists');
     }
+    const phone = normalizePhone(data.phone);
+    if (phone && !isValidPhone(phone)) return validationError('Invalid phone format');
     const now = new Date().toISOString();
     const passwordSalt = createPasswordSalt();
     const row = {
@@ -209,18 +331,19 @@ function createUser(payload) {
       username: username,
       passwordHash: hashPassword(password, passwordSalt),
       passwordSalt: passwordSalt,
-      fullName: sanitizeUserText(data.fullName || data.displayName || username),
-      displayName: sanitizeUserText(data.displayName || data.fullName || username),
+      fullName: fullNameCheck.data,
+      displayName: sanitizeUserText(data.displayName || fullNameCheck.data || username),
       email: email,
-      phone: sanitizeUserText(data.phone),
+      phone: phone,
       jobTitle: sanitizeUserText(data.jobTitle || data.position),
       profileImageUrl: sanitizeUserText(data.profileImageUrl || data.photoUrl),
       photoUrl: sanitizeUserText(data.profileImageUrl || data.photoUrl),
-      quoteDisplayName: sanitizeUserText(data.quoteDisplayName || data.displayName || data.fullName || username),
+      quoteDisplayName: sanitizeUserInputText(data.quoteDisplayName || fullNameCheck.data, 150),
       companyName: sanitizeUserText(data.companyName),
       greetingText: sanitizeUserText(data.greetingText),
       role: role,
-      branch: sanitizeUserText(data.branch),
+      area: areaCheck.data,
+      branch: sanitizeUserText(data.branch || areaCheck.data),
       status: status,
       mustChangePassword: normalizeBooleanFlag(data.mustChangePassword) ? 'TRUE' : 'FALSE',
       createdBy: actor.userId || actor.username || '',
@@ -232,7 +355,7 @@ function createUser(payload) {
     };
     const insertResult = appendRow(getUsersSheetName(), row);
     if (!insertResult.ok) return insertResult;
-    logActivity(actor.userId || '', 'createUser', 'created user ' + row.username + ' as ' + row.role);
+    logActivity(actor.userId || '', 'USER_CREATED', 'created user ' + row.username + ' as ' + row.role + ' area=' + row.area);
     return success(sanitizeUser(row), 'User created');
   } catch (error) {
     logError('createUser', error);
@@ -254,42 +377,83 @@ function updateUser(payload) {
     const current = normalizeUserAccount(currentResult.data);
     const newRole = normalizeUserRole(data.role || current.role);
     const newStatus = normalizeUserStatus(data.status || current.status);
-    if (!canActorManageTargetRole(actor, current.role) || !canActorManageTargetRole(actor, newRole)) {
-      return forbidden('Insufficient permission for this user role');
-    }
+    const roleCheck = canEditUserRole(actor, current, newRole);
+    if (!roleCheck.ok) return roleCheck;
     if (current.role === USER_ROLES.SUPER_ADMIN && (newRole !== USER_ROLES.SUPER_ADMIN || newStatus !== USER_STATUSES.ACTIVE)) {
       if (countActiveSuperAdmins(current.userId) < 1) {
         return forbidden('Cannot disable or demote the last SUPER_ADMIN');
       }
     }
+    const fullNameCheck = validateUserFullName(data.fullName || data.displayName || current.fullName);
+    if (!fullNameCheck.ok) return fullNameCheck;
+    const areaCheck = validateUserArea(data.area || data.branch || current.area || current.branch);
+    if (!areaCheck.ok) return areaCheck;
+    const currentAreaScopeCheck = validateActorAreaScope(actor, current.area || current.branch);
+    if (!currentAreaScopeCheck.ok) return currentAreaScopeCheck;
+    const nextAreaScopeCheck = validateActorAreaScope(actor, areaCheck.data);
+    if (!nextAreaScopeCheck.ok) return nextAreaScopeCheck;
+    const passwordCheck = validateUserPasswordConfirmation(data.password, data.confirmPassword, false);
+    if (!passwordCheck.ok) return passwordCheck;
+    const previousQuoteDisplayName = sanitizeUserText(current.quoteDisplayName);
+    const previousFullName = sanitizeUserText(current.fullName);
+    const requestedQuoteDisplayName = sanitizeUserInputText(data.quoteDisplayName, 150);
+    const nextQuoteDisplayName = requestedQuoteDisplayName || (!previousQuoteDisplayName || previousQuoteDisplayName === previousFullName ? fullNameCheck.data : previousQuoteDisplayName);
+    const email = sanitizeUserText(data.email);
+    const emailCheck = validateEmail(email);
+    if (!emailCheck.ok) return emailCheck;
+    if (email && normalizeString(email) !== normalizeString(current.email)) {
+      const existingEmail = getUserByUsername(email);
+      if (existingEmail.ok && String(existingEmail.data && existingEmail.data.userId || '') !== current.userId) {
+        return validationError('email already exists');
+      }
+    }
+    const phone = normalizePhone(data.phone);
+    if (phone && !isValidPhone(phone)) return validationError('Invalid phone format');
     const updateObject = {
-      fullName: sanitizeUserText(data.fullName || data.displayName || current.fullName),
-      displayName: sanitizeUserText(data.displayName || data.fullName || current.displayName),
-      email: sanitizeUserText(data.email),
-      phone: sanitizeUserText(data.phone),
+      fullName: fullNameCheck.data,
+      displayName: sanitizeUserText(data.displayName || fullNameCheck.data || current.displayName),
+      email: email,
+      phone: phone,
       jobTitle: sanitizeUserText(data.jobTitle || data.position || current.jobTitle),
       profileImageUrl: sanitizeUserText(data.profileImageUrl || data.photoUrl || current.profileImageUrl),
       photoUrl: sanitizeUserText(data.profileImageUrl || data.photoUrl || current.profileImageUrl),
-      quoteDisplayName: sanitizeUserText(data.quoteDisplayName || data.displayName || data.fullName || current.quoteDisplayName),
+      quoteDisplayName: nextQuoteDisplayName,
       companyName: sanitizeUserText(data.companyName || current.companyName),
       greetingText: sanitizeUserText(data.greetingText || current.greetingText),
       role: newRole,
-      branch: sanitizeUserText(data.branch),
+      area: areaCheck.data,
+      branch: sanitizeUserText(data.branch || areaCheck.data),
       status: newStatus,
       updatedBy: actor.userId || actor.username || '',
       updatedAt: new Date().toISOString()
     };
+    var passwordChanged = false;
     if (data.password !== undefined && String(data.password || '').trim()) {
       const password = String(data.password || '').trim();
-      if (password.length < 6) return validationError('password must be at least 6 characters');
       const passwordSalt = createPasswordSalt();
       updateObject.passwordHash = hashPassword(password, passwordSalt);
       updateObject.passwordSalt = passwordSalt;
       updateObject.mustChangePassword = 'TRUE';
+      passwordChanged = true;
     }
     const result = updateRowById(getUsersSheetName(), 'userId', userId, updateObject);
     if (!result.ok) return result;
-    logActivity(actor.userId || '', 'updateUser', 'updated user ' + userId);
+    if ((newStatus !== USER_STATUSES.ACTIVE || passwordChanged) && typeof revokeUserSessions === 'function') {
+      revokeUserSessions(userId);
+    }
+    logActivity(actor.userId || '', 'USER_UPDATED', 'updated user ' + userId + ' role=' + updateObject.role + ' status=' + updateObject.status + ' area=' + updateObject.area);
+    if (current.role !== newRole) {
+      logActivity(actor.userId || '', 'USER_ROLE_CHANGED', 'user ' + userId + ' role ' + current.role + ' -> ' + newRole);
+    }
+    if (current.status !== newStatus) {
+      logActivity(actor.userId || '', 'USER_STATUS_CHANGED', 'user ' + userId + ' status ' + current.status + ' -> ' + newStatus);
+    }
+    if (normalizeString(current.area || current.branch) !== normalizeString(areaCheck.data)) {
+      logActivity(actor.userId || '', 'USER_AREA_CHANGED', 'user ' + userId + ' area changed to ' + areaCheck.data);
+    }
+    if (passwordChanged) {
+      logActivity(actor.userId || '', 'USER_PASSWORD_RESET', 'password reset for user ' + userId);
+    }
     return success(Object.assign({ userId: userId }, updateObject), 'User updated');
   } catch (error) {
     logError('updateUser', error);
@@ -344,10 +508,12 @@ function updateProfile(payload) {
     const displayName = sanitizeUserText(body.displayName || auth.data.displayName || auth.data.username);
     const jobTitle = sanitizeUserText(body.jobTitle || body.position || auth.data.jobTitle || auth.data.position);
     const profileImageUrl = sanitizeUserText(body.profileImageUrl || body.photoUrl || auth.data.profileImageUrl || auth.data.photoUrl);
+    const phone = normalizePhone(body.phone);
+    if (phone && !isValidPhone(phone)) return validationError('Invalid phone format');
     const updateObject = {
       fullName: displayName,
       displayName: displayName,
-      phone: sanitizeUserText(body.phone),
+      phone: phone,
       jobTitle: jobTitle,
       profileImageUrl: profileImageUrl,
       photoUrl: profileImageUrl,
@@ -425,12 +591,34 @@ function migrateUsersSheet() {
   try {
     const sheet = ensureSheet(getUsersSheetName(), getDefaultUserHeaders());
     if (!sheet) return fail('Unable to access Users sheet');
-    ensureUserSheetColumns(sheet, getDefaultUserHeaders());
-    return success({ headers: getDefaultUserHeaders() }, 'Users sheet checked');
+    const headers = ensureUserSheetColumns(sheet, getDefaultUserHeaders());
+    const phoneMigration = migrateUserPhoneColumn_(sheet, headers);
+    return success({ headers: headers, phoneReviewRows: phoneMigration.phoneReviewRows }, 'Users sheet checked');
   } catch (error) {
     logError('migrateUsersSheet', error);
     return fail(error && error.message ? error.message : 'Users migration failed');
   }
+}
+
+function migrateUserPhoneColumn_(sheet, headers) {
+  const phoneIndex = headers.indexOf('phone');
+  const reviewRows = [];
+  if (phoneIndex < 0) return { phoneReviewRows: reviewRows };
+  const lastRow = sheet.getLastRow();
+  const range = sheet.getRange(2, phoneIndex + 1, Math.max(lastRow - 1, 1), 1);
+  range.setNumberFormat('@');
+  if (lastRow < 2) return { phoneReviewRows: reviewRows };
+  const displayed = range.getDisplayValues();
+  const normalized = displayed.map(function (row, index) {
+    const original = String(row[0] || '').trim();
+    const phone = normalizePhone(original);
+    if (original && (!isValidPhone(phone) || phone.charAt(0) !== '0' && phone.charAt(0) !== '+')) {
+      reviewRows.push(index + 2);
+    }
+    return [phone];
+  });
+  range.setValues(normalized);
+  return { phoneReviewRows: reviewRows };
 }
 
 function ensureUserSheetColumns(sheet, requiredHeaders) {
@@ -454,7 +642,58 @@ function ensureUserSheetColumns(sheet, requiredHeaders) {
   if (changed) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   }
+  migrateUserAreaColumn_(sheet, headers);
+  migrateUserFullNameColumn_(sheet, headers);
   return headers;
+}
+
+function migrateUserAreaColumn_(sheet, headers) {
+  try {
+    const areaIndex = headers.indexOf('area');
+    const branchIndex = headers.indexOf('branch');
+    if (areaIndex < 0 || branchIndex < 0 || sheet.getLastRow() < 2) {
+      return;
+    }
+    const lastRow = sheet.getLastRow();
+    const lastColumn = Math.max(sheet.getLastColumn(), headers.length);
+    const values = sheet.getRange(2, 1, lastRow - 1, lastColumn).getDisplayValues();
+    values.forEach(function (row, index) {
+      const area = sanitizeUserText(row[areaIndex]);
+      const branch = sanitizeUserText(row[branchIndex]);
+      if (!area && branch) {
+        sheet.getRange(index + 2, areaIndex + 1).setValue(branch);
+      }
+    });
+  } catch (error) {
+    logError('migrateUserAreaColumn_', error);
+  }
+}
+
+function migrateUserFullNameColumn_(sheet, headers) {
+  try {
+    const fullNameIndex = headers.indexOf('fullName');
+    const displayNameIndex = headers.indexOf('displayName');
+    const quoteDisplayNameIndex = headers.indexOf('quoteDisplayName');
+    if (fullNameIndex < 0 || sheet.getLastRow() < 2) {
+      return;
+    }
+    const lastRow = sheet.getLastRow();
+    const lastColumn = Math.max(sheet.getLastColumn(), headers.length);
+    const values = sheet.getRange(2, 1, lastRow - 1, lastColumn).getDisplayValues();
+    values.forEach(function (row, index) {
+      const fullName = sanitizeUserText(row[fullNameIndex]);
+      const displayName = displayNameIndex >= 0 ? sanitizeUserText(row[displayNameIndex]) : '';
+      if (!fullName && displayName) {
+        sheet.getRange(index + 2, fullNameIndex + 1).setValue(displayName);
+        row[fullNameIndex] = displayName;
+      }
+      if (quoteDisplayNameIndex >= 0 && !sanitizeUserText(row[quoteDisplayNameIndex])) {
+        sheet.getRange(index + 2, quoteDisplayNameIndex + 1).setValue(sanitizeUserText(row[fullNameIndex] || displayName));
+      }
+    });
+  } catch (error) {
+    logError('migrateUserFullNameColumn_', error);
+  }
 }
 
 function isInitialSetupCompleted() {
@@ -616,6 +855,7 @@ function createBootstrapSuperAdmin() {
         companyName: '',
         greetingText: '',
         role: USER_ROLES.SUPER_ADMIN,
+        area: 'System',
         branch: 'System',
         status: USER_STATUSES.ACTIVE,
         mustChangePassword: 'TRUE',

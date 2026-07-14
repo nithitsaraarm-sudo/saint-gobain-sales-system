@@ -68,10 +68,14 @@ function createQuotation(customerId) {
       subtotal: 0,
       vat: 0,
       grandTotal: 0,
-      createdBy: String(auth.data.fullName || auth.data.displayName || auth.data.username || '').trim(),
+      createdBy: String(auth.data.quoteDisplayName || auth.data.fullName || auth.data.displayName || auth.data.username || '').trim(),
       createdById: String(auth.data.userId || '').trim(),
-      updatedBy: String(auth.data.fullName || auth.data.displayName || auth.data.username || '').trim(),
+      createdByUserId: String(auth.data.userId || '').trim(),
+      createdByUsername: String(auth.data.username || '').trim(),
+      quoteDisplayName: String(auth.data.quoteDisplayName || auth.data.fullName || auth.data.displayName || auth.data.username || '').trim(),
+      updatedBy: String(auth.data.quoteDisplayName || auth.data.fullName || auth.data.displayName || auth.data.username || '').trim(),
       updatedById: String(auth.data.userId || '').trim(),
+      updatedByUsername: String(auth.data.username || '').trim(),
       createdAt: now,
       updatedAt: now
     };
@@ -127,9 +131,17 @@ function addQuotationItem(quoteId, productId, qty) {
     const lineTotal = roundCurrency(netPrice * quantity);
     const lineId = generateId('LINE');
     const now = new Date().toISOString();
+    const existingLinesResult = getQuoteLines(quoteId);
+    const existingLines = existingLinesResult.ok && Array.isArray(existingLinesResult.data) ? existingLinesResult.data : [];
+    const lineOrder = existingLines.filter(function (item) {
+      return normalizeString(item.status) !== normalizeString(LINE_STATUSES.REMOVED);
+    }).length + 1;
     const row = {
       quoteId: quoteId,
       lineId: lineId,
+      lineNo: lineOrder,
+      lineOrder: lineOrder,
+      sortOrder: lineOrder,
       productId: String(productId).trim(),
       productBusinessUnit: lineProductCheck.data && lineProductCheck.data.productBusinessUnit || '',
       productName: String(product.productName || product.name || product.product || '').trim(),
@@ -369,10 +381,14 @@ function saveQuotationPayload(payload) {
     }
     const productBusinessUnits = businessUnitCheck.data && businessUnitCheck.data.productBusinessUnits || {};
     const auditUser = auth.ok ? auth.data : {};
-    const auditName = String(auditUser.fullName || auditUser.displayName || auditUser.username || data.createdBy || data.sales || '').trim();
+    const auditName = String(auditUser.quoteDisplayName || auditUser.fullName || auditUser.displayName || auditUser.username || data.createdBy || data.sales || '').trim();
     const auditId = String(auditUser.userId || data.createdById || '').trim();
+    const auditUsername = String(auditUser.username || data.createdByUsername || '').trim();
     const createdBy = String(existingQuote && existingQuote.createdBy || data.createdBy || auditName).trim();
     const createdById = String(existingQuote && existingQuote.createdById || data.createdById || auditId).trim();
+    const createdByUserId = String(existingQuote && (existingQuote.createdByUserId || existingQuote.createdById) || data.createdByUserId || data.createdById || auditId).trim();
+    const createdByUsername = String(existingQuote && existingQuote.createdByUsername || data.createdByUsername || auditUsername).trim();
+    const quoteDisplayName = String(existingQuote && existingQuote.quoteDisplayName || data.quoteDisplayName || createdBy || auditName).trim();
     const headerObject = {
       quoteId: quoteId,
       quoteNo: quoteNo,
@@ -388,8 +404,12 @@ function saveQuotationPayload(payload) {
       status: status,
       createdBy: createdBy,
       createdById: createdById,
+      createdByUserId: createdByUserId,
+      createdByUsername: createdByUsername,
+      quoteDisplayName: quoteDisplayName,
       updatedBy: auditName,
       updatedById: auditId,
+      updatedByUsername: auditUsername,
       createdAt: String(existingQuote && existingQuote.createdAt || data.createdAt || now).trim(),
       updatedAt: now
     };
@@ -413,6 +433,8 @@ function saveQuotationPayload(payload) {
       const lineResult = appendQuotationObject(QUOTE_LINES_SHEET, getQuoteLineHeaders(), {
         quoteId: quoteId,
         lineNo: item.lineNo,
+        lineOrder: item.lineOrder,
+        sortOrder: item.sortOrder,
         productId: item.productId,
         productBusinessUnit: item.productBusinessUnit,
         productName: item.productName,
@@ -462,6 +484,8 @@ function normalizeQuotationPayloadItem(item, lineNo, productBusinessUnit) {
   const grandTotal = roundCurrency(data.grandTotal !== undefined ? parseQuotationNumericValue(data.grandTotal) : lineTotal + vat);
   return {
     lineNo: lineNo,
+    lineOrder: lineNo,
+    sortOrder: lineNo,
     productId: String(data.productId || '').trim(),
     productBusinessUnit: getQuotationProductBusinessUnit({ businessUnit: productBusinessUnit || data.productBusinessUnit || data.businessUnit || data.quoteType || data.brand }),
     productName: String(data.productName || '').trim(),
@@ -681,11 +705,11 @@ function getQuotationSheetHeaders(sheet) {
 }
 
 function getQuoteHistoryHeaders() {
-  return ['quoteId', 'quoteNo', 'quoteType', 'businessUnit', 'customerId', 'customerName', 'subtotal', 'vat', 'shipping', 'specialDiscount', 'grandTotal', 'status', 'createdBy', 'createdById', 'updatedBy', 'updatedById', 'createdAt', 'updatedAt'];
+  return ['quoteId', 'quoteNo', 'quoteType', 'businessUnit', 'customerId', 'customerName', 'subtotal', 'vat', 'shipping', 'specialDiscount', 'grandTotal', 'status', 'createdBy', 'createdById', 'createdByUserId', 'createdByUsername', 'quoteDisplayName', 'updatedBy', 'updatedById', 'updatedByUsername', 'createdAt', 'updatedAt'];
 }
 
 function getQuoteLineHeaders() {
-  return ['quoteId', 'lineNo', 'productId', 'productBusinessUnit', 'productName', 'unit', 'qty', 'listPrice', 'discountPercent', 'unitPrice', 'lineTotal', 'vat', 'grandTotal', 'status'];
+  return ['quoteId', 'lineNo', 'lineOrder', 'sortOrder', 'productId', 'productBusinessUnit', 'productName', 'unit', 'qty', 'listPrice', 'discountPercent', 'unitPrice', 'lineTotal', 'vat', 'grandTotal', 'status'];
 }
 
 function extractQuoteId(payload) {
@@ -712,7 +736,9 @@ function normalizeLoadedQuotationLine(line) {
     }
   }
   return Object.assign({}, item, {
-    lineNo: String(item.lineNo || '').trim(),
+    lineNo: String(item.lineNo || item.lineOrder || item.sortOrder || '').trim(),
+    lineOrder: String(item.lineOrder || item.sortOrder || item.lineNo || '').trim(),
+    sortOrder: String(item.sortOrder || item.lineOrder || item.lineNo || '').trim(),
     productId: String(item.productId || '').trim(),
     productBusinessUnit: productBusinessUnit,
     productName: String(item.productName || '').trim(),
@@ -726,6 +752,22 @@ function normalizeLoadedQuotationLine(line) {
     vat: vat,
     grandTotal: grandTotal,
     status: String(item.status || LINE_STATUSES.ACTIVE).trim() || LINE_STATUSES.ACTIVE
+  });
+}
+
+function getQuotationLineOrderValue(line, fallbackIndex) {
+  const item = line || {};
+  const value = parseInt(String(item.lineOrder || item.sortOrder || item.lineNo || '').replace(/,/g, ''), 10);
+  return !isNaN(value) && value > 0 ? value : (fallbackIndex + 1);
+}
+
+function sortQuotationLinesByOrder(lines) {
+  return (Array.isArray(lines) ? lines : []).map(function (line, index) {
+    return { line: line, index: index, order: getQuotationLineOrderValue(line, index) };
+  }).sort(function (a, b) {
+    return a.order - b.order || a.index - b.index;
+  }).map(function (entry) {
+    return entry.line;
   });
 }
 
@@ -814,9 +856,9 @@ function loadQuotation(payload) {
       return linesResult;
     }
     const lines = Array.isArray(linesResult.data) ? linesResult.data.map(normalizeLoadedQuotationLine) : [];
-    const activeLines = lines.filter(function (item) {
+    const activeLines = sortQuotationLinesByOrder(lines.filter(function (item) {
       return normalizeString(item.status) !== normalizeString(LINE_STATUSES.REMOVED);
-    });
+    }));
     const subtotal = roundCurrency(parseQuotationNumericValue(quote.subtotal || sumQuotationItems(activeLines, 'lineTotal')));
     const vat = roundCurrency(parseQuotationNumericValue(quote.vat || sumQuotationItems(activeLines, 'vat')));
     const shipping = roundCurrency(parseQuotationNumericValue(quote.shipping || 0));
@@ -863,6 +905,8 @@ function duplicateQuotation(payload) {
       items: Array.isArray(original.lines) ? original.lines.map(function (line) {
         return {
           productId: line.productId,
+          lineOrder: line.lineOrder || line.sortOrder || line.lineNo,
+          sortOrder: line.sortOrder || line.lineOrder || line.lineNo,
           productBusinessUnit: getQuotationProductBusinessUnit(line),
           productName: line.productName,
           unit: line.unit,
@@ -966,16 +1010,23 @@ function getQuotationHistory(payload) {
     const grandTotalIndex = headers.indexOf('grandTotal');
     const createdByIndex = headers.indexOf('createdBy');
     const createdByIdIndex = headers.indexOf('createdById');
+    const createdByUserIdIndex = headers.indexOf('createdByUserId');
+    const createdByUsernameIndex = headers.indexOf('createdByUsername');
+    const quoteDisplayNameIndex = headers.indexOf('quoteDisplayName');
     const updatedByIndex = headers.indexOf('updatedBy');
     const updatedByIdIndex = headers.indexOf('updatedById');
+    const updatedByUsernameIndex = headers.indexOf('updatedByUsername');
     const currentUser = filter.currentUser || null;
 
     const matches = values.filter(function (row) {
       const rowQuote = {
         createdBy: createdByIndex >= 0 ? row[createdByIndex] : '',
         createdById: createdByIdIndex >= 0 ? row[createdByIdIndex] : '',
+        createdByUserId: createdByUserIdIndex >= 0 ? row[createdByUserIdIndex] : '',
+        createdByUsername: createdByUsernameIndex >= 0 ? row[createdByUsernameIndex] : '',
         updatedBy: updatedByIndex >= 0 ? row[updatedByIndex] : '',
-        updatedById: updatedByIdIndex >= 0 ? row[updatedByIdIndex] : ''
+        updatedById: updatedByIdIndex >= 0 ? row[updatedByIdIndex] : '',
+        updatedByUsername: updatedByUsernameIndex >= 0 ? row[updatedByUsernameIndex] : ''
       };
       if (!canAccessQuotationRecord(currentUser, rowQuote).ok) {
         return false;
@@ -1030,8 +1081,12 @@ function getQuotationHistory(payload) {
         status: String(statusIndex >= 0 ? row[statusIndex] || '' : '').trim(),
         createdBy: String(createdByIndex >= 0 ? row[createdByIndex] || '' : '').trim(),
         createdById: String(createdByIdIndex >= 0 ? row[createdByIdIndex] || '' : '').trim(),
+        createdByUserId: String(createdByUserIdIndex >= 0 ? row[createdByUserIdIndex] || '' : '').trim(),
+        createdByUsername: String(createdByUsernameIndex >= 0 ? row[createdByUsernameIndex] || '' : '').trim(),
+        quoteDisplayName: String(quoteDisplayNameIndex >= 0 ? row[quoteDisplayNameIndex] || '' : '').trim(),
         updatedBy: String(updatedByIndex >= 0 ? row[updatedByIndex] || '' : '').trim(),
         updatedById: String(updatedByIdIndex >= 0 ? row[updatedByIdIndex] || '' : '').trim(),
+        updatedByUsername: String(updatedByUsernameIndex >= 0 ? row[updatedByUsernameIndex] || '' : '').trim(),
         createdAt: String(createdAtIndex >= 0 ? row[createdAtIndex] || '' : '').trim(),
         updatedAt: String(updatedAtIndex >= 0 ? row[updatedAtIndex] || '' : '').trim()
       };
@@ -1056,9 +1111,10 @@ function canAccessQuotationRecord(user, quote) {
   if (hasRole(user, [USER_ROLES.SALES])) {
     const userId = normalizeString(user.userId);
     const username = normalizeString(user.username);
-    const createdById = normalizeString(quote && (quote.createdById || quote.updatedById));
+    const createdById = normalizeString(quote && (quote.createdByUserId || quote.createdById || quote.updatedById));
+    const createdByUsername = normalizeString(quote && (quote.createdByUsername || quote.updatedByUsername));
     const createdBy = normalizeString(quote && (quote.createdBy || quote.updatedBy));
-    if ((userId && createdById === userId) || (username && createdBy === username)) {
+    if ((userId && createdById === userId) || (username && (createdByUsername === username || createdBy === username))) {
       return success(true);
     }
   }

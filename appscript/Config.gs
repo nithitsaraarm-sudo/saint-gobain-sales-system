@@ -55,6 +55,18 @@ function getCustomersSheetName() {
   return SHEET_NAMES.CUSTOMERS;
 }
 
+function getUserFavoriteCustomersSheetName() {
+  return SHEET_NAMES.USER_FAVORITE_CUSTOMERS;
+}
+
+function getUserFavoriteProductsSheetName() {
+  return SHEET_NAMES.USER_FAVORITE_PRODUCTS;
+}
+
+function getUserPinnedProductsSheetName() {
+  return SHEET_NAMES.USER_PINNED_PRODUCTS;
+}
+
 function getQuoteHistorySheetName() {
   return SHEET_NAMES.QUOTE_HISTORY;
 }
@@ -80,5 +92,5 @@ function getDiscountChangeLogSheetName() {
 }
 
 function getDefaultUserHeaders() {
-  return ['userId', 'username', 'passwordHash', 'passwordSalt', 'fullName', 'displayName', 'email', 'phone', 'jobTitle', 'profileImageUrl', 'photoUrl', 'quoteDisplayName', 'companyName', 'greetingText', 'role', 'branch', 'status', 'mustChangePassword', 'createdBy', 'updatedBy', 'failedLoginCount', 'lastLogin', 'createdAt', 'updatedAt'];
+  return ['userId', 'username', 'passwordHash', 'passwordSalt', 'fullName', 'displayName', 'email', 'phone', 'jobTitle', 'profileImageUrl', 'photoUrl', 'quoteDisplayName', 'companyName', 'greetingText', 'role', 'area', 'branch', 'status', 'mustChangePassword', 'createdBy', 'updatedBy', 'failedLoginCount', 'lastLogin', 'createdAt', 'updatedAt'];
 }
