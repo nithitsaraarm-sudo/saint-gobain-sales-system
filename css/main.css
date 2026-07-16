@@ -156,6 +156,19 @@
 /* Quotation screen ratio + cart reorder */
 @media(min-width:1024px){.quote-layout{grid-template-columns:calc(60% - 10px) calc(40% - 10px)!important;align-items:start}.quote-layout>*{min-width:0}.quote-layout>.card{min-width:0}}
 @media(max-width:1023px){.quote-layout{display:flex!important;flex-direction:column!important}}
+#page-quote,.quote-layout,.quote-layout>*,.quote-layout .card,#cartList,#cartList .quote-line{min-width:0;max-width:100%}
+#cartList .quote-item-card{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;width:100%;max-width:100%;min-width:0;gap:12px}
+#cartList .quote-line-main{min-width:0;width:100%;max-width:100%}
+#cartList .quote-product-title,#cartList .quote-product-title b,#cartList .quote-line-main small{min-width:0;max-width:100%}
+#cartList .quote-product-title b{overflow-wrap:anywhere;word-break:normal;line-height:1.35}
+#cartList .quote-line-prices{max-width:100%}
+#cartList .quote-line-prices span,#cartList .free-item-toggle{min-width:0}
+#cartList .quote-qty-control{margin-left:0;display:grid;grid-template-columns:34px 68px 34px;align-items:center;gap:8px;max-width:100%;flex:0 0 auto}
+#cartList .quote-qty-control button{width:34px;height:34px;min-width:34px;padding:0}
+#cartList .quote-qty-control input{width:68px;min-width:0}
+#cartList .quote-item-delete{white-space:nowrap;flex:0 0 auto}
+@media(max-width:700px){#page-quote .card{min-width:0}#cartList .quote-item-card{grid-template-columns:minmax(0,1fr);align-items:start;padding:14px;padding-right:70px;gap:12px}#cartList .quote-item-delete{position:absolute;top:12px;right:12px;z-index:2;min-width:46px;padding:8px 11px}#cartList .quote-qty-control{justify-self:start;grid-template-columns:34px minmax(50px,56px) 34px;gap:6px}#cartList .quote-qty-control input{width:56px;max-width:56px}#cartList .quote-discount-input{width:54px}}
+@media(max-width:380px){#cartList .quote-item-card{padding-right:62px}#cartList .quote-item-delete{right:10px;min-width:42px;padding:7px 9px}#cartList .quote-qty-control{grid-template-columns:32px minmax(46px,52px) 32px}#cartList .quote-qty-control button{width:32px;height:32px;min-width:32px}#cartList .quote-qty-control input{width:52px;height:32px}}
 .quote-reorder-hint{color:var(--muted);background:#fff;border:1px dashed var(--line);border-radius:16px;padding:10px 12px;font-size:13px;font-weight:800}
 .quote-line{cursor:grab;transition:transform .16s ease,opacity .16s ease,box-shadow .16s ease;touch-action:pan-y}
 .quote-line{scroll-margin-top:calc(env(safe-area-inset-top,0px) + 92px);scroll-margin-bottom:96px}
