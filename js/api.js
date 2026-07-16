@@ -448,6 +448,12 @@ function apiPost(action, payload, options) {
 
 function mockApi(action, payload) {
   const data = payload || {};
+  const normalizeMockProductReference = value => String(value || '').trim().toLowerCase();
+  const mockProductMatchesReference = (product, reference) => {
+    const target = normalizeMockProductReference(reference);
+    return Boolean(target && ['productId','sku','productCode','id','itemCode'].some(field => normalizeMockProductReference(product && product[field]) === target));
+  };
+  const findMockProductByReference = reference => (window.DB?.products || []).find(product => mockProductMatchesReference(product, reference));
   if (action === 'demoLogin') {
     return { ok: false, code: 'FORBIDDEN', message: 'Demo Login is disabled' };
   }
@@ -509,21 +515,21 @@ function mockApi(action, payload) {
     case 'addFavoriteProduct':
       window.__mockFavoriteProducts=window.__mockFavoriteProducts||[];
       if(window.__mockFavoriteProducts.length>=20)return {ok:false,message:'Maximum favorite products reached'};
-      if(!window.__mockFavoriteProducts.some(p=>String(p.productId||p.sku||p.id)===String(data.productId))){const product=(window.DB?.products||[]).find(p=>String(p.productId||p.sku||p.id)===String(data.productId));if(product)window.__mockFavoriteProducts.push(Object.assign({},product,{isFavoriteProduct:true}));}
+      if(!window.__mockFavoriteProducts.some(p=>mockProductMatchesReference(p,data.productId))){const product=findMockProductByReference(data.productId);if(product)window.__mockFavoriteProducts.push(Object.assign({},product,{isFavoriteProduct:true}));}
       return {ok:true,data:data,message:'Favorite product saved'};
     case 'removeFavoriteProduct':
-      window.__mockFavoriteProducts=(window.__mockFavoriteProducts||[]).filter(p=>String(p.productId||p.sku||p.id)!==String(data.productId));
+      window.__mockFavoriteProducts=(window.__mockFavoriteProducts||[]).filter(p=>!mockProductMatchesReference(p,data.productId));
       return {ok:true,data:data,message:'Favorite product removed'};
     case 'addPinnedProduct':
       window.__mockPinnedProducts=window.__mockPinnedProducts||[];
       if(window.__mockPinnedProducts.length>=5)return {ok:false,message:'Maximum pinned products reached'};
-      if(!window.__mockPinnedProducts.some(p=>String(p.productId||p.sku||p.id)===String(data.productId))){const product=(window.DB?.products||[]).find(p=>String(p.productId||p.sku||p.id)===String(data.productId));if(product)window.__mockPinnedProducts.push(Object.assign({},product,{isPinnedProduct:true,pinnedSortOrder:window.__mockPinnedProducts.length+1}));}
+      if(!window.__mockPinnedProducts.some(p=>mockProductMatchesReference(p,data.productId))){const product=findMockProductByReference(data.productId);if(product)window.__mockPinnedProducts.push(Object.assign({},product,{isPinnedProduct:true,pinnedSortOrder:window.__mockPinnedProducts.length+1}));}
       return {ok:true,data:data,message:'Pinned product saved'};
     case 'removePinnedProduct':
-      window.__mockPinnedProducts=(window.__mockPinnedProducts||[]).filter(p=>String(p.productId||p.sku||p.id)!==String(data.productId)).map((p,i)=>Object.assign({},p,{pinnedSortOrder:i+1}));
+      window.__mockPinnedProducts=(window.__mockPinnedProducts||[]).filter(p=>!mockProductMatchesReference(p,data.productId)).map((p,i)=>Object.assign({},p,{pinnedSortOrder:i+1}));
       return {ok:true,data:data,message:'Pinned product removed'};
     case 'reorderPinnedProducts':
-      window.__mockPinnedProducts=(data.productIds||[]).map((id,i)=>{const product=(window.__mockPinnedProducts||[]).find(p=>String(p.productId||p.sku||p.id)===String(id));return product?Object.assign({},product,{pinnedSortOrder:i+1}):null;}).filter(Boolean);
+      window.__mockPinnedProducts=(data.productIds||[]).map((id,i)=>{const product=(window.__mockPinnedProducts||[]).find(p=>mockProductMatchesReference(p,id));return product?Object.assign({},product,{pinnedSortOrder:i+1}):null;}).filter(Boolean);
       return {ok:true,data:data,message:'Pinned products reordered'};
     case 'saveProduct':
       return { ok: true, data: data, message: 'Mock product saved' };

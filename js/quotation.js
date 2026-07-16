@@ -249,13 +249,7 @@ function renderProductPicker() {
 }
 
 function addCart(p) {
-  const productId = getProductId(p);
-  if (!productId) {
-    toast('ไม่พบรหัสสินค้า');
-    return;
-  }
-  addProduct(productId, 1);
-  go('quote');
+  return addProductToQuoteByReference(p, 'SEARCH', 1);
 }
 
 function renderCart() {
@@ -289,12 +283,157 @@ function roundValue(value) {
 }
 
 function getProductId(product) {
-  return String(product?.productId || product?.sku || product?.productCode || product?.id || '').trim();
+  return getProductPrimaryKey(product);
 }
 
 function getProductById(productId) {
-  const normalized = String(productId || '').trim().toLowerCase();
-  return DB.products.find(p => String(p.productId || p.sku || p.productCode || p.id || '').trim().toLowerCase() === normalized) || null;
+  const resolved = resolveProductByReference(productId);
+  return resolved.ok ? resolved.product : null;
+}
+
+const PRODUCT_REFERENCE_FIELDS = ['productId', 'sku', 'productCode', 'id', 'itemCode'];
+const PRODUCT_ADD_IN_PROGRESS_KEYS = new Set();
+
+function normalizeProductReference(value) {
+  return String(value == null ? '' : value).trim();
+}
+
+function normalizeProductReferenceForCompare(value) {
+  return normalizeProductReference(value).toLowerCase();
+}
+
+function getProductPrimaryKey(product) {
+  const item = product && typeof product === 'object' ? product : {};
+  for (var i = 0; i < PRODUCT_REFERENCE_FIELDS.length; i++) {
+    const value = normalizeProductReference(item[PRODUCT_REFERENCE_FIELDS[i]]);
+    if (value) return value;
+  }
+  return normalizeProductReference(product);
+}
+
+function collectProductReferences(reference) {
+  const values = [];
+  const add = value => {
+    const text = normalizeProductReference(value);
+    if (text && values.indexOf(text) < 0) values.push(text);
+  };
+  if (reference && reference.currentTarget) {
+    const button = reference.currentTarget.closest ? reference.currentTarget.closest('[data-product-id]') : reference.currentTarget;
+    add(button && button.dataset ? button.dataset.productId : '');
+  } else if (reference && reference.target && reference.target.closest) {
+    const button = reference.target.closest('[data-product-id]');
+    add(button && button.dataset ? button.dataset.productId : '');
+  } else if (reference && typeof reference === 'object') {
+    PRODUCT_REFERENCE_FIELDS.forEach(field => add(reference[field]));
+    if (reference.dataset) add(reference.dataset.productId);
+  } else {
+    add(reference);
+  }
+  return values;
+}
+
+function isProductActiveForQuote(product) {
+  const status = normalizeProductReferenceForCompare(product && (product.active || product.status));
+  return !status || status === 'true' || status === 'yes' || status === '1' || status === 'active';
+}
+
+function resolveProductByReference(reference) {
+  const products = Array.isArray(DB && DB.products) ? DB.products : [];
+  if (!products.length) {
+    return { ok: false, code: 'PRODUCT_DATA_NOT_READY', references: collectProductReferences(reference) };
+  }
+  const references = collectProductReferences(reference);
+  if (!references.length) {
+    return { ok: false, code: 'PRODUCT_REFERENCE_INVALID', references: references };
+  }
+  for (var fieldIndex = 0; fieldIndex < PRODUCT_REFERENCE_FIELDS.length; fieldIndex++) {
+    const field = PRODUCT_REFERENCE_FIELDS[fieldIndex];
+    for (var refIndex = 0; refIndex < references.length; refIndex++) {
+      const normalizedRef = normalizeProductReferenceForCompare(references[refIndex]);
+      const product = products.find(item => normalizeProductReferenceForCompare(item && item[field]) === normalizedRef);
+      if (product) {
+        return { ok: true, product: product, productId: getProductPrimaryKey(product), matchedField: field, reference: references[refIndex] };
+      }
+    }
+  }
+  return { ok: false, code: 'PRODUCT_NOT_FOUND', references: references };
+}
+
+function quoteProductAddMessage(code) {
+  const messages = {
+    PRODUCT_NOT_FOUND: 'ไม่พบข้อมูลสินค้านี้ กรุณารีเฟรชหรือลบออกจากรายการโปรด',
+    PRODUCT_INACTIVE: 'สินค้านี้ถูกปิดการใช้งานและไม่สามารถเพิ่มได้',
+    PRODUCT_REFERENCE_INVALID: 'รหัสสินค้าไม่ถูกต้อง',
+    PRODUCT_DATA_NOT_READY: 'กำลังโหลดข้อมูลสินค้า กรุณาลองอีกครั้ง',
+    PRODUCT_ADD_FAILED: 'เพิ่มสินค้าไม่สำเร็จ'
+  };
+  return messages[code] || messages.PRODUCT_ADD_FAILED;
+}
+
+function toastProductAddError(result) {
+  toast(quoteProductAddMessage(result && result.code));
+}
+
+function logQuoteProductAddEvent(eventName, detail) {
+  try {
+    console.info('[QuoteProductAdd]', eventName, {
+      userId: USER && USER.userId || '',
+      source: detail && detail.source || '',
+      reference: detail && detail.reference || '',
+      productId: detail && detail.productId || '',
+      productBusinessUnit: detail && detail.productBusinessUnit || '',
+      result: detail && detail.result || ''
+    });
+  } catch (ignore) {}
+}
+
+async function addProductToQuoteByReference(reference, source, qty) {
+  const event = reference && (reference.currentTarget || reference.target) ? reference : null;
+  const button = event && event.target && event.target.closest ? event.target.closest('[data-product-id]') : null;
+  if (event && typeof event.preventDefault === 'function') event.preventDefault();
+  if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+  const productSource = normalizeProductReference((source || (button && button.dataset && button.dataset.productSource) || 'SEARCH')).toUpperCase();
+  const productReference = button && button.dataset ? button.dataset.productId : reference;
+  const references = collectProductReferences(productReference);
+  const lockKey = productSource + ':' + (references[0] || '');
+  if (lockKey !== ':' && PRODUCT_ADD_IN_PROGRESS_KEYS.has(lockKey)) {
+    return { ok: false, code: 'PRODUCT_ADD_IN_PROGRESS' };
+  }
+  if (lockKey !== ':') PRODUCT_ADD_IN_PROGRESS_KEYS.add(lockKey);
+  if (button) button.disabled = true;
+  logQuoteProductAddEvent(productSource + '_PRODUCT_ADD_REQUESTED', { source: productSource, reference: references[0] || '', result: 'requested' });
+  try {
+    if ((!DB.products || !DB.products.length) && typeof loadProducts === 'function') {
+      await loadProducts();
+    }
+    const resolved = resolveProductByReference(productReference);
+    if (!resolved.ok) {
+      toastProductAddError(resolved);
+      logQuoteProductAddEvent('PRODUCT_REFERENCE_NOT_FOUND', { source: productSource, reference: references[0] || '', result: resolved.code });
+      return resolved;
+    }
+    if (!isProductActiveForQuote(resolved.product)) {
+      const inactive = { ok: false, code: 'PRODUCT_INACTIVE', product: resolved.product, productId: resolved.productId };
+      toastProductAddError(inactive);
+      logQuoteProductAddEvent('PRODUCT_ADD_FAILED', { source: productSource, reference: resolved.reference, productId: resolved.productId, productBusinessUnit: getProductBusinessUnitClient(resolved.product), result: inactive.code });
+      return inactive;
+    }
+    logQuoteProductAddEvent('PRODUCT_REFERENCE_RESOLVED', { source: productSource, reference: resolved.reference, productId: resolved.productId, productBusinessUnit: getProductBusinessUnitClient(resolved.product), result: 'resolved' });
+    const result = await addProduct(resolved.productId, qty || 1);
+    if (document.getElementById('page-quote') && !document.getElementById('page-quote').classList.contains('active') && typeof go === 'function') {
+      go('quote');
+    }
+    logQuoteProductAddEvent('PRODUCT_ADDED_TO_QUOTE', { source: productSource, reference: resolved.reference, productId: resolved.productId, productBusinessUnit: getProductBusinessUnitClient(resolved.product), result: result && result.ok === false ? 'failed' : 'ok' });
+    return result || { ok: true, productId: resolved.productId };
+  } catch (error) {
+    const failed = { ok: false, code: 'PRODUCT_ADD_FAILED', message: error && error.message ? error.message : String(error || '') };
+    toastProductAddError(failed);
+    logQuoteProductAddEvent('PRODUCT_ADD_FAILED', { source: productSource, reference: references[0] || '', result: failed.code });
+    return failed;
+  } finally {
+    if (button) button.disabled = false;
+    if (lockKey !== ':') PRODUCT_ADD_IN_PROGRESS_KEYS.delete(lockKey);
+  }
 }
 
 function createLineId() {
@@ -480,18 +619,24 @@ async function addProduct(productId, qty) {
   const normalizedQty = Number(qty || 1);
   if (normalizedQty <= 0) {
     toast('จำนวนสินค้าต้องมากกว่า 0');
-    return;
+    return { ok: false, code: 'PRODUCT_REFERENCE_INVALID' };
   }
-  const product = getProductById(productId);
-  if (!product) {
-    toast('ไม่พบสินค้า');
-    return;
+  const resolved = resolveProductByReference(productId);
+  if (!resolved.ok) {
+    toastProductAddError(resolved);
+    return resolved;
+  }
+  const product = resolved.product;
+  if (!isProductActiveForQuote(product)) {
+    const inactive = { ok: false, code: 'PRODUCT_INACTIVE', productId: resolved.productId };
+    toastProductAddError(inactive);
+    return inactive;
   }
   if (!isQuoteBusinessUnitSelected()) {
     const selectedType = await requestQuoteTypeSelection(true);
     if (!selectedType) {
       toast('กรุณาเลือก BU ก่อนเพิ่มสินค้า');
-      return;
+      return { ok: false, code: 'PRODUCT_ADD_FAILED' };
     }
   }
   if (!CURRENT_QUOTE.customerId) {
@@ -501,7 +646,7 @@ async function addProduct(productId, qty) {
       await newQuotation(customerId);
     } else {
       toast('กรุณาเลือกลูกค้าก่อนเพิ่มสินค้า');
-      return;
+      return { ok: false, code: 'PRODUCT_ADD_FAILED' };
     }
   }
   const existing = CART.find(item => getProductId(item) === getProductId(product));
@@ -741,18 +886,24 @@ async function addProduct(productId, qty) {
   const normalizedQty = Number(qty || 1);
   if (normalizedQty <= 0) {
     toast('จำนวนสินค้าต้องมากกว่า 0');
-    return;
+    return { ok: false, code: 'PRODUCT_REFERENCE_INVALID' };
   }
-  const product = getProductById(productId);
-  if (!product) {
-    toast('ไม่พบสินค้า');
-    return;
+  const resolved = resolveProductByReference(productId);
+  if (!resolved.ok) {
+    toastProductAddError(resolved);
+    return resolved;
+  }
+  const product = resolved.product;
+  if (!isProductActiveForQuote(product)) {
+    const inactive = { ok: false, code: 'PRODUCT_INACTIVE', productId: resolved.productId };
+    toastProductAddError(inactive);
+    return inactive;
   }
   if (!isQuoteBusinessUnitSelected()) {
     const selectedType = await requestQuoteTypeSelection(true);
     if (!selectedType) {
       toast('กรุณาเลือก BU ก่อนเพิ่มสินค้า');
-      return;
+      return { ok: false, code: 'PRODUCT_ADD_FAILED' };
     }
   }
   if (!CURRENT_QUOTE.customerId) {
@@ -761,7 +912,7 @@ async function addProduct(productId, qty) {
       await newQuotation(customerId);
     } else {
       toast('กรุณาเลือกลูกค้าก่อนเพิ่มสินค้า');
-      return;
+      return { ok: false, code: 'PRODUCT_ADD_FAILED' };
     }
   }
   const existing = CART.find(item => getProductId(item) === getProductId(product));
@@ -2287,18 +2438,24 @@ async function addProduct(productId, qty) {
   const normalizedQty = Number(qty || 1);
   if (normalizedQty <= 0) {
     toast('จำนวนสินค้าต้องมากกว่า 0');
-    return;
+    return { ok: false, code: 'PRODUCT_REFERENCE_INVALID' };
   }
-  const product = getProductById(productId);
-  if (!product) {
-    toast('ไม่พบสินค้า');
-    return;
+  const resolved = resolveProductByReference(productId);
+  if (!resolved.ok) {
+    toastProductAddError(resolved);
+    return resolved;
+  }
+  const product = resolved.product;
+  if (!isProductActiveForQuote(product)) {
+    const inactive = { ok: false, code: 'PRODUCT_INACTIVE', productId: resolved.productId };
+    toastProductAddError(inactive);
+    return inactive;
   }
   if (!isQuoteBusinessUnitSelected()) {
     const selectedType = await requestQuoteTypeSelection(true);
     if (!selectedType) {
       toast('กรุณาเลือก BU ก่อนเพิ่มสินค้า');
-      return;
+      return { ok: false, code: 'PRODUCT_ADD_FAILED' };
     }
   }
   if (!CURRENT_QUOTE.customerId) {
@@ -2319,7 +2476,7 @@ async function addProduct(productId, qty) {
       renderQuoteMeta();
     } else {
       toast('กรุณาเลือกลูกค้าก่อนเพิ่มสินค้า');
-      return;
+      return { ok: false, code: 'PRODUCT_ADD_FAILED' };
     }
   }
   const existing = CART.find(item => getProductId(item) === getProductId(product));
@@ -2328,7 +2485,7 @@ async function addProduct(productId, qty) {
     recalcLineItem(existing);
     renderCart();
     scheduleScrollToAddedItem(existing.lineId);
-    return;
+    return { ok: true, code: 'PRODUCT_ADDED_TO_QUOTE', productId: getProductId(product), lineId: existing.lineId, updatedExisting: true };
   }
   const line = createCartLine(product, normalizedQty, 0);
   line.discountLoading = true;
@@ -2363,6 +2520,7 @@ async function addProduct(productId, qty) {
       scheduleScrollToAddedItem(line.lineId);
     }
   });
+  return { ok: true, code: 'PRODUCT_ADDED_TO_QUOTE', productId: getProductId(product), lineId: line.lineId, updatedExisting: false };
 }
 
 async function saveQuotationWithStatus(status) {
@@ -2431,6 +2589,10 @@ if (typeof window !== 'undefined') {
   window.selectCustomer = selectCustomer;
   window.newQuotation = newQuotation;
   window.addProduct = addProduct;
+  window.addProductToQuoteByReference = addProductToQuoteByReference;
+  window.normalizeProductReference = normalizeProductReference;
+  window.resolveProductByReference = resolveProductByReference;
+  window.getProductPrimaryKey = getProductPrimaryKey;
   window.removeProduct = removeProduct;
   window.changeQty = changeQty;
   window.refreshQuotation = refreshQuotation;

@@ -16,10 +16,59 @@ function getProductPreferenceProductMap_() {
   if (!productsResult.ok) return {};
   const map = {};
   (Array.isArray(productsResult.data) ? productsResult.data : []).forEach(function (product) {
-    const id = String(product.productId || product.id || product.sku || product.productCode || '').trim();
-    if (id) map[normalizeString(id)] = product;
+    getProductPreferenceProductReferences_(product).forEach(function (id) {
+      map[normalizeString(id)] = product;
+    });
   });
   return map;
+}
+
+function getProductPreferenceProductReferences_(product) {
+  const item = product && typeof product === 'object' ? product : {};
+  const values = [item.productId, item.sku, item.productCode, item.id, item.itemCode];
+  const seen = {};
+  return values.map(function (value) {
+    return String(value || '').trim();
+  }).filter(function (value) {
+    const key = normalizeString(value);
+    if (!key || seen[key]) return false;
+    seen[key] = true;
+    return true;
+  });
+}
+
+function resolveProductPreferenceProduct_(productReference) {
+  const reference = String(productReference || '').trim();
+  if (!reference) return validationError('productId is required');
+  const productResult = getProduct(reference);
+  if (!productResult.ok) {
+    logWarning('resolveProductPreferenceProduct_', 'PRODUCT_REFERENCE_NOT_FOUND reference=' + reference);
+    return productResult;
+  }
+  const product = productResult.data || {};
+  const canonicalProductId = String(product.productId || product.sku || product.productCode || product.id || reference).trim();
+  return success({
+    product: product,
+    productId: canonicalProductId,
+    productBusinessUnit: getProductBusinessUnit(product),
+    reference: reference
+  });
+}
+
+function getProductPreferenceCanonicalId_(productReference, productMap) {
+  const reference = String(productReference || '').trim();
+  if (!reference) return '';
+  const product = productMap && productMap[normalizeString(reference)];
+  if (!product) return reference;
+  return String(product.productId || product.sku || product.productCode || product.id || product.itemCode || reference).trim();
+}
+
+function productPreferenceReferenceMatches_(rowProductId, productReference, productMap) {
+  const rowReference = String(rowProductId || '').trim();
+  const targetReference = String(productReference || '').trim();
+  if (!rowReference || !targetReference) return false;
+  if (normalizeString(rowReference) === normalizeString(targetReference)) return true;
+  return normalizeString(getProductPreferenceCanonicalId_(rowReference, productMap)) === normalizeString(getProductPreferenceCanonicalId_(targetReference, productMap));
 }
 
 function getUserProductPreferenceState_(userId) {
@@ -49,7 +98,7 @@ function getUserProductPreferenceState_(userId) {
 }
 
 function decorateProductPreference_(product, state) {
-  const id = normalizeString(product && (product.productId || product.id || product.sku || product.productCode));
+  const id = normalizeString(product && (product.productId || product.id || product.sku || product.productCode || product.itemCode));
   const pinnedOrder = state && state.pinnedOrders ? state.pinnedOrders[id] : 0;
   const isFavorite = Boolean(state && state.favoriteIds && state.favoriteIds[id]);
   return Object.assign({}, product, {
@@ -72,18 +121,60 @@ function productPreferenceRowsToProducts_(rows, state, productMap) {
   });
 }
 
+function repairUserProductPreferenceRows_(userId, state, productMap) {
+  const result = { repaired: 0, unresolved: [] };
+  const now = new Date().toISOString();
+  function repairRows(sheetName, rowIdColumn, rows) {
+    rows.forEach(function (row) {
+      const reference = String(row.productId || '').trim();
+      if (!reference) return;
+      const product = productMap[normalizeString(reference)];
+      if (!product) {
+        result.unresolved.push(reference);
+        return;
+      }
+      const canonicalProductId = String(product.productId || product.sku || product.productCode || product.id || reference).trim();
+      const productBusinessUnit = getProductBusinessUnit(product);
+      if (!canonicalProductId || normalizeString(canonicalProductId) === normalizeString(reference)) return;
+      const rowId = String(row[rowIdColumn] || '').trim();
+      if (!rowId) return;
+      const updateResult = updateRowById(sheetName, rowIdColumn, rowId, {
+        productId: canonicalProductId,
+        productBusinessUnit: productBusinessUnit,
+        updatedAt: now
+      });
+      if (updateResult.ok) {
+        row.productId = canonicalProductId;
+        row.productBusinessUnit = productBusinessUnit;
+        result.repaired += 1;
+      }
+    });
+  }
+  repairRows(getUserFavoriteProductsSheetName(), 'favoriteId', state.favoriteRows || []);
+  repairRows(getUserPinnedProductsSheetName(), 'pinnedId', state.pinnedRows || []);
+  if (result.repaired || result.unresolved.length) {
+    logInfo('repairUserProductPreferenceRows_', 'userId=' + String(userId || '').trim() + ';repaired=' + result.repaired + ';unresolved=' + result.unresolved.length);
+  }
+  return result;
+}
+
 function getProductPreferences(payload) {
   try {
     const auth = requireApiUser(payload);
     if (!auth.ok) return auth;
     const userId = String(auth.data.userId || '').trim();
-    const state = getUserProductPreferenceState_(userId);
+    var state = getUserProductPreferenceState_(userId);
     const productMap = getProductPreferenceProductMap_();
+    const repair = repairUserProductPreferenceRows_(userId, state, productMap);
+    if (repair.repaired) {
+      state = getUserProductPreferenceState_(userId);
+    }
     return success({
       favorites: productPreferenceRowsToProducts_(state.favoriteRows, state, productMap),
       pinned: productPreferenceRowsToProducts_(state.pinnedRows, state, productMap),
       favoriteProductIds: Object.keys(state.favoriteIds),
-      pinnedProductIds: Object.keys(state.pinnedOrders)
+      pinnedProductIds: Object.keys(state.pinnedOrders),
+      repair: repair
     });
   } catch (error) {
     logError('getProductPreferences', error);
@@ -97,14 +188,15 @@ function addFavoriteProduct(payload) {
     const auth = requireApiUser(payload);
     if (!auth.ok) return auth;
     const userId = String(auth.data.userId || '').trim();
-    const productId = String(payload && payload.productId || '').trim();
-    if (!productId) return validationError('productId is required');
-    const productResult = getProduct(productId);
-    if (!productResult.ok) return productResult;
+    const productReference = String(payload && payload.productId || '').trim();
+    const resolvedProduct = resolveProductPreferenceProduct_(productReference);
+    if (!resolvedProduct.ok) return resolvedProduct;
+    const productResult = { ok: true, data: resolvedProduct.data.product };
+    const productId = resolvedProduct.data.productId;
     lock = LockService.getScriptLock();
     lock.waitLock(10000);
     const state = getUserProductPreferenceState_(userId);
-    if (state.favoriteIds[normalizeString(productId)]) {
+    if (state.favoriteIds[normalizeString(productId)] || state.favoriteIds[normalizeString(productReference)]) {
       return success(decorateProductPreference_(productResult.data, state), 'Already favorite');
     }
     if (state.favoriteRows.length >= MAX_FAVORITE_PRODUCTS) {
@@ -114,8 +206,8 @@ function addFavoriteProduct(payload) {
     const row = {
       favoriteId: Utilities.getUuid(),
       userId: userId,
-      productId: String(productResult.data.productId || productId).trim(),
-      productBusinessUnit: getProductBusinessUnit(productResult.data),
+      productId: productId,
+      productBusinessUnit: resolvedProduct.data.productBusinessUnit,
       createdAt: now,
       updatedAt: now
     };
@@ -123,7 +215,7 @@ function addFavoriteProduct(payload) {
     if (!sheet) return fail('Unable to access favorite products sheet');
     const headers = getHeaders(sheet);
     sheet.appendRow(headers.map(function (header) { return row[header] !== undefined ? row[header] : ''; }));
-    logActivity(userId, 'FAVORITE_PRODUCT_ADDED', 'productId=' + row.productId);
+    logActivity(userId, 'FAVORITE_PRODUCT_ADDED', 'productId=' + row.productId + ';reference=' + resolvedProduct.data.reference);
     return success(decorateProductPreference_(productResult.data, getUserProductPreferenceState_(userId)), 'เพิ่มสินค้ารายการโปรดแล้ว');
   } catch (error) {
     logError('addFavoriteProduct', error);
@@ -139,6 +231,7 @@ function removeFavoriteProduct(payload) {
     if (!auth.ok) return auth;
     const userId = String(auth.data.userId || '').trim();
     const productId = String(payload && payload.productId || '').trim();
+    const productMap = getProductPreferenceProductMap_();
     const sheet = ensureSheet(getUserFavoriteProductsSheetName(), getHeadersForSheet(getUserFavoriteProductsSheetName()));
     if (!sheet || sheet.getLastRow() < 2) return success({ productId: productId });
     const rows = sheet.getDataRange().getDisplayValues();
@@ -146,7 +239,7 @@ function removeFavoriteProduct(payload) {
     const userIndex = headers.indexOf('userId');
     const productIndex = headers.indexOf('productId');
     for (var i = rows.length - 1; i >= 1; i--) {
-      if (String(rows[i][userIndex] || '').trim() === userId && normalizeString(rows[i][productIndex]) === normalizeString(productId)) {
+      if (String(rows[i][userIndex] || '').trim() === userId && productPreferenceReferenceMatches_(rows[i][productIndex], productId, productMap)) {
         sheet.deleteRow(i + 1);
       }
     }
@@ -164,14 +257,15 @@ function addPinnedProduct(payload) {
     const auth = requireApiUser(payload);
     if (!auth.ok) return auth;
     const userId = String(auth.data.userId || '').trim();
-    const productId = String(payload && payload.productId || '').trim();
-    if (!productId) return validationError('productId is required');
-    const productResult = getProduct(productId);
-    if (!productResult.ok) return productResult;
+    const productReference = String(payload && payload.productId || '').trim();
+    const resolvedProduct = resolveProductPreferenceProduct_(productReference);
+    if (!resolvedProduct.ok) return resolvedProduct;
+    const productResult = { ok: true, data: resolvedProduct.data.product };
+    const productId = resolvedProduct.data.productId;
     lock = LockService.getScriptLock();
     lock.waitLock(10000);
     const state = getUserProductPreferenceState_(userId);
-    if (state.pinnedOrders[normalizeString(productId)]) {
+    if (state.pinnedOrders[normalizeString(productId)] || state.pinnedOrders[normalizeString(productReference)]) {
       return success(decorateProductPreference_(productResult.data, state), 'Already pinned');
     }
     if (state.pinnedRows.length >= MAX_PINNED_PRODUCTS) {
@@ -181,8 +275,8 @@ function addPinnedProduct(payload) {
     const row = {
       pinnedId: Utilities.getUuid(),
       userId: userId,
-      productId: String(productResult.data.productId || productId).trim(),
-      productBusinessUnit: getProductBusinessUnit(productResult.data),
+      productId: productId,
+      productBusinessUnit: resolvedProduct.data.productBusinessUnit,
       sortOrder: state.pinnedRows.length + 1,
       createdAt: now,
       updatedAt: now
@@ -191,7 +285,7 @@ function addPinnedProduct(payload) {
     if (!sheet) return fail('Unable to access pinned products sheet');
     const headers = getHeaders(sheet);
     sheet.appendRow(headers.map(function (header) { return row[header] !== undefined ? row[header] : ''; }));
-    logActivity(userId, 'PINNED_PRODUCT_ADDED', 'productId=' + row.productId);
+    logActivity(userId, 'PINNED_PRODUCT_ADDED', 'productId=' + row.productId + ';reference=' + resolvedProduct.data.reference);
     return success(decorateProductPreference_(productResult.data, getUserProductPreferenceState_(userId)), 'ปักหมุดสินค้าแล้ว');
   } catch (error) {
     logError('addPinnedProduct', error);
@@ -207,6 +301,7 @@ function removePinnedProduct(payload) {
     if (!auth.ok) return auth;
     const userId = String(auth.data.userId || '').trim();
     const productId = String(payload && payload.productId || '').trim();
+    const productMap = getProductPreferenceProductMap_();
     const sheet = ensureSheet(getUserPinnedProductsSheetName(), getHeadersForSheet(getUserPinnedProductsSheetName()));
     if (!sheet || sheet.getLastRow() < 2) return success({ productId: productId });
     const rows = sheet.getDataRange().getDisplayValues();
@@ -214,7 +309,7 @@ function removePinnedProduct(payload) {
     const userIndex = headers.indexOf('userId');
     const productIndex = headers.indexOf('productId');
     for (var i = rows.length - 1; i >= 1; i--) {
-      if (String(rows[i][userIndex] || '').trim() === userId && normalizeString(rows[i][productIndex]) === normalizeString(productId)) {
+      if (String(rows[i][userIndex] || '').trim() === userId && productPreferenceReferenceMatches_(rows[i][productIndex], productId, productMap)) {
         sheet.deleteRow(i + 1);
       }
     }
@@ -235,16 +330,21 @@ function reorderPinnedProducts(payload) {
     const productIds = Array.isArray(payload && payload.productIds) ? payload.productIds.map(function (id) {
       return String(id || '').trim();
     }).filter(Boolean) : [];
-    if (productIds.length > MAX_PINNED_PRODUCTS || new Set(productIds.map(normalizeString)).size !== productIds.length) {
+    const productMap = getProductPreferenceProductMap_();
+    const canonicalProductIds = productIds.map(function (productId) {
+      return getProductPreferenceCanonicalId_(productId, productMap);
+    });
+    if (productIds.length > MAX_PINNED_PRODUCTS || new Set(canonicalProductIds.map(normalizeString)).size !== productIds.length) {
       return validationError('Invalid pinned product order');
     }
     const mine = getPinnedProductRows_().filter(function (row) { return String(row.userId || '').trim() === userId; });
-    if (mine.length !== productIds.length || mine.some(function (row) { return productIds.map(normalizeString).indexOf(normalizeString(row.productId)) < 0; })) {
+    const canonicalOrderSet = canonicalProductIds.map(normalizeString);
+    if (mine.length !== productIds.length || mine.some(function (row) { return canonicalOrderSet.indexOf(normalizeString(getProductPreferenceCanonicalId_(row.productId, productMap))) < 0; })) {
       return validationError('Pinned list changed; reload and try again');
     }
     const now = new Date().toISOString();
     productIds.forEach(function (productId, index) {
-      const row = mine.find(function (item) { return normalizeString(item.productId) === normalizeString(productId); });
+      const row = mine.find(function (item) { return productPreferenceReferenceMatches_(item.productId, productId, productMap); });
       updateRowById(getUserPinnedProductsSheetName(), 'pinnedId', row.pinnedId, { sortOrder: index + 1, updatedAt: now });
     });
     logActivity(userId, 'PINNED_PRODUCT_REORDERED', 'count=' + productIds.length);
@@ -267,13 +367,14 @@ function normalizePinnedProductOrder_(userId) {
 }
 
 function removeProductFromAllPreferences_(productId) {
+  const productMap = getProductPreferenceProductMap_();
   [getUserFavoriteProductsSheetName(), getUserPinnedProductsSheetName()].forEach(function (sheetName) {
     const sheet = getSheet(sheetName);
     if (!sheet || sheet.getLastRow() < 2) return;
     const rows = sheet.getDataRange().getDisplayValues();
     const productIndex = (rows[0] || []).indexOf('productId');
     for (var i = rows.length - 1; i >= 1; i--) {
-      if (normalizeString(rows[i][productIndex]) === normalizeString(productId)) sheet.deleteRow(i + 1);
+      if (productPreferenceReferenceMatches_(rows[i][productIndex], productId, productMap)) sheet.deleteRow(i + 1);
     }
   });
 }
