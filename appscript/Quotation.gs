@@ -1,3 +1,7 @@
+const QUOTATION_SAVE_LOCK_TIMEOUT_MS = 15000;
+const QUOTATION_SAVE_IDEMPOTENCY_TTL_SECONDS = 600;
+const QUOTATION_SAVE_IN_PROGRESS_TTL_SECONDS = 90;
+
 function normalizeQuoteType(value) {
   const text = String(value || '').trim().toUpperCase();
   return text === 'GYPROC' ? 'GYPROC' : 'WEBER';
@@ -337,8 +341,37 @@ function saveQuotation(payload) {
 }
 
 function saveQuotationPayload(payload) {
+  var lock = null;
+  var lockAcquired = false;
+  var progressCacheKey = '';
+  var requestCacheKey = '';
+  var progressCacheOwned = false;
   try {
     const data = payload || {};
+    const requestId = getQuotationSaveRequestId_(data);
+    const auth = requireApiUser(data);
+    if (!auth.ok) {
+      return auth;
+    }
+    const cacheScope = getQuotationSaveUserCacheScope_(auth.data);
+    requestCacheKey = requestId ? getQuotationSaveResultCacheKey_(requestId, cacheScope) : '';
+    progressCacheKey = requestId ? getQuotationSaveProgressCacheKey_(requestId, cacheScope) : '';
+    if (requestCacheKey) {
+      const cachedResult = getServerCache(requestCacheKey);
+      if (cachedResult && cachedResult.ok) {
+        return cachedResult;
+      }
+    }
+    if (progressCacheKey && getServerCache(progressCacheKey)) {
+      return fail('Quotation save is already in progress', 'DUPLICATE_SUBMIT', {
+        retryable: true
+      });
+    }
+    if (progressCacheKey) {
+      setServerCache(progressCacheKey, { startedAt: new Date().toISOString() }, QUOTATION_SAVE_IN_PROGRESS_TTL_SECONDS);
+      progressCacheOwned = true;
+    }
+
     const customerId = String(data.customerId || '').trim();
     const customerName = String(data.customerName || '').trim();
     const items = Array.isArray(data.items) ? data.items : [];
@@ -351,10 +384,6 @@ function saveQuotationPayload(payload) {
 
     const now = new Date().toISOString();
     const requestedQuoteId = String(data.quoteId || '').trim();
-    const existingResult = requestedQuoteId ? getQuotationRow(requestedQuoteId) : null;
-    const existingQuote = existingResult && existingResult.ok ? existingResult.data || {} : null;
-    const quoteNo = String(existingQuote && existingQuote.quoteNo || data.quoteNo || generateQuoteNo()).trim();
-    const quoteId = String(existingQuote && existingQuote.quoteId || requestedQuoteId || quoteNo).trim();
     const subtotal = roundCurrency(data.subtotal !== undefined ? parseQuotationNumericValue(data.subtotal) : sumQuotationItems(items, 'lineTotal'));
     const vat = roundCurrency(data.vat !== undefined ? parseQuotationNumericValue(data.vat) : sumQuotationItems(items, 'vat'));
     const shipping = roundCurrency(parseQuotationNumericValue(data.shipping));
@@ -364,22 +393,58 @@ function saveQuotationPayload(payload) {
     if (isInvalidExplicitQuoteType(data.quoteType || data.businessUnit)) {
       return validationError('businessUnit must be WEBER or GYPROC');
     }
-    const quoteType = normalizeQuoteType(data.quoteType || data.businessUnit || (existingQuote && (existingQuote.quoteType || existingQuote.businessUnit)));
-    const auth = requireApiUser(data);
-    if (!auth.ok) {
-      return auth;
+    const businessUnitCheck = validateQuotationPayloadProductsBusinessUnit(items, normalizeQuoteType(data.quoteType || data.businessUnit));
+    if (!businessUnitCheck.ok) {
+      return businessUnitCheck;
     }
+    const productBusinessUnits = businessUnitCheck.data && businessUnitCheck.data.productBusinessUnits || {};
+    const normalizedItems = items.map(function (rawItem, index) {
+      const rawProductId = String(rawItem && rawItem.productId || '').trim();
+      return normalizeQuotationPayloadItem(rawItem, index + 1, productBusinessUnits[normalizeString(rawProductId)]);
+    });
+
+    lock = LockService.getScriptLock();
+    lockAcquired = lock.tryLock(QUOTATION_SAVE_LOCK_TIMEOUT_MS);
+    if (!lockAcquired) {
+      logWarning('saveQuotationPayload', 'Unable to acquire quotation save lock for user ' + String(auth.data && auth.data.userId || '').trim());
+      return fail('Quotation save is busy. Please try again.', 'LOCK_TIMEOUT', {
+        retryable: true,
+        timeoutMs: QUOTATION_SAVE_LOCK_TIMEOUT_MS
+      });
+    }
+    if (requestCacheKey) {
+      const lockedCachedResult = getServerCache(requestCacheKey);
+      if (lockedCachedResult && lockedCachedResult.ok) {
+        return lockedCachedResult;
+      }
+    }
+
+    const lockedExistingResult = requestedQuoteId
+      ? getQuotationRow(requestedQuoteId)
+      : (String(data.quoteNo || '').trim() ? getQuotationRow(String(data.quoteNo || '').trim()) : null);
+    if (requestedQuoteId && lockedExistingResult && !lockedExistingResult.ok) {
+      return notFound('Quotation not found');
+    }
+    const existingQuote = lockedExistingResult && lockedExistingResult.ok ? lockedExistingResult.data || {} : null;
     if (existingQuote) {
       const permissionResult = canAccessQuotationRecord(auth.data, existingQuote);
       if (!permissionResult.ok) {
         return permissionResult;
       }
     }
-    const businessUnitCheck = validateQuotationPayloadProductsBusinessUnit(items, quoteType);
-    if (!businessUnitCheck.ok) {
-      return businessUnitCheck;
+    const quoteType = normalizeQuoteType(data.quoteType || data.businessUnit || (existingQuote && (existingQuote.quoteType || existingQuote.businessUnit)));
+
+    const quoteNo = resolveQuotationNumberForSave_(data, existingQuote);
+    if (!quoteNo.ok) {
+      return quoteNo;
     }
-    const productBusinessUnits = businessUnitCheck.data && businessUnitCheck.data.productBusinessUnits || {};
+    const resolvedQuoteNo = quoteNo.data.quoteNo;
+    const quoteId = String(existingQuote && existingQuote.quoteId || requestedQuoteId || resolvedQuoteNo).trim();
+    const duplicateCheck = ensureUniqueQuoteNoForSave_(resolvedQuoteNo, quoteId);
+    if (!duplicateCheck.ok) {
+      return duplicateCheck;
+    }
+
     const auditUser = auth.ok ? auth.data : {};
     const auditName = String(auditUser.quoteDisplayName || auditUser.fullName || auditUser.displayName || auditUser.username || data.createdBy || data.sales || '').trim();
     const auditId = String(auditUser.userId || data.createdById || '').trim();
@@ -391,7 +456,7 @@ function saveQuotationPayload(payload) {
     const quoteDisplayName = String(existingQuote && existingQuote.quoteDisplayName || data.quoteDisplayName || createdBy || auditName).trim();
     const headerObject = {
       quoteId: quoteId,
-      quoteNo: quoteNo,
+      quoteNo: resolvedQuoteNo,
       quoteType: quoteType,
       businessUnit: quoteType,
       customerId: customerId,
@@ -413,51 +478,22 @@ function saveQuotationPayload(payload) {
       createdAt: String(existingQuote && existingQuote.createdAt || data.createdAt || now).trim(),
       updatedAt: now
     };
-    const headerResult = existingQuote
-      ? updateQuotationObject(QUOTE_HISTORY_SHEET, getQuoteHistoryHeaders(), 'quoteId', quoteId, headerObject)
-      : appendQuotationObject(QUOTE_HISTORY_SHEET, getQuoteHistoryHeaders(), headerObject);
-    if (!headerResult.ok) {
-      return headerResult;
+    const lineObjects = normalizedItems.map(function (item) {
+      return buildQuotationLineObject_(quoteId, item);
+    });
+
+    const writeResult = existingQuote
+      ? updateQuotationWithLinesLocked_(quoteId, existingQuote, headerObject, lineObjects)
+      : createQuotationWithLinesLocked_(quoteId, resolvedQuoteNo, headerObject, lineObjects);
+    if (!writeResult.ok) {
+      return writeResult;
     }
 
-    if (existingQuote) {
-      const deleteResult = deleteQuotationLines(quoteId);
-      if (!deleteResult.ok) {
-        return deleteResult;
-      }
-    }
-
-    for (var i = 0; i < items.length; i++) {
-      const rawProductId = String(items[i] && items[i].productId || '').trim();
-      const item = normalizeQuotationPayloadItem(items[i], i + 1, productBusinessUnits[normalizeString(rawProductId)]);
-      const lineResult = appendQuotationObject(QUOTE_LINES_SHEET, getQuoteLineHeaders(), {
-        quoteId: quoteId,
-        lineNo: item.lineNo,
-        lineOrder: item.lineOrder,
-        sortOrder: item.sortOrder,
-        productId: item.productId,
-        productBusinessUnit: item.productBusinessUnit,
-        productName: item.productName,
-        unit: item.unit,
-        qty: item.qty,
-        listPrice: item.listPrice,
-        discountPercent: item.discountPercent,
-        unitPrice: item.unitPrice,
-        lineTotal: item.lineTotal,
-        vat: item.vat,
-        grandTotal: item.grandTotal,
-        status: item.status
-      });
-      if (!lineResult.ok) {
-        return lineResult;
-      }
-    }
-
-    clearQuotationCaches(quoteId, quoteNo);
-    logInfo('saveQuotation', 'Saved quotation ' + quoteNo);
-    return success({
+    clearQuotationCaches(quoteId, resolvedQuoteNo);
+    logInfo('saveQuotation', 'Saved quotation ' + resolvedQuoteNo);
+    const saveResult = success({
       quoteId: quoteId,
-      quoteNo: quoteNo,
+      quoteNo: resolvedQuoteNo,
       subtotal: subtotal,
       vat: vat,
       shipping: shipping,
@@ -467,10 +503,298 @@ function saveQuotationPayload(payload) {
       quoteType: quoteType,
       businessUnit: quoteType
     }, 'Quotation saved');
+    if (requestCacheKey) {
+      setServerCache(requestCacheKey, saveResult, QUOTATION_SAVE_IDEMPOTENCY_TTL_SECONDS);
+    }
+    return saveResult;
   } catch (error) {
     logError('saveQuotationPayload', error);
     return fail(error && error.message ? error.message : 'Failed to save quotation');
+  } finally {
+    if (progressCacheOwned && progressCacheKey) {
+      clearServerCache(progressCacheKey);
+    }
+    if (lockAcquired && lock) {
+      try {
+        lock.releaseLock();
+      } catch (releaseError) {
+        logWarning('saveQuotationPayload', 'Unable to release quotation save lock');
+      }
+    }
   }
+}
+
+function getQuotationSaveRequestId_(payload) {
+  const data = payload && typeof payload === 'object' ? payload : {};
+  const value = String(data.clientRequestId || data.clientSaveId || data.quoteSaveRequestId || '').trim();
+  return value ? value.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80) : '';
+}
+
+function getQuotationSaveUserCacheScope_(user) {
+  const data = user && typeof user === 'object' ? user : {};
+  const value = String(data.userId || data.username || 'anonymous').trim();
+  return value ? value.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 60) : 'anonymous';
+}
+
+function getQuotationSaveResultCacheKey_(requestId, cacheScope) {
+  return ['quotationSave', 'result', cacheScope || 'anonymous', String(requestId || '').trim()].join(':');
+}
+
+function getQuotationSaveProgressCacheKey_(requestId, cacheScope) {
+  return ['quotationSave', 'progress', cacheScope || 'anonymous', String(requestId || '').trim()].join(':');
+}
+
+function resolveQuotationNumberForSave_(data, existingQuote) {
+  try {
+    const quoteNo = String(existingQuote && existingQuote.quoteNo || data.quoteNo || '').trim();
+    if (quoteNo) {
+      return success({ quoteNo: quoteNo });
+    }
+    return success({ quoteNo: generateQuoteNoLocked_() });
+  } catch (error) {
+    logError('resolveQuotationNumberForSave_', error);
+    return fail(error && error.message ? error.message : 'Failed to generate quotation number');
+  }
+}
+
+function ensureUniqueQuoteNoForSave_(quoteNo, quoteId) {
+  try {
+    const targetQuoteNo = String(quoteNo || '').trim();
+    const targetQuoteId = String(quoteId || '').trim();
+    if (!targetQuoteNo) {
+      return validationError('quoteNo is required');
+    }
+    const existing = getQuotationRow(targetQuoteNo);
+    if (existing.ok) {
+      const existingQuoteId = String(existing.data && existing.data.quoteId || '').trim();
+      if (normalizeString(existingQuoteId) !== normalizeString(targetQuoteId)) {
+        return validationError('Duplicate quoteNo detected', {
+          quoteNo: targetQuoteNo
+        });
+      }
+    }
+    return success(true);
+  } catch (error) {
+    logError('ensureUniqueQuoteNoForSave_', error);
+    return fail(error && error.message ? error.message : 'Failed to validate quotation number');
+  }
+}
+
+function buildQuotationLineObject_(quoteId, item) {
+  return {
+    quoteId: quoteId,
+    lineNo: item.lineNo,
+    lineOrder: item.lineOrder,
+    sortOrder: item.sortOrder,
+    productId: item.productId,
+    productBusinessUnit: item.productBusinessUnit,
+    productName: item.productName,
+    unit: item.unit,
+    qty: item.qty,
+    listPrice: item.listPrice,
+    discountPercent: item.discountPercent,
+    unitPrice: item.unitPrice,
+    lineTotal: item.lineTotal,
+    vat: item.vat,
+    grandTotal: item.grandTotal,
+    status: item.status
+  };
+}
+
+function createQuotationWithLinesLocked_(quoteId, quoteNo, headerObject, lineObjects) {
+  try {
+    const linesResult = appendQuotationObjects(QUOTE_LINES_SHEET, getQuoteLineHeaders(), lineObjects);
+    if (!linesResult.ok) {
+      const rollbackResult = deleteQuotationLines(quoteId);
+      logError('saveQuotationPayload', new Error('Lines write failed for new quotation ' + quoteNo));
+      return fail(linesResult.message || 'Lines write failed', 'LINES_WRITE_FAILED', {
+        quoteNo: quoteNo,
+        rollbackOk: rollbackResult.ok
+      });
+    }
+    const headerResult = appendQuotationObject(QUOTE_HISTORY_SHEET, getQuoteHistoryHeaders(), headerObject);
+    if (!headerResult.ok) {
+      const rollbackResult = deleteQuotationLines(quoteId);
+      logError('saveQuotationPayload', new Error('Header write failed for new quotation ' + quoteNo));
+      return fail(headerResult.message || 'Header write failed', 'HEADER_WRITE_FAILED', {
+        quoteNo: quoteNo,
+        rollbackOk: rollbackResult.ok
+      });
+    }
+    const verifyResult = verifyQuotationSaveResult_(quoteId, lineObjects.length);
+    if (!verifyResult.ok) {
+      const linesRollbackResult = deleteQuotationLines(quoteId);
+      const headerRollbackResult = deleteQuotationHeaderLocked_(quoteId, quoteNo);
+      logError('saveQuotationPayload', new Error('Verification failed for new quotation ' + quoteNo + '; linesRollback=' + (linesRollbackResult.ok ? 'ok' : 'failed') + '; headerRollback=' + (headerRollbackResult.ok ? 'ok' : 'failed')));
+      return fail(verifyResult.message || 'Verification failed', 'PARTIAL_SAVE_DETECTED', {
+        quoteId: quoteId,
+        quoteNo: quoteNo,
+        rollbackOk: linesRollbackResult.ok && headerRollbackResult.ok
+      });
+    }
+    return verifyResult;
+  } catch (error) {
+    const linesRollbackResult = deleteQuotationLines(quoteId);
+    const headerRollbackResult = deleteQuotationHeaderLocked_(quoteId, quoteNo);
+    logError('createQuotationWithLinesLocked_', new Error((error && error.message ? error.message : 'Create failed') + '; linesRollback=' + (linesRollbackResult.ok ? 'ok' : 'failed') + '; headerRollback=' + (headerRollbackResult.ok ? 'ok' : 'failed')));
+    return fail(error && error.message ? error.message : 'Failed to create quotation', 'PARTIAL_SAVE_DETECTED', {
+      quoteId: quoteId,
+      quoteNo: quoteNo,
+      rollbackOk: linesRollbackResult.ok && headerRollbackResult.ok
+    });
+  }
+}
+
+function updateQuotationWithLinesLocked_(quoteId, previousHeaderObject, headerObject, lineObjects) {
+  const previousLinesResult = getQuoteLines(quoteId);
+  const previousLines = previousLinesResult.ok && Array.isArray(previousLinesResult.data) ? previousLinesResult.data : [];
+  const previousHeader = previousHeaderObject && typeof previousHeaderObject === 'object' ? previousHeaderObject : {};
+  try {
+    const replaceResult = replaceQuotationLinesLocked_(quoteId, lineObjects);
+    if (!replaceResult.ok) {
+      const rollbackResult = replaceQuotationLinesLocked_(quoteId, previousLines);
+      logError('saveQuotationPayload', new Error('Lines replace failed for quotation ' + quoteId + '; rollback=' + (rollbackResult.ok ? 'ok' : 'failed')));
+      return fail(replaceResult.message || 'Lines write failed', 'LINES_WRITE_FAILED', {
+        quoteId: quoteId,
+        rollbackOk: rollbackResult.ok
+      });
+    }
+    const headerResult = updateQuotationObject(QUOTE_HISTORY_SHEET, getQuoteHistoryHeaders(), 'quoteId', quoteId, headerObject);
+    if (!headerResult.ok) {
+      const rollbackResult = replaceQuotationLinesLocked_(quoteId, previousLines);
+      logError('saveQuotationPayload', new Error('Header update failed for quotation ' + quoteId + '; rollback=' + (rollbackResult.ok ? 'ok' : 'failed')));
+      return fail(headerResult.message || 'Header write failed', 'HEADER_WRITE_FAILED', {
+        quoteId: quoteId,
+        rollbackOk: rollbackResult.ok
+      });
+    }
+    const verifyResult = verifyQuotationSaveResult_(quoteId, lineObjects.length);
+    if (!verifyResult.ok) {
+      const linesRollbackResult = replaceQuotationLinesLocked_(quoteId, previousLines);
+      const headerRollbackResult = previousHeader.quoteId
+        ? updateQuotationObject(QUOTE_HISTORY_SHEET, getQuoteHistoryHeaders(), 'quoteId', quoteId, previousHeader)
+        : success({ skipped: true });
+      logError('saveQuotationPayload', new Error('Verification failed for quotation ' + quoteId + '; linesRollback=' + (linesRollbackResult.ok ? 'ok' : 'failed') + '; headerRollback=' + (headerRollbackResult.ok ? 'ok' : 'failed')));
+      return fail(verifyResult.message || 'Verification failed', 'PARTIAL_SAVE_DETECTED', {
+        quoteId: quoteId,
+        rollbackOk: linesRollbackResult.ok && headerRollbackResult.ok
+      });
+    }
+    return verifyResult;
+  } catch (error) {
+    const linesRollbackResult = replaceQuotationLinesLocked_(quoteId, previousLines);
+    const headerRollbackResult = previousHeader.quoteId
+      ? updateQuotationObject(QUOTE_HISTORY_SHEET, getQuoteHistoryHeaders(), 'quoteId', quoteId, previousHeader)
+      : success({ skipped: true });
+    logError('updateQuotationWithLinesLocked_', new Error((error && error.message ? error.message : 'Update failed') + '; linesRollback=' + (linesRollbackResult.ok ? 'ok' : 'failed') + '; headerRollback=' + (headerRollbackResult.ok ? 'ok' : 'failed')));
+    return fail(error && error.message ? error.message : 'Failed to update quotation', 'PARTIAL_SAVE_DETECTED', {
+      quoteId: quoteId,
+      rollbackOk: linesRollbackResult.ok && headerRollbackResult.ok
+    });
+  }
+}
+
+function replaceQuotationLinesLocked_(quoteId, lineObjects) {
+  try {
+    const deleteResult = deleteQuotationLines(quoteId);
+    if (!deleteResult.ok) {
+      return fail(deleteResult.message || 'Lines delete failed', 'LINES_WRITE_FAILED', {
+        quoteId: quoteId
+      });
+    }
+    const appendResult = appendQuotationObjects(QUOTE_LINES_SHEET, getQuoteLineHeaders(), lineObjects);
+    if (!appendResult.ok) {
+      return fail(appendResult.message || 'Lines write failed', 'LINES_WRITE_FAILED', {
+        quoteId: quoteId
+      });
+    }
+    return success({ quoteId: quoteId, replaced: lineObjects.length });
+  } catch (error) {
+    logError('replaceQuotationLinesLocked_', error);
+    return fail(error && error.message ? error.message : 'Failed to replace quotation lines', 'LINES_WRITE_FAILED', {
+      quoteId: quoteId
+    });
+  }
+}
+
+function deleteQuotationHeaderLocked_(quoteId, quoteNo) {
+  try {
+    const sheet = getSheet(QUOTE_HISTORY_SHEET);
+    if (!sheet || sheet.getLastRow() < 2) {
+      return success({ deleted: 0 });
+    }
+    const headers = getQuotationSheetHeaders(sheet);
+    const quoteIdIndex = headers.indexOf('quoteId');
+    const quoteNoIndex = headers.indexOf('quoteNo');
+    if (quoteIdIndex < 0) {
+      return fail('quoteId column not found');
+    }
+    const targetQuoteId = normalizeString(quoteId);
+    const targetQuoteNo = normalizeString(quoteNo);
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), headers.length)).getDisplayValues();
+    var deleted = 0;
+    for (var i = values.length - 1; i >= 0; i--) {
+      const rowQuoteId = normalizeString(values[i][quoteIdIndex]);
+      const rowQuoteNo = quoteNoIndex >= 0 ? normalizeString(values[i][quoteNoIndex]) : '';
+      const quoteNoMatches = !targetQuoteNo || quoteNoIndex < 0 || rowQuoteNo === targetQuoteNo;
+      if (targetQuoteId && rowQuoteId === targetQuoteId && quoteNoMatches) {
+        sheet.deleteRow(i + 2);
+        deleted += 1;
+      }
+    }
+    return success({ deleted: deleted });
+  } catch (error) {
+    logError('deleteQuotationHeaderLocked_', error);
+    return fail(error && error.message ? error.message : 'Failed to delete quotation header');
+  }
+}
+
+function appendQuotationObjects(sheetName, headers, objects) {
+  try {
+    const list = Array.isArray(objects) ? objects : [];
+    if (!list.length) {
+      return success({ sheetName: sheetName, appended: 0 });
+    }
+    const sheet = ensureSheet(sheetName, headers);
+    if (!sheet) {
+      return fail('Unable to access sheet: ' + sheetName);
+    }
+    const activeHeaders = ensureQuotationSheetColumns(sheet, headers);
+    const rows = list.map(function (object) {
+      return activeHeaders.map(function (header) {
+        return object[header] !== undefined ? object[header] : '';
+      });
+    });
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, activeHeaders.length).setValues(rows);
+    return success({ sheetName: sheetName, appended: rows.length });
+  } catch (error) {
+    logError('appendQuotationObjects', error);
+    return fail(error && error.message ? error.message : 'Failed to append quotation rows');
+  }
+}
+
+function verifyQuotationSaveResult_(quoteId, expectedLineCount) {
+  const quoteResult = getQuotationRow(quoteId);
+  if (!quoteResult.ok) {
+    return fail('Partial save detected: quotation header missing', 'PARTIAL_SAVE_DETECTED', {
+      quoteId: quoteId
+    });
+  }
+  const linesResult = getQuoteLines(quoteId);
+  if (!linesResult.ok) {
+    return fail('Partial save detected: quotation lines unreadable', 'PARTIAL_SAVE_DETECTED', {
+      quoteId: quoteId
+    });
+  }
+  const actualLineCount = Array.isArray(linesResult.data) ? linesResult.data.length : 0;
+  if (actualLineCount !== expectedLineCount) {
+    return fail('Partial save detected: quotation line count mismatch', 'PARTIAL_SAVE_DETECTED', {
+      quoteId: quoteId,
+      expectedLineCount: expectedLineCount,
+      actualLineCount: actualLineCount
+    });
+  }
+  return success({ quoteId: quoteId, lineCount: actualLineCount });
 }
 
 function normalizeQuotationPayloadItem(item, lineNo, productBusinessUnit) {
@@ -560,17 +884,28 @@ function normalizeQuotationStatus(value, fallback) {
 }
 
 function generateQuoteNo() {
+  return generateQuoteNoLocked_();
+}
+
+function generateQuoteNoLocked_() {
   const now = new Date();
   const yyyy = now.getFullYear();
   const mm = ('0' + (now.getMonth() + 1)).slice(-2);
   const dd = ('0' + now.getDate()).slice(-2);
   const datePart = '' + yyyy + mm + dd;
   const prefix = 'QT-' + datePart + '-';
-  const result = getSheetData(QUOTE_HISTORY_SHEET);
-  const rows = result.ok && Array.isArray(result.data) ? result.data : [];
+  ensureQuotationSheets();
+  const sheet = getSheet(QUOTE_HISTORY_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) {
+    return prefix + '0001';
+  }
+  const headers = getQuotationSheetHeaders(sheet);
+  const quoteNoIndex = headers.indexOf('quoteNo');
+  const quoteIdIndex = headers.indexOf('quoteId');
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), headers.length)).getDisplayValues();
   var maxNo = 0;
-  rows.forEach(function (row) {
-    const quoteNo = String(row.quoteNo || row.quoteId || '').trim();
+  values.forEach(function (row) {
+    const quoteNo = String((quoteNoIndex >= 0 ? row[quoteNoIndex] : '') || (quoteIdIndex >= 0 ? row[quoteIdIndex] : '') || '').trim();
     if (quoteNo.indexOf(prefix) === 0) {
       const running = parseInt(quoteNo.slice(prefix.length), 10);
       if (!isNaN(running) && running > maxNo) {
