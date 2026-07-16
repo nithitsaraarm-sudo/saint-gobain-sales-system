@@ -51,13 +51,23 @@
 <div id="appView" class="app hidden">
   <div id="overlay" class="overlay" onclick="toggleMenu(false)"></div>
   <aside id="sidebar" class="sidebar">
-    <div><div class="logo" id="brandCompany">SAINT-GOBAIN</div><div class="logo"><small id="brandApp">SALES SYSTEM</small></div></div>
+    <div id="sidebarHeader" class="sidebar-header">
+      <div class="sidebar-brand"><div class="logo" id="brandCompany">SAINT-GOBAIN</div><div class="logo"><small id="brandApp">SALES SYSTEM</small></div></div>
+      <button id="sidebarToggle" class="sidebar-toggle" type="button" onclick="toggleMenu()" aria-label="ย่อ Sidebar" aria-expanded="true" aria-controls="sidebar">
+        <svg class="sidebar-toggle-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <rect x="4" y="5" width="16" height="14" rx="2"></rect>
+          <path d="M10 5v14"></path>
+          <path d="M13.5 9h3.5M13.5 12h3.5M13.5 15h2.5"></path>
+          <path d="M7 8.5h.01M7 12h.01M7 15.5h.01"></path>
+        </svg>
+      </button>
+    </div>
     <nav class="nav">
       <button class="active" data-page="home" onclick="go('home',this)">🏠 หน้าหลัก</button><button data-page="quote" onclick="go('quote',this)">📄 ออกใบเสนอราคา</button><button data-page="customers" onclick="go('customers',this)">🏪 ร้านค้า</button><button data-page="products" onclick="go('products',this)">📦 สินค้า</button><button data-page="promos" onclick="go('promos',this)">🎁 โปรโมชั่น</button><button data-page="quotes" onclick="go('quotes',this)">📋 ใบเสนอราคา</button><button data-page="users" onclick="go('users',this)">👥 Users</button><button data-page="report" onclick="go('report',this)">📊 รายงาน</button><button data-page="settings" onclick="go('settings',this)">⚙️ ตั้งค่า</button>
     </nav>
   </aside>
   <main class="main">
-    <div class="topbar no-print"><button class="hamb sidebar-toggle" onclick="toggleMenu(true)" aria-label="Toggle sidebar" aria-expanded="true">☰</button><div></div><div class="topbar-user-area"><button class="header-profile" onclick="go('settings')" aria-label="Profile"><span class="header-avatar" id="topAvatar">👤</span><span class="header-user-text"><b id="topName">-</b><small id="topPosition">-</small></span></button><span class="header-separator"></span><button class="ghost" onclick="logout()">ออกจากระบบ</button></div></div>
+    <div class="topbar no-print"><div id="mobileSidebarToggleHost" class="mobile-sidebar-toggle-host"></div><div></div><div class="topbar-user-area"><button class="header-profile" onclick="go('settings')" aria-label="Profile"><span class="header-avatar" id="topAvatar">👤</span><span class="header-user-text"><b id="topName">-</b><small id="topPosition">-</small></span></button><span class="header-separator"></span><button class="ghost" onclick="logout()">ออกจากระบบ</button></div></div>
     <section id="page-home" class="page active">
       <div class="hero"><div class="greeting"><h1 id="greetingText">-</h1><p id="welcomeText">-</p></div><div class="logos"><div class="badge-logo gyro">Gyproc</div><div class="badge-logo web">weber</div></div></div>
       <div class="grid4"><div class="stat"><div class="ico">📄</div><h3>ใบเสนอราคาวันนี้</h3><b id="statQuotes">0</b> ใบ<small>อัปเดตจาก Google Sheet</small></div><div class="stat"><div class="ico">💰</div><h3>ยอดรวมวันนี้</h3><b id="statSales">0</b><small>บาท</small></div><div class="stat"><div class="ico">👥</div><h3>ลูกค้าใหม่วันนี้</h3><b id="statCustomers">0</b> ราย<small>จากรายการร้านค้า</small></div><div class="stat"><div class="ico">📝</div><h3>ใบเสนอราคาที่รออนุมัติ</h3><b id="statPending">0</b> ใบ<small>รอดำเนินการ</small></div></div>
