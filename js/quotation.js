@@ -2140,7 +2140,7 @@ function renderCart() {
     const productUnit = getProductBusinessUnitClient(it);
     const productBuBadge = productUnit ? `<span class="quote-product-bu ${getQuoteTypeClass(productUnit)}">${getQuoteTypeLabel(productUnit)}</span>` : '';
     const crossBuNote = productUnit && productUnit !== getCurrentQuoteBusinessUnit() ? '<small class="quote-cross-bu-note">สินค้าร่วมข้าม BU</small>' : '';
-    return `<div class="row item-card quote-line" data-line-id="${it.lineId}" role="listitem" tabindex="0" aria-label="กดค้างแล้วลากเพื่อเรียงสินค้า หรือกด Alt พร้อมลูกศรขึ้นลง" title="กดค้างแล้วลากเพื่อเรียงสินค้า">
+    return `<div class="row item-card quote-line quote-item-card" data-line-id="${it.lineId}" role="listitem" tabindex="0" aria-label="กดค้างแล้วลากเพื่อเรียงสินค้า หรือกด Alt พร้อมลูกศรขึ้นลง" title="กดค้างแล้วลากเพื่อเรียงสินค้า">
       <div class="quote-line-main">
         <div class="quote-product-title">${productBuBadge}<b>${it.productName || '-'} ${freeBadge}</b>${crossBuNote}</div>
         <small>${it.productId || ''}${it.unit ? ' · ' + it.unit : ''}</small>
@@ -2157,7 +2157,7 @@ function renderCart() {
         <input type="number" min="1" value="${Number(it.qty) || 1}" onchange="changeQty('${it.lineId}', this.value)">
         <button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button>
       </div>
-      <button class="ghost" data-no-drag onclick="removeProduct('${it.lineId}')">ลบ</button>
+      <button class="ghost quote-item-delete" data-no-drag onclick="removeProduct('${it.lineId}')">ลบ</button>
     </div>`;
   }).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
   calcCart();
