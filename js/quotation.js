@@ -11,6 +11,9 @@ const QUOTATION_LOAD_TTL_MS = 10 * 60 * 1000;
 let QUOTE_ITEM_SCROLL_SEQUENCE = 0;
 let QUOTE_ITEM_HIGHLIGHT_TIMER = null;
 let QUOTE_ITEM_PENDING_SCROLL_LINE_ID = '';
+let QUOTE_SAVE_IN_PROGRESS = false;
+let QUOTE_SAVE_REQUEST_ID = '';
+let QUOTE_SAVE_REQUEST_SIGNATURE = '';
 
 function normalizeQuoteType(value) {
   const text = String(value || '').trim().toUpperCase();
@@ -23,6 +26,85 @@ function getQuoteTypeLabel(value) {
 
 function getQuoteTypeClass(value) {
   return normalizeQuoteType(value) === 'GYPROC' ? 'gyproc' : 'weber';
+}
+
+function createQuotationSaveRequestId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return 'quote-save-' + crypto.randomUUID();
+  }
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const values = new Uint32Array(2);
+    crypto.getRandomValues(values);
+    return 'quote-save-' + Date.now() + '-' + Array.from(values).map(value => value.toString(36)).join('-');
+  }
+  const randomPart = Math.random().toString(36).slice(2, 12) + '-' + Math.random().toString(36).slice(2, 12);
+  return 'quote-save-' + Date.now() + '-' + randomPart;
+}
+
+function getQuotationSavePayloadSignature(payload) {
+  try {
+    const data = Object.assign({}, payload || {});
+    delete data.clientRequestId;
+    delete data.clientSaveId;
+    delete data.quoteSaveRequestId;
+    return JSON.stringify(data);
+  } catch (error) {
+    return '';
+  }
+}
+
+function getQuotationSaveRequestIdForPayload(payload) {
+  const signature = getQuotationSavePayloadSignature(payload);
+  if (!QUOTE_SAVE_REQUEST_ID || QUOTE_SAVE_REQUEST_SIGNATURE !== signature) {
+    QUOTE_SAVE_REQUEST_ID = createQuotationSaveRequestId();
+    QUOTE_SAVE_REQUEST_SIGNATURE = signature;
+  }
+  return QUOTE_SAVE_REQUEST_ID;
+}
+
+function clearQuotationSaveRequestState() {
+  QUOTE_SAVE_REQUEST_ID = '';
+  QUOTE_SAVE_REQUEST_SIGNATURE = '';
+}
+
+function getQuotationSaveActionButtons() {
+  if (typeof document === 'undefined') return [];
+  return Array.from(document.querySelectorAll([
+    'button[onclick="saveDraftQuotation()"]',
+    'button[onclick="updateQuotation()"]',
+    'button[onclick="saveQuotation()"]',
+    'button[onclick="saveQuotationPdf()"]',
+    'button[onclick="saveQuotationPng()"]',
+    'button[onclick="shareQuote()"]'
+  ].join(',')));
+}
+
+function setQuotationSaveBusy(isBusy) {
+  getQuotationSaveActionButtons().forEach(button => {
+    if (!button) return;
+    if (isBusy) {
+      if (button.dataset.quoteOriginalText === undefined) {
+        button.dataset.quoteOriginalText = button.textContent || '';
+      }
+      if (button.dataset.quoteWasDisabled === undefined) {
+        button.dataset.quoteWasDisabled = button.disabled ? 'true' : 'false';
+      }
+      const onclick = String(button.getAttribute('onclick') || '');
+      if (onclick === 'saveDraftQuotation()' || onclick === 'updateQuotation()' || onclick === 'saveQuotation()') {
+        button.textContent = 'กำลังบันทึก...';
+      }
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+    } else {
+      if (button.dataset.quoteOriginalText !== undefined) {
+        button.textContent = button.dataset.quoteOriginalText;
+        delete button.dataset.quoteOriginalText;
+      }
+      button.disabled = button.dataset.quoteWasDisabled === 'true';
+      delete button.dataset.quoteWasDisabled;
+      button.removeAttribute('aria-busy');
+    }
+  });
 }
 
 function getProductBusinessUnitClient(product) {
@@ -2292,33 +2374,47 @@ async function saveQuotationWithStatus(status) {
     toast('กรุณาเพิ่มสินค้าในใบเสนอราคาก่อนบันทึก');
     return;
   }
-  toast('กำลังบันทึก...');
+  if (QUOTE_SAVE_IN_PROGRESS) {
+    toast('กำลังบันทึกใบเสนอราคาอยู่ กรุณารอสักครู่');
+    return { ok: false, code: 'DUPLICATE_SUBMIT', message: 'Quotation save is already in progress' };
+  }
   const payload = buildQuotationPayload(status);
-  const response = await callApi(payload.quoteId ? 'updateQuotation' : 'saveQuotation', payload);
-  if (!response.ok) {
-    toast(response.message || 'บันทึกใบเสนอราคาไม่สำเร็จ');
+  const requestId = getQuotationSaveRequestIdForPayload(payload);
+  QUOTE_SAVE_IN_PROGRESS = true;
+  setQuotationSaveBusy(true);
+  try {
+    toast('กำลังบันทึก...');
+    payload.clientRequestId = requestId;
+    const response = await callApi(payload.quoteId ? 'updateQuotation' : 'saveQuotation', payload);
+    if (!response.ok) {
+      toast(response.message || 'บันทึกใบเสนอราคาไม่สำเร็จ');
+      return response;
+    }
+    clearQuotationSaveRequestState();
+    CURRENT_QUOTE.quoteId = response.data?.quoteId || CURRENT_QUOTE.quoteId;
+    CURRENT_QUOTE.quoteNo = response.data?.quoteNo || CURRENT_QUOTE.quoteNo || CURRENT_QUOTE.quoteId;
+    CURRENT_QUOTE.quoteType = normalizeQuoteType(response.data?.quoteType || CURRENT_QUOTE.quoteType || CURRENT_QUOTE_TYPE);
+    CURRENT_QUOTE.businessUnit = CURRENT_QUOTE.quoteType;
+    CURRENT_QUOTE.status = response.data?.status || status || CURRENT_QUOTE.status;
+    setCurrentQuoteType(CURRENT_QUOTE.quoteType, true);
+    if (typeof clearQuotationCache === 'function') {
+      clearQuotationCache(CURRENT_QUOTE.quoteId);
+    }
+    clearLoadedQuotationCache(CURRENT_QUOTE.quoteId);
+    if (typeof clearCache === 'function') {
+      clearCache('sg_quote_history_cache');
+    }
+    renderQuoteMeta();
+    renderCart();
+    toast((status === 'DRAFT' ? 'บันทึกแบบร่างแล้ว' : 'อัปเดตใบเสนอราคาแล้ว') + (CURRENT_QUOTE.quoteNo ? ': ' + CURRENT_QUOTE.quoteNo : ''));
+    if (typeof refreshQuotationHistory === 'function' && (typeof isQuotationHistoryLoaded !== 'function' || isQuotationHistoryLoaded())) {
+      await refreshQuotationHistory({force:true});
+    }
     return response;
+  } finally {
+    QUOTE_SAVE_IN_PROGRESS = false;
+    setQuotationSaveBusy(false);
   }
-  CURRENT_QUOTE.quoteId = response.data?.quoteId || CURRENT_QUOTE.quoteId;
-  CURRENT_QUOTE.quoteNo = response.data?.quoteNo || CURRENT_QUOTE.quoteNo || CURRENT_QUOTE.quoteId;
-  CURRENT_QUOTE.quoteType = normalizeQuoteType(response.data?.quoteType || CURRENT_QUOTE.quoteType || CURRENT_QUOTE_TYPE);
-  CURRENT_QUOTE.businessUnit = CURRENT_QUOTE.quoteType;
-  CURRENT_QUOTE.status = response.data?.status || status || CURRENT_QUOTE.status;
-  setCurrentQuoteType(CURRENT_QUOTE.quoteType, true);
-  if (typeof clearQuotationCache === 'function') {
-    clearQuotationCache(CURRENT_QUOTE.quoteId);
-  }
-  clearLoadedQuotationCache(CURRENT_QUOTE.quoteId);
-  if (typeof clearCache === 'function') {
-    clearCache('sg_quote_history_cache');
-  }
-  renderQuoteMeta();
-  renderCart();
-  toast((status === 'DRAFT' ? 'บันทึกแบบร่างแล้ว' : 'อัปเดตใบเสนอราคาแล้ว') + (CURRENT_QUOTE.quoteNo ? ': ' + CURRENT_QUOTE.quoteNo : ''));
-  if (typeof refreshQuotationHistory === 'function' && (typeof isQuotationHistoryLoaded !== 'function' || isQuotationHistoryLoaded())) {
-    await refreshQuotationHistory({force:true});
-  }
-  return response;
 }
 
 if (typeof window !== 'undefined') {

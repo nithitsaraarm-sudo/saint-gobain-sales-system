@@ -212,7 +212,15 @@ body.quote-reordering .quote-line{touch-action:none}
 .pinned-product-card{border-color:#f0d84b;background:#fffdf0;cursor:grab;touch-action:pan-y}
 .pinned-product-card.is-dragging{opacity:.6;cursor:grabbing;box-shadow:0 22px 48px rgba(15,42,82,.18)}
 .quote-preference-empty{border:1px dashed var(--line);border-radius:16px;background:#fff;color:var(--muted);padding:12px;font-weight:800}
-@media(max-width:720px){.quote-product-pref-card{align-items:flex-start}.quote-product-actions{width:100%;margin-left:0;justify-content:flex-start}.quote-product-actions .tiny{flex:1}.quote-product-pref-button{min-width:42px}}
+@media(max-width:720px){
+  .quote-product-pref-card{display:grid!important;grid-template-columns:54px minmax(0,1fr);align-items:start}
+  .quote-product-pref-card .product-img{grid-column:1;grid-row:1;width:54px;height:54px;margin:0}
+  .quote-product-pref-main{grid-column:2;grid-row:1;min-width:0;width:100%}
+  .quote-product-pref-main b{display:block;word-break:normal;overflow-wrap:anywhere;line-height:1.35}
+  .quote-product-actions{grid-column:1/-1;width:100%;margin-left:0;justify-content:flex-start}
+  .quote-product-actions .tiny{flex:1;min-width:120px}
+  .quote-product-pref-button{min-width:42px}
+}
 
 .nav button.hidden,.main-action.hidden,.actions.hidden,#quoteHistory button.hidden{display:none!important}
 .user-form{border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:16px;background:#f8fbff}
