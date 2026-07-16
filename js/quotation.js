@@ -11,6 +11,8 @@ const QUOTATION_LOAD_TTL_MS = 10 * 60 * 1000;
 let QUOTE_ITEM_SCROLL_SEQUENCE = 0;
 let QUOTE_ITEM_HIGHLIGHT_TIMER = null;
 let QUOTE_ITEM_PENDING_SCROLL_LINE_ID = '';
+let QUOTE_PRODUCT_SEARCH_NAV_SEQUENCE = 0;
+let QUOTE_PRODUCT_SEARCH_HIGHLIGHT_TIMER = null;
 let QUOTE_SAVE_IN_PROGRESS = false;
 let QUOTE_SAVE_REQUEST_ID = '';
 let QUOTE_SAVE_REQUEST_SIGNATURE = '';
@@ -2543,6 +2545,209 @@ function renderCart() {
   setupCartReorder();
 }
 
+function quoteNextAnimationFrame() {
+  if (typeof requestAnimationFrame === 'function') {
+    return new Promise(resolve => requestAnimationFrame(resolve));
+  }
+  return Promise.resolve();
+}
+
+function getProductSearchInput() {
+  return document.querySelector('[data-role="quotation-product-search"]') || document.getElementById('productSearch');
+}
+
+function getProductSearchSection(input) {
+  const source = input || getProductSearchInput();
+  return document.querySelector('[data-role="quotation-product-search-section"]')
+    || document.getElementById('quotationProductSearchSection')
+    || (source && source.closest ? source.closest('.card') : null)
+    || source;
+}
+
+function getProductSearchScrollTarget(input) {
+  const source = input || getProductSearchInput();
+  return source && source.closest ? source.closest('.quote-product-search-field') || source : source;
+}
+
+function isDevelopmentHost() {
+  const host = String(window.location && window.location.hostname || '').toLowerCase();
+  return host === 'localhost' || host === '127.0.0.1' || host === '';
+}
+
+function showProductSearchNavigationToast(message) {
+  if (typeof toast === 'function') {
+    toast(message);
+    return;
+  }
+  const element = document.getElementById('toast');
+  if (element) {
+    element.textContent = message;
+    element.classList.add('show');
+  }
+}
+
+async function waitForProductSearchInput(maxAttempts) {
+  const attempts = Math.max(1, Math.min(Number(maxAttempts || 3), 3));
+  for (let index = 0; index < attempts; index += 1) {
+    const input = getProductSearchInput();
+    if (input) {
+      return input;
+    }
+    await quoteNextAnimationFrame();
+  }
+  return getProductSearchInput();
+}
+
+async function ensureProductSearchVisible() {
+  const section = getProductSearchSection();
+  if (section && section.classList) {
+    section.classList.remove('hidden', 'is-hidden', 'is-collapsed', 'collapsed');
+    section.removeAttribute('hidden');
+    if (section.getAttribute('aria-hidden') === 'true') {
+      section.setAttribute('aria-hidden', 'false');
+    }
+  }
+  await quoteNextAnimationFrame();
+  await quoteNextAnimationFrame();
+  return section;
+}
+
+function getTopScrollOffset() {
+  const candidates = Array.from(document.querySelectorAll('.topbar,.mobile-header,.app-header,[data-fixed-header]'));
+  const height = candidates.reduce((maxHeight, element) => {
+    if (!element || !element.getBoundingClientRect) return maxHeight;
+    const style = window.getComputedStyle ? window.getComputedStyle(element) : {};
+    const position = String(style.position || '');
+    if (position !== 'fixed' && position !== 'sticky') return maxHeight;
+    const rect = element.getBoundingClientRect();
+    if (rect.bottom <= 0 || rect.top > 12) return maxHeight;
+    return Math.max(maxHeight, rect.height || 0);
+  }, 0);
+  return height + 18;
+}
+
+function getScrollContainerForElement(element) {
+  var current = element && element.parentElement;
+  while (current && current !== document.body && current !== document.documentElement) {
+    const style = window.getComputedStyle ? window.getComputedStyle(current) : {};
+    const overflowY = String(style.overflowY || style.overflow || '').toLowerCase();
+    if ((overflowY === 'auto' || overflowY === 'scroll') && current.scrollHeight > current.clientHeight + 1) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return window;
+}
+
+function scrollToProductSearch(input) {
+  const target = getProductSearchScrollTarget(input);
+  if (!target || !target.getBoundingClientRect) {
+    return false;
+  }
+  const behavior = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+  const offset = getTopScrollOffset();
+  const container = getScrollContainerForElement(target);
+  if (container && container !== window) {
+    const targetRect = target.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    const top = targetRect.top - containerRect.top + container.scrollTop - offset;
+    try {
+      container.scrollTo({ top: Math.max(0, top), behavior: behavior });
+    } catch (error) {
+      container.scrollTop = Math.max(0, top);
+    }
+    return true;
+  }
+  const rect = target.getBoundingClientRect();
+  const pageTop = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+  const top = pageTop + rect.top - offset;
+  try {
+    window.scrollTo({ top: Math.max(0, top), behavior: behavior });
+  } catch (error) {
+    window.scrollTo(0, Math.max(0, top));
+  }
+  return true;
+}
+
+function focusProductSearch(input) {
+  if (!input || typeof input.focus !== 'function') {
+    return false;
+  }
+  try {
+    input.focus({ preventScroll: true });
+  } catch (error) {
+    input.focus();
+  }
+  try {
+    if (typeof input.setSelectionRange === 'function') {
+      const length = String(input.value || '').length;
+      input.setSelectionRange(length, length);
+    }
+  } catch (error) {}
+  return document.activeElement === input;
+}
+
+function highlightProductSearch(input) {
+  const target = getProductSearchScrollTarget(input) || input;
+  if (!target || !target.classList) {
+    return false;
+  }
+  if (QUOTE_PRODUCT_SEARCH_HIGHLIGHT_TIMER) {
+    clearTimeout(QUOTE_PRODUCT_SEARCH_HIGHLIGHT_TIMER);
+    QUOTE_PRODUCT_SEARCH_HIGHLIGHT_TIMER = null;
+  }
+  document.querySelectorAll('.product-search--navigation-highlight').forEach(element => {
+    element.classList.remove('product-search--navigation-highlight');
+  });
+  const cleanup = function () {
+    target.classList.remove('product-search--navigation-highlight');
+    target.removeEventListener('animationend', cleanup);
+    if (QUOTE_PRODUCT_SEARCH_HIGHLIGHT_TIMER) {
+      clearTimeout(QUOTE_PRODUCT_SEARCH_HIGHLIGHT_TIMER);
+      QUOTE_PRODUCT_SEARCH_HIGHLIGHT_TIMER = null;
+    }
+  };
+  target.addEventListener('animationend', cleanup, { once: true });
+  void target.offsetWidth;
+  target.classList.add('product-search--navigation-highlight');
+  QUOTE_PRODUCT_SEARCH_HIGHLIGHT_TIMER = setTimeout(cleanup, 1600);
+  return true;
+}
+
+function cancelPendingQuoteItemScroll() {
+  QUOTE_ITEM_SCROLL_SEQUENCE += 1;
+  QUOTE_ITEM_PENDING_SCROLL_LINE_ID = '';
+}
+
+async function navigateToProductSearch(event) {
+  if (event && typeof event.preventDefault === 'function') {
+    event.preventDefault();
+  }
+  const sequence = ++QUOTE_PRODUCT_SEARCH_NAV_SEQUENCE;
+  cancelPendingQuoteItemScroll();
+  await ensureProductSearchVisible();
+  if (sequence !== QUOTE_PRODUCT_SEARCH_NAV_SEQUENCE) {
+    return false;
+  }
+  const input = await waitForProductSearchInput(3);
+  if (!input) {
+    if (isDevelopmentHost() && typeof console !== 'undefined' && console.warn) {
+      console.warn('[quotation] Product search input not found');
+    }
+    showProductSearchNavigationToast('ไม่พบช่องค้นหาสินค้า กรุณาลองใหม่อีกครั้ง');
+    return false;
+  }
+  scrollToProductSearch(input);
+  await quoteNextAnimationFrame();
+  await quoteNextAnimationFrame();
+  if (sequence !== QUOTE_PRODUCT_SEARCH_NAV_SEQUENCE) {
+    return false;
+  }
+  focusProductSearch(input);
+  highlightProductSearch(input);
+  return true;
+}
+
 function getQuoteItemElement(lineId) {
   const id = String(lineId || '').trim();
   const cartList = document.getElementById('cartList');
@@ -2923,6 +3128,9 @@ if (typeof window !== 'undefined') {
   window.isProductForCurrentQuoteBusinessUnit = isProductForCurrentQuoteBusinessUnit;
   window.changeDiscount = changeDiscount;
   window.toggleFreeItem = toggleFreeItem;
+  window.navigateToProductSearch = navigateToProductSearch;
+  window.getProductSearchInput = getProductSearchInput;
+  window.cancelPendingQuoteItemScroll = cancelPendingQuoteItemScroll;
   if (typeof window.renderQuoteProductPicker === 'function') {
     window.renderProductPicker = window.renderQuoteProductPicker;
   }
