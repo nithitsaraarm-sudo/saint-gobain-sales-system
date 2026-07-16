@@ -113,6 +113,15 @@
 .header-user-text b{font-size:14px;font-weight:900;color:var(--text)}
 .header-user-text small{font-size:12px;color:var(--muted);margin-top:2px}
 .header-separator{width:1px;height:28px;background:var(--line);display:block}
+.hamb.sidebar-toggle{display:grid!important;place-items:center;position:static!important;top:auto!important;left:auto!important;z-index:auto!important;transition:background .16s ease,box-shadow .16s ease,transform .16s ease}
+.hamb.sidebar-toggle:hover,.hamb.sidebar-toggle:focus{background:#fff;box-shadow:0 8px 24px rgba(15,42,82,.08);outline:none}
+.sidebar{flex:0 0 270px;transition:width 250ms ease,flex-basis 250ms ease,padding 250ms ease,left 250ms ease}
+.main{transition:padding 250ms ease}
+.nav button{position:relative;min-width:0;transition:background 250ms ease,color 250ms ease,padding 250ms ease,justify-content 250ms ease}
+.nav-icon{flex:0 0 24px;text-align:center;font-size:20px;line-height:1}
+.nav-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:opacity 250ms ease,width 250ms ease}
+@media(min-width:901px){.app.sidebar-mini .sidebar{width:84px;flex-basis:84px;padding:24px 12px}.app.sidebar-mini .sidebar>div:first-child{height:0;opacity:0;overflow:hidden;margin:0}.app.sidebar-mini .nav button{justify-content:center;padding:14px 10px}.app.sidebar-mini .nav-label{width:0;opacity:0}.app.sidebar-mini .nav button:hover::after,.app.sidebar-mini .nav button:focus::after{content:attr(title);position:absolute;left:calc(100% + 10px);top:50%;transform:translateY(-50%);z-index:60;background:#08223c;color:#fff;border-radius:10px;padding:7px 10px;white-space:nowrap;font-size:12px;box-shadow:0 12px 30px rgba(15,42,82,.2);pointer-events:none}.app.sidebar-mini .nav button:hover::before,.app.sidebar-mini .nav button:focus::before{content:'';position:absolute;left:100%;top:50%;transform:translateY(-50%);border:6px solid transparent;border-right-color:#08223c;z-index:61}}
+@media(max-width:900px){.app.sidebar-mini .sidebar{width:270px;flex-basis:auto}.sidebar{width:270px;flex-basis:auto;z-index:40;transition:left 250ms ease}.overlay{z-index:30}.topbar{position:sticky;top:0;z-index:25;background:rgba(243,247,252,.9);backdrop-filter:blur(10px);border-radius:18px;padding:4px}.hamb.sidebar-toggle{flex:0 0 52px}}
 .quote-type-modal-card p{margin:4px 0 16px;color:var(--muted)}
 .quote-type-options{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .quote-type-option{border:1px solid var(--line);border-radius:20px;background:#fff;padding:18px;text-align:left;display:grid;gap:4px;font-weight:900}
@@ -202,7 +211,11 @@ body.quote-reordering .quote-line{touch-action:none}
 /* User management + role permissions */
 .quote-product-preferences{margin:10px 0 12px}
 .quote-preference-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0;color:#0f2a52}
-.quote-preference-head b{font-size:14px;font-weight:900}.quote-preference-head small{color:var(--muted);font-weight:800}
+.quote-preference-head b{font-size:14px;font-weight:900;margin-right:auto}.quote-preference-head small{color:var(--muted);font-weight:800}
+.quote-section-toggle{border:1px solid var(--line);background:#fff;color:var(--blue);border-radius:999px;width:32px;height:32px;display:grid;place-items:center;font-weight:900;transition:transform 200ms ease,background 200ms ease}
+.quote-section-toggle:hover,.quote-section-toggle:focus{background:#eef6ff;outline:none}
+.quote-preference-body{overflow:hidden;max-height:1400px;opacity:1;transition:max-height 200ms ease,opacity 200ms ease}
+.quote-product-preferences.is-collapsed .quote-preference-body{max-height:0;opacity:0;pointer-events:none}
 .quote-preference-list{display:grid;gap:8px}
 .quote-product-pref-card{align-items:center;gap:10px;border:1px solid var(--line);background:#fff;border-radius:16px;padding:10px;transition:box-shadow .16s ease,opacity .16s ease,transform .16s ease}
 .quote-product-pref-main{min-width:0;flex:1}.quote-product-pref-main b{display:inline;word-break:break-word}.quote-product-pref-main small{display:block;color:var(--muted);font-weight:700;line-height:1.35}
