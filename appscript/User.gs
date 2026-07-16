@@ -505,10 +505,16 @@ function updateProfile(payload) {
     if (userId !== String(auth.data.userId || '').trim() && !hasRole(auth.data, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN])) {
       return forbidden('Cannot update another user profile');
     }
-    const displayName = sanitizeUserText(body.displayName || auth.data.displayName || auth.data.username);
-    const jobTitle = sanitizeUserText(body.jobTitle || body.position || auth.data.jobTitle || auth.data.position);
-    const profileImageUrl = sanitizeUserText(body.profileImageUrl || body.photoUrl || auth.data.profileImageUrl || auth.data.photoUrl);
-    const phone = normalizePhone(body.phone);
+    const hasOwn = function (key) {
+      return Object.prototype.hasOwnProperty.call(body, key);
+    };
+    const displayName = sanitizeUserText(hasOwn('displayName') ? body.displayName : (auth.data.displayName || auth.data.fullName || auth.data.username));
+    const jobTitle = sanitizeUserText((hasOwn('jobTitle') || hasOwn('position')) ? (body.jobTitle || body.position) : (auth.data.jobTitle || auth.data.position));
+    const profileImageUrl = sanitizeUserText((hasOwn('profileImageUrl') || hasOwn('photoUrl')) ? (body.profileImageUrl || body.photoUrl) : (auth.data.profileImageUrl || auth.data.photoUrl));
+    const greetingText = body.greetingText !== undefined
+      ? sanitizeUserInputText(body.greetingText, 200)
+      : sanitizeUserInputText(auth.data.greetingText, 200);
+    const phone = hasOwn('phone') ? normalizePhone(body.phone) : normalizePhone(auth.data.phone);
     if (phone && !isValidPhone(phone)) return validationError('Invalid phone format');
     const updateObject = {
       fullName: displayName,
@@ -517,7 +523,8 @@ function updateProfile(payload) {
       jobTitle: jobTitle,
       profileImageUrl: profileImageUrl,
       photoUrl: profileImageUrl,
-      quoteDisplayName: sanitizeUserText(body.quoteDisplayName || displayName),
+      quoteDisplayName: sanitizeUserText(hasOwn('quoteDisplayName') ? body.quoteDisplayName : (auth.data.quoteDisplayName || displayName)),
+      greetingText: greetingText,
       updatedBy: userId,
       updatedAt: new Date().toISOString()
     };

@@ -18,7 +18,7 @@
 <body>
 <div id="loginView" class="login">
   <div class="login-card">
-    <div class="brand-title">SAINT-GOBAIN</div><div class="brand-sub">SALES SYSTEM</div>
+    <div class="brand-title" id="loginBrandCompany">SAINT-GOBAIN</div><div class="brand-sub" id="loginBrandSystem">SALES SYSTEM</div>
     <div class="tabs"><button id="tabLogin" class="active" onclick="showLoginTab('login')">เข้าสู่ระบบ</button></div>
     <div class="login-sub"><button id="tabReset" onclick="showLoginTab('reset')">Forgot password</button></div>
     <div id="loginPanel">
@@ -86,7 +86,9 @@
         <h1>ตั้งค่า</h1>
         <div class="settings-menu">
           <button class="setting-tile" onclick="openSettingPage('profile')"><span class="icon">👤</span><span><h3>โปรไฟล์ผู้ใช้งาน</h3><p>เปลี่ยนชื่อ ตำแหน่ง เบอร์โทร และรูปโปรไฟล์</p></span><span class="arrow">›</span></button>
-          <button class="setting-tile" onclick="openSettingPage('brand')"><span class="icon">🏢</span><span><h3>ชื่อบริษัทและคำทักทาย</h3><p>ตั้งชื่อ SAINT-GOBAIN ชื่อระบบ และข้อความทักทายตามเวลา</p></span><span class="arrow">›</span></button>
+          <button class="setting-tile" onclick="openSettingPage('greeting')"><span class="icon">💬</span><span><h3>คำทักทายส่วนตัว</h3><p>ตั้งข้อความทักทายที่แสดงเฉพาะบัญชีของคุณ</p></span><span class="arrow">›</span></button>
+          <button class="setting-tile" data-super-admin-only="true" onclick="openSettingPage('identity')"><span class="icon">🏢</span><span><h3>ชื่อบริษัทและชื่อระบบ</h3><p>ตั้งชื่อบริษัทและชื่อระบบที่แสดงบน Login และ Sidebar</p></span><span class="arrow">›</span></button>
+          <button class="setting-tile" data-super-admin-only="true" onclick="openSettingPage('systemGreeting')"><span class="icon">📣</span><span><h3>คำทักทายจากระบบ / ข่าวสาร</h3><p>ตั้งข้อความต้อนรับและคำทักทายตามช่วงเวลา</p></span><span class="arrow">›</span></button>
           <button class="setting-tile" onclick="openSettingPage('data')"><span class="icon">＋</span><span><h3>เพิ่มข้อมูล</h3><p>เพิ่มร้านค้า สินค้า และโปรโมชั่น</p></span><span class="arrow">›</span></button>
           <button class="setting-tile" onclick="openSettingPage('account')"><span class="icon">🔐</span><span><h3>บัญชีและความปลอดภัย</h3><p>ออกจากระบบ และข้อมูลสำหรับรีเซ็ตรหัสผ่าน</p></span><span class="arrow">›</span></button>
           <button class="setting-tile" onclick="openSettingPage('password')"><span class="icon">🔑</span><span><h3>Change Password</h3><p>เปลี่ยนรหัสผ่านของบัญชีปัจจุบัน</p></span><span class="arrow">›</span></button>
@@ -107,17 +109,33 @@
         </div>
       </div>
 
-      <div id="settingBrand" class="setting-sub">
+      <div id="settingGreeting" class="setting-sub">
         <button class="ghost" onclick="openSettingPage('home')">← กลับ</button>
-        <div class="card" style="margin-top:16px"><h2>ชื่อบริษัทและคำทักทาย</h2>
+        <div class="card" style="margin-top:16px"><h2>คำทักทายส่วนตัว</h2>
+          <p style="color:var(--muted)">ข้อความนี้ผูกกับบัญชีของคุณเท่านั้น และผู้ใช้อื่นไม่สามารถแก้ไขแทนได้</p>
+          <div class="field"><label>คำทักทายส่วนตัว</label><input id="setPersonalGreeting" maxlength="200" placeholder="เช่น ขอให้วันนี้เป็นวันที่ดี"></div>
+          <button id="savePersonalGreetingBtn" class="primary" onclick="savePersonalGreetingSettings()">บันทึกคำทักทายส่วนตัว</button>
+        </div>
+      </div>
+
+      <div id="settingIdentity" class="setting-sub" data-super-admin-only="true">
+        <button class="ghost" onclick="openSettingPage('home')">← กลับ</button>
+        <div class="card" style="margin-top:16px"><h2>ชื่อบริษัทและชื่อระบบ</h2>
           <div class="field"><label>ชื่อบริษัท ภาษาอังกฤษ</label><input id="setCompany"></div>
           <div class="field"><label>ชื่อระบบ</label><input id="setAppName"></div>
+          <button id="saveSystemIdentityBtn" class="primary" onclick="saveSystemIdentitySettings()">บันทึกชื่อบริษัทและชื่อระบบ</button>
+        </div>
+      </div>
+
+      <div id="settingSystemGreeting" class="setting-sub" data-super-admin-only="true">
+        <button class="ghost" onclick="openSettingPage('home')">← กลับ</button>
+        <div class="card" style="margin-top:16px"><h2>คำทักทายจากระบบ / ข่าวสาร</h2>
           <div class="field"><label>ข้อความต้อนรับ</label><input id="setWelcome"></div>
           <div class="field"><label>คำทักทายตอนเช้า</label><input id="setMorning"></div>
           <div class="field"><label>คำทักทายตอนบ่าย</label><input id="setAfternoon"></div>
           <div class="field"><label>คำทักทายตอนเย็น</label><input id="setEvening"></div>
           <div class="field"><label>คำทักทายตอนดึก</label><input id="setNight"></div>
-          <button id="saveSettingsBtn" class="primary" onclick="saveSettings()">บันทึกตั้งค่า</button>
+          <button id="saveSettingsBtn" class="primary" onclick="saveSystemGreetingSettings()">บันทึกคำทักทายจากระบบ</button>
         </div>
       </div>
 
@@ -214,11 +232,11 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   });
 }
 </script>
-<script src="js/config.js?v=0.5.2"></script>
-<script src="js/api.js?v=0.5.2"></script>
-<script src="js/auth.js?v=0.5.2"></script>
-<script src="js/app.js?v=0.5.2"></script>
-<script src="js/quotation.js?v=0.5.2"></script>
+<script src="js/config.js?v=0.5.3"></script>
+<script src="js/api.js?v=0.5.3"></script>
+<script src="js/auth.js?v=0.5.3"></script>
+<script src="js/app.js?v=0.5.3"></script>
+<script src="js/quotation.js?v=0.5.3"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 </body></html>

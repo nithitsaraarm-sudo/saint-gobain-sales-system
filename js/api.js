@@ -1,4 +1,4 @@
-window.APP_VERSION = window.APP_VERSION || '0.5.2';
+window.APP_VERSION = window.APP_VERSION || '0.5.3';
 const APP_ENV = String(window.APP_ENV || 'production').trim().toLowerCase();
 const API_MOCK_MODE = APP_ENV === 'development';
 const GAS_WEB_APP_URL =
@@ -10,6 +10,7 @@ const CACHE_KEYS = {
   customers: 'sg_customers_cache',
   products: 'sg_products_cache',
   bootstrap: 'sg_bootstrap_cache',
+  publicSettings: 'sg_public_settings_cache',
   discount: 'sg_discount_cache',
   quotation: 'sg_quotation_cache',
   quotationHistory: 'sg_quotation_history_cache'
@@ -17,6 +18,8 @@ const CACHE_KEYS = {
 const API_TIMEOUT_MS = 30000;
 const READ_ACTIONS = [
   'bootstrap',
+  'getPublicSystemSettings',
+  'getSystemIdentitySettings',
   'customers',
   'getCustomers',
   'customer',
@@ -56,6 +59,7 @@ const WRITE_ACTIONS = [
   'saveProduct',
   'savePromotion',
   'updateSettings',
+  'updateSystemIdentitySettings',
   'createQuotation',
   'duplicateQuotation',
   'cancelQuotation',
@@ -117,6 +121,12 @@ function clearCache(key) {
   } catch (error) {
     // Cache is best-effort only.
   }
+}
+
+function invalidateBootstrapApiCache() {
+  bootstrapApiCache = null;
+  bootstrapApiPromise = null;
+  clearCache(CACHE_KEYS.bootstrap);
 }
 
 function isUsableBootstrapCache(data) {
@@ -299,6 +309,32 @@ function callApi(action, payload) {
     return bootstrapApiPromise;
   }
 
+  if (normalizedAction === 'getPublicSystemSettings') {
+    if (body.force) {
+      clearCache(CACHE_KEYS.publicSettings);
+      delete pendingApiRequests[requestKey];
+    }
+    const cachedPublicSettings = !body.force ? getCache(CACHE_KEYS.publicSettings) : null;
+    if (cachedPublicSettings) {
+      logApiDebug(normalizedAction, 'cached');
+      return Promise.resolve({ ok: true, data: cachedPublicSettings, cached: true });
+    }
+    if (pendingApiRequests[requestKey]) {
+      logApiDebug(normalizedAction, 'pending');
+      return pendingApiRequests[requestKey];
+    }
+    logApiDebug(normalizedAction, 'network');
+    pendingApiRequests[requestKey] = runApiRequest(normalizedAction, body).then(function (response) {
+      if (response && response.ok && response.data) {
+        setCache(CACHE_KEYS.publicSettings, response.data, 15);
+      }
+      return response;
+    }).finally(function () {
+      delete pendingApiRequests[requestKey];
+    });
+    return pendingApiRequests[requestKey];
+  }
+
   if (normalizedAction === 'loadQuotation') {
     const quoteId = getQuoteIdFromPayload(body);
     const cachedQuotation = getCachedQuotation(quoteId);
@@ -448,6 +484,16 @@ function apiPost(action, payload, options) {
 
 function mockApi(action, payload) {
   const data = payload || {};
+  const normalizeMockProductReference = value => String(value || '').trim().toLowerCase();
+  const mockProductMatchesReference = (product, reference) => {
+    const target = normalizeMockProductReference(reference);
+    return Boolean(target && ['productId','sku','productCode','id','itemCode'].some(field => normalizeMockProductReference(product && product[field]) === target));
+  };
+  const findMockProductByReference = reference => (window.DB?.products || []).find(product => mockProductMatchesReference(product, reference));
+  const mockPublicSettings = () => {
+    window.__mockPublicSettings = window.__mockPublicSettings || { companyName: 'SAINT-GOBAIN', systemName: 'SALES SYSTEM', appName: 'SALES SYSTEM' };
+    return window.__mockPublicSettings;
+  };
   if (action === 'demoLogin') {
     return { ok: false, code: 'FORBIDDEN', message: 'Demo Login is disabled' };
   }
@@ -466,7 +512,11 @@ function mockApi(action, payload) {
     case 'demoLogin':
       return { ok: false, code: 'FORBIDDEN', message: 'Demo Login is disabled' };
     case 'bootstrap':
-      return { ok: true, data: { settings: { companyName: 'SAINT-GOBAIN', appName: 'SALES SYSTEM', welcomeText: 'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ', vatRate: 7 }, counts: { customers: 0, products: 0 }, quotes: [], quoteLines: [], sheetInitialized: true } };
+      return { ok: true, data: { settings: Object.assign({}, mockPublicSettings(), { welcomeText: 'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ', vatRate: 7 }), publicSettings: mockPublicSettings(), counts: { customers: 0, products: 0 }, quotes: [], quoteLines: [], sheetInitialized: true } };
+    case 'getPublicSystemSettings':
+      return { ok: true, data: mockPublicSettings(), message: 'Mock public settings loaded' };
+    case 'getSystemIdentitySettings':
+      return { ok: true, data: mockPublicSettings(), message: 'Mock system identity loaded' };
     case 'customers':
       return { ok: true, data: [] };
     case 'products':
@@ -485,6 +535,15 @@ function mockApi(action, payload) {
       return { ok: true, data: { profileImageUrl: data.profileImageData || '', photoUrl: data.profileImageData || '' }, message: 'Mock profile image uploaded' };
     case 'updateSettings':
       return { ok: true, data: data, message: 'Mock settings saved' };
+    case 'updateSystemIdentitySettings':
+      window.__mockPublicSettings = {
+        companyName: String(data.companyName || 'SAINT-GOBAIN').trim() || 'SAINT-GOBAIN',
+        systemName: String(data.systemName || data.appName || 'SALES SYSTEM').trim() || 'SALES SYSTEM',
+        appName: String(data.systemName || data.appName || 'SALES SYSTEM').trim() || 'SALES SYSTEM'
+      };
+      clearCache(CACHE_KEYS.publicSettings);
+      invalidateBootstrapApiCache();
+      return { ok: true, data: window.__mockPublicSettings, message: 'บันทึกชื่อบริษัทและชื่อระบบเรียบร้อยแล้ว' };
     case 'saveCustomer':
     case 'updateCustomer':
       return { ok: true, data: data, message: 'Mock customer saved' };
@@ -509,21 +568,21 @@ function mockApi(action, payload) {
     case 'addFavoriteProduct':
       window.__mockFavoriteProducts=window.__mockFavoriteProducts||[];
       if(window.__mockFavoriteProducts.length>=20)return {ok:false,message:'Maximum favorite products reached'};
-      if(!window.__mockFavoriteProducts.some(p=>String(p.productId||p.sku||p.id)===String(data.productId))){const product=(window.DB?.products||[]).find(p=>String(p.productId||p.sku||p.id)===String(data.productId));if(product)window.__mockFavoriteProducts.push(Object.assign({},product,{isFavoriteProduct:true}));}
+      if(!window.__mockFavoriteProducts.some(p=>mockProductMatchesReference(p,data.productId))){const product=findMockProductByReference(data.productId);if(product)window.__mockFavoriteProducts.push(Object.assign({},product,{isFavoriteProduct:true}));}
       return {ok:true,data:data,message:'Favorite product saved'};
     case 'removeFavoriteProduct':
-      window.__mockFavoriteProducts=(window.__mockFavoriteProducts||[]).filter(p=>String(p.productId||p.sku||p.id)!==String(data.productId));
+      window.__mockFavoriteProducts=(window.__mockFavoriteProducts||[]).filter(p=>!mockProductMatchesReference(p,data.productId));
       return {ok:true,data:data,message:'Favorite product removed'};
     case 'addPinnedProduct':
       window.__mockPinnedProducts=window.__mockPinnedProducts||[];
       if(window.__mockPinnedProducts.length>=5)return {ok:false,message:'Maximum pinned products reached'};
-      if(!window.__mockPinnedProducts.some(p=>String(p.productId||p.sku||p.id)===String(data.productId))){const product=(window.DB?.products||[]).find(p=>String(p.productId||p.sku||p.id)===String(data.productId));if(product)window.__mockPinnedProducts.push(Object.assign({},product,{isPinnedProduct:true,pinnedSortOrder:window.__mockPinnedProducts.length+1}));}
+      if(!window.__mockPinnedProducts.some(p=>mockProductMatchesReference(p,data.productId))){const product=findMockProductByReference(data.productId);if(product)window.__mockPinnedProducts.push(Object.assign({},product,{isPinnedProduct:true,pinnedSortOrder:window.__mockPinnedProducts.length+1}));}
       return {ok:true,data:data,message:'Pinned product saved'};
     case 'removePinnedProduct':
-      window.__mockPinnedProducts=(window.__mockPinnedProducts||[]).filter(p=>String(p.productId||p.sku||p.id)!==String(data.productId)).map((p,i)=>Object.assign({},p,{pinnedSortOrder:i+1}));
+      window.__mockPinnedProducts=(window.__mockPinnedProducts||[]).filter(p=>!mockProductMatchesReference(p,data.productId)).map((p,i)=>Object.assign({},p,{pinnedSortOrder:i+1}));
       return {ok:true,data:data,message:'Pinned product removed'};
     case 'reorderPinnedProducts':
-      window.__mockPinnedProducts=(data.productIds||[]).map((id,i)=>{const product=(window.__mockPinnedProducts||[]).find(p=>String(p.productId||p.sku||p.id)===String(id));return product?Object.assign({},product,{pinnedSortOrder:i+1}):null;}).filter(Boolean);
+      window.__mockPinnedProducts=(data.productIds||[]).map((id,i)=>{const product=(window.__mockPinnedProducts||[]).find(p=>mockProductMatchesReference(p,id));return product?Object.assign({},product,{pinnedSortOrder:i+1}):null;}).filter(Boolean);
       return {ok:true,data:data,message:'Pinned products reordered'};
     case 'saveProduct':
       return { ok: true, data: data, message: 'Mock product saved' };
@@ -553,5 +612,6 @@ window.jsonpApi = apiJsonpGet;
 window.setCache = setCache;
 window.getCache = getCache;
 window.clearCache = clearCache;
+window.invalidateBootstrapApiCache = invalidateBootstrapApiCache;
 window.CACHE_KEYS = CACHE_KEYS;
 window.clearQuotationCache = clearQuotationCache;
