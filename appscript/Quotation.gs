@@ -147,13 +147,21 @@ function addQuotationItem(quoteId, productId, qty) {
       lineOrder: lineOrder,
       sortOrder: lineOrder,
       productId: String(productId).trim(),
+      productCode: String(product.productCode || product.sku || product.productId || productId).trim(),
+      sku: String(product.sku || product.productCode || product.productId || productId).trim(),
       productBusinessUnit: lineProductCheck.data && lineProductCheck.data.productBusinessUnit || '',
       productName: String(product.productName || product.name || product.product || '').trim(),
       qty: quantity,
       listPrice: listPrice,
       discountPercent: discountPercent,
+      unitPrice: netPrice,
       netPrice: netPrice,
       lineTotal: lineTotal,
+      vat: roundCurrency(lineTotal * 0.07),
+      grandTotal: roundCurrency(lineTotal + roundCurrency(lineTotal * 0.07)),
+      isFreeItem: false,
+      freeItem: false,
+      isFree: false,
       status: LINE_STATUSES.ACTIVE,
       createdAt: now,
       updatedAt: now
@@ -198,6 +206,7 @@ function updateQuotationItem(quoteId, lineId, qty) {
     if (line.status === LINE_STATUSES.REMOVED) {
       return fail('Cannot update removed quotation line');
     }
+    const isFreeItem = getQuotationPayloadFreeState_(line);
     const productResult = getProduct(line.productId);
     if (!productResult.ok) {
       return productResult;
@@ -205,15 +214,18 @@ function updateQuotationItem(quoteId, lineId, qty) {
     const product = productResult.data || {};
     const discountResult = getDiscount(quote.customerId, getProductGroupCode(product));
     const listPrice = roundCurrency(parseNumericValue(product.listPrice || product.price || line.listPrice || 0));
-    const discountPercent = discountResult.ok ? roundCurrency(parseNumericValue(discountResult.data && discountResult.data.discountPercent)) : 0;
-    const netPrice = roundCurrency(listPrice * (1 - discountPercent / 100));
+    const discountPercent = isFreeItem ? 0 : (discountResult.ok ? roundCurrency(parseNumericValue(discountResult.data && discountResult.data.discountPercent)) : 0);
+    const netPrice = isFreeItem ? 0 : roundCurrency(listPrice * (1 - discountPercent / 100));
     const lineTotal = roundCurrency(netPrice * quantity);
     const updateObject = {
       qty: quantity,
       listPrice: listPrice,
       discountPercent: discountPercent,
+      unitPrice: netPrice,
       netPrice: netPrice,
       lineTotal: lineTotal,
+      vat: isFreeItem ? 0 : roundCurrency(lineTotal * 0.07),
+      grandTotal: isFreeItem ? 0 : roundCurrency(lineTotal + roundCurrency(lineTotal * 0.07)),
       updatedAt: new Date().toISOString()
     };
     const result = updateRowById(QUOTE_LINES_SHEET, 'lineId', lineId, updateObject);
@@ -384,11 +396,11 @@ function saveQuotationPayload(payload) {
 
     const now = new Date().toISOString();
     const requestedQuoteId = String(data.quoteId || '').trim();
-    const subtotal = roundCurrency(data.subtotal !== undefined ? parseQuotationNumericValue(data.subtotal) : sumQuotationItems(items, 'lineTotal'));
-    const vat = roundCurrency(data.vat !== undefined ? parseQuotationNumericValue(data.vat) : sumQuotationItems(items, 'vat'));
+    var subtotal = roundCurrency(data.subtotal !== undefined ? parseQuotationNumericValue(data.subtotal) : sumQuotationItems(items, 'lineTotal'));
+    var vat = roundCurrency(data.vat !== undefined ? parseQuotationNumericValue(data.vat) : sumQuotationItems(items, 'vat'));
     const shipping = roundCurrency(parseQuotationNumericValue(data.shipping));
     const specialDiscount = roundCurrency(parseQuotationNumericValue(data.specialDiscount));
-    const grandTotal = roundCurrency(data.grandTotal !== undefined ? parseQuotationNumericValue(data.grandTotal) : subtotal + vat + shipping - specialDiscount);
+    var grandTotal = roundCurrency(data.grandTotal !== undefined ? parseQuotationNumericValue(data.grandTotal) : subtotal + vat + shipping - specialDiscount);
     const status = normalizeQuotationStatus(data.status, QUOTE_STATUSES.SAVED);
     if (isInvalidExplicitQuoteType(data.quoteType || data.businessUnit)) {
       return validationError('businessUnit must be WEBER or GYPROC');
@@ -398,10 +410,18 @@ function saveQuotationPayload(payload) {
       return businessUnitCheck;
     }
     const productBusinessUnits = businessUnitCheck.data && businessUnitCheck.data.productBusinessUnits || {};
+    const canonicalProductIds = businessUnitCheck.data && businessUnitCheck.data.canonicalProductIds || {};
     const normalizedItems = items.map(function (rawItem, index) {
-      const rawProductId = String(rawItem && rawItem.productId || '').trim();
-      return normalizeQuotationPayloadItem(rawItem, index + 1, productBusinessUnits[normalizeString(rawProductId)]);
+      const rawProductId = String(rawItem && (rawItem.productId || rawItem.productCode || rawItem.sku) || '').trim();
+      return normalizeQuotationPayloadItem(rawItem, index + 1, productBusinessUnits[normalizeString(rawProductId)], canonicalProductIds[normalizeString(rawProductId)]);
     });
+    const lineValidation = validateNormalizedQuotationPayloadItems_(normalizedItems);
+    if (!lineValidation.ok) {
+      return lineValidation;
+    }
+    subtotal = sumQuotationItems(normalizedItems, 'lineTotal');
+    vat = sumQuotationItems(normalizedItems, 'vat');
+    grandTotal = roundCurrency(subtotal + vat + shipping - specialDiscount);
 
     lock = LockService.getScriptLock();
     lockAcquired = lock.tryLock(QUOTATION_SAVE_LOCK_TIMEOUT_MS);
@@ -583,10 +603,13 @@ function ensureUniqueQuoteNoForSave_(quoteNo, quoteId) {
 function buildQuotationLineObject_(quoteId, item) {
   return {
     quoteId: quoteId,
+    lineId: item.lineId,
     lineNo: item.lineNo,
     lineOrder: item.lineOrder,
     sortOrder: item.sortOrder,
     productId: item.productId,
+    productCode: item.productCode,
+    sku: item.sku,
     productBusinessUnit: item.productBusinessUnit,
     productName: item.productName,
     unit: item.unit,
@@ -594,9 +617,13 @@ function buildQuotationLineObject_(quoteId, item) {
     listPrice: item.listPrice,
     discountPercent: item.discountPercent,
     unitPrice: item.unitPrice,
+    netPrice: item.netPrice,
     lineTotal: item.lineTotal,
     vat: item.vat,
     grandTotal: item.grandTotal,
+    isFreeItem: item.isFreeItem,
+    freeItem: item.freeItem,
+    isFree: item.isFree,
     status: item.status
   };
 }
@@ -797,20 +824,42 @@ function verifyQuotationSaveResult_(quoteId, expectedLineCount) {
   return success({ quoteId: quoteId, lineCount: actualLineCount });
 }
 
-function normalizeQuotationPayloadItem(item, lineNo, productBusinessUnit) {
+function parseQuotationBooleanValue_(value) {
+  if (value === true) return true;
+  if (value === false) return false;
+  const text = String(value || '').trim().toLowerCase();
+  return text === 'true' || text === 'yes' || text === '1' || text === 'y' || text === 'free' || text === 'gift' || text === 'แถม';
+}
+
+function getQuotationPayloadFreeState_(item) {
   const data = item || {};
+  return parseQuotationBooleanValue_(data.isFreeItem) || parseQuotationBooleanValue_(data.isFree) || parseQuotationBooleanValue_(data.freeItem) || parseQuotationBooleanValue_(data.isGift) || parseQuotationBooleanValue_(data.free);
+}
+
+function getQuotationPayloadLineId_(item) {
+  const value = String(item && item.lineId || '').trim();
+  return value || generateId('LINE');
+}
+
+function normalizeQuotationPayloadItem(item, lineNo, productBusinessUnit, canonicalProductId) {
+  const data = item || {};
+  const isFreeItem = getQuotationPayloadFreeState_(data);
   const qty = roundCurrency(parseQuotationNumericValue(data.qty || 1));
   const listPrice = roundCurrency(parseQuotationNumericValue(data.listPrice));
-  const discountPercent = roundCurrency(parseQuotationNumericValue(data.discountPercent || data.discount));
-  const unitPrice = roundCurrency(data.unitPrice !== undefined ? parseQuotationNumericValue(data.unitPrice) : listPrice * (1 - discountPercent / 100));
-  const lineTotal = roundCurrency(data.lineTotal !== undefined ? parseQuotationNumericValue(data.lineTotal) : unitPrice * qty);
-  const vat = roundCurrency(data.vat !== undefined ? parseQuotationNumericValue(data.vat) : lineTotal * 0.07);
-  const grandTotal = roundCurrency(data.grandTotal !== undefined ? parseQuotationNumericValue(data.grandTotal) : lineTotal + vat);
+  const discountPercent = isFreeItem ? 0 : roundCurrency(parseQuotationNumericValue(data.discountPercent || data.discount));
+  const unitPrice = isFreeItem ? 0 : roundCurrency(data.unitPrice !== undefined ? parseQuotationNumericValue(data.unitPrice) : listPrice * (1 - discountPercent / 100));
+  const lineTotal = isFreeItem ? 0 : roundCurrency(data.lineTotal !== undefined ? parseQuotationNumericValue(data.lineTotal) : unitPrice * qty);
+  const vat = isFreeItem ? 0 : roundCurrency(data.vat !== undefined ? parseQuotationNumericValue(data.vat) : lineTotal * 0.07);
+  const grandTotal = isFreeItem ? 0 : roundCurrency(data.grandTotal !== undefined ? parseQuotationNumericValue(data.grandTotal) : lineTotal + vat);
+  const productId = String(canonicalProductId || data.productId || data.productCode || data.sku || '').trim();
   return {
+    lineId: getQuotationPayloadLineId_(data),
     lineNo: lineNo,
     lineOrder: lineNo,
     sortOrder: lineNo,
-    productId: String(data.productId || '').trim(),
+    productId: productId,
+    productCode: String(data.productCode || productId).trim(),
+    sku: String(data.sku || data.productCode || productId).trim(),
     productBusinessUnit: getQuotationProductBusinessUnit({ businessUnit: productBusinessUnit || data.productBusinessUnit || data.businessUnit || data.quoteType || data.brand }),
     productName: String(data.productName || '').trim(),
     unit: String(data.unit || '').trim(),
@@ -818,11 +867,62 @@ function normalizeQuotationPayloadItem(item, lineNo, productBusinessUnit) {
     listPrice: listPrice,
     discountPercent: discountPercent,
     unitPrice: unitPrice,
+    netPrice: unitPrice,
     lineTotal: lineTotal,
     vat: vat,
     grandTotal: grandTotal,
+    isFreeItem: isFreeItem,
+    freeItem: isFreeItem,
+    isFree: isFreeItem,
     status: String(data.status || LINE_STATUSES.ACTIVE).trim() || LINE_STATUSES.ACTIVE
   };
+}
+
+function getQuotationPayloadProductKey_(item) {
+  const data = item || {};
+  return normalizeString(data.productId || data.productCode || data.sku);
+}
+
+function validateNormalizedQuotationPayloadItems_(items) {
+  const list = Array.isArray(items) ? items : [];
+  const lineIds = {};
+  const paidProductKeys = {};
+  const freeProductKeys = {};
+  for (var i = 0; i < list.length; i++) {
+    const item = list[i] || {};
+    const lineId = String(item.lineId || '').trim();
+    const productKey = getQuotationPayloadProductKey_(item);
+    const isFreeItem = item.isFreeItem === true;
+    if (!lineId) {
+      return fail('lineId is required', 'INVALID_QUOTE_LINE', { index: i + 1 });
+    }
+    const normalizedLineId = normalizeString(lineId);
+    if (lineIds[normalizedLineId]) {
+      return fail('Duplicate lineId detected', 'DUPLICATE_LINE_ID', { lineId: lineId });
+    }
+    lineIds[normalizedLineId] = true;
+    if (!productKey) {
+      return fail('productId is required', 'PRODUCT_NOT_FOUND', { index: i + 1 });
+    }
+    if (typeof item.isFreeItem !== 'boolean') {
+      return fail('isFreeItem must be Boolean', 'INVALID_FREE_ITEM_STATE', { productId: item.productId || item.productCode || item.sku });
+    }
+    if (isFreeItem) {
+      if (freeProductKeys[productKey]) {
+        return fail('Duplicate free product line detected', 'DUPLICATE_FREE_PRODUCT_LINE', { productId: item.productId, lineId: lineId });
+      }
+      freeProductKeys[productKey] = true;
+      if (roundCurrency(parseQuotationNumericValue(item.unitPrice)) !== 0 || roundCurrency(parseQuotationNumericValue(item.lineTotal)) !== 0 || roundCurrency(parseQuotationNumericValue(item.vat)) !== 0 || roundCurrency(parseQuotationNumericValue(item.grandTotal)) !== 0) {
+        return fail('Free product line must have zero totals', 'INVALID_FREE_ITEM_STATE', { productId: item.productId, lineId: lineId });
+      }
+    } else {
+      if (paidProductKeys[productKey]) {
+        return fail('Duplicate paid product line detected', 'DUPLICATE_PAID_PRODUCT_LINE', { productId: item.productId, lineId: lineId });
+      }
+      paidProductKeys[productKey] = true;
+    }
+  }
+  return success(true);
 }
 
 function validateQuotationPayloadProductsBusinessUnit(items, quoteType) {
@@ -834,8 +934,9 @@ function validateQuotationPayloadProductsBusinessUnit(items, quoteType) {
     const products = Array.isArray(productsResult.data) ? productsResult.data : [];
     const list = Array.isArray(items) ? items : [];
     const productBusinessUnits = {};
+    const canonicalProductIds = {};
     for (var i = 0; i < list.length; i++) {
-      const productId = String(list[i] && list[i].productId || '').trim();
+      const productId = String(list[i] && (list[i].productId || list[i].productCode || list[i].sku) || '').trim();
       if (!productId) {
         return validationError('productId is required');
       }
@@ -845,15 +946,30 @@ function validateQuotationPayloadProductsBusinessUnit(items, quoteType) {
           return normalizeString(item.productId || item.id || item.sku || item.productCode) === normalizeString(productId);
         });
       if (!product) {
-        return notFound('Product not found');
+        return fail('Product not found', 'PRODUCT_NOT_FOUND', { productId: productId });
       }
       const match = validateProductForQuotationLine(product);
       if (!match.ok) {
         return match;
       }
-      productBusinessUnits[normalizeString(productId)] = match.data && match.data.productBusinessUnit || '';
+      const canonicalProductId = String(product.productId || product.sku || product.productCode || product.id || productId).trim();
+      const businessUnit = match.data && match.data.productBusinessUnit || '';
+      productBusinessUnits[normalizeString(productId)] = businessUnit;
+      canonicalProductIds[normalizeString(productId)] = canonicalProductId;
+      if (list[i] && list[i].productId) {
+        productBusinessUnits[normalizeString(list[i].productId)] = businessUnit;
+        canonicalProductIds[normalizeString(list[i].productId)] = canonicalProductId;
+      }
+      if (list[i] && list[i].productCode) {
+        productBusinessUnits[normalizeString(list[i].productCode)] = businessUnit;
+        canonicalProductIds[normalizeString(list[i].productCode)] = canonicalProductId;
+      }
+      if (list[i] && list[i].sku) {
+        productBusinessUnits[normalizeString(list[i].sku)] = businessUnit;
+        canonicalProductIds[normalizeString(list[i].sku)] = canonicalProductId;
+      }
     }
-    return success({ productBusinessUnits: productBusinessUnits });
+    return success({ productBusinessUnits: productBusinessUnits, canonicalProductIds: canonicalProductIds });
   } catch (error) {
     logError('validateQuotationPayloadProductsBusinessUnit', error);
     return fail(error && error.message ? error.message : 'Failed to validate quotation products');
@@ -1044,7 +1160,7 @@ function getQuoteHistoryHeaders() {
 }
 
 function getQuoteLineHeaders() {
-  return ['quoteId', 'lineNo', 'lineOrder', 'sortOrder', 'productId', 'productBusinessUnit', 'productName', 'unit', 'qty', 'listPrice', 'discountPercent', 'unitPrice', 'lineTotal', 'vat', 'grandTotal', 'status'];
+  return ['quoteId', 'lineId', 'lineNo', 'lineOrder', 'sortOrder', 'productId', 'productCode', 'sku', 'productBusinessUnit', 'productName', 'unit', 'qty', 'listPrice', 'discountPercent', 'unitPrice', 'netPrice', 'lineTotal', 'vat', 'grandTotal', 'isFreeItem', 'freeItem', 'isFree', 'status'];
 }
 
 function extractQuoteId(payload) {
@@ -1056,13 +1172,14 @@ function extractQuoteId(payload) {
 
 function normalizeLoadedQuotationLine(line) {
   const item = line || {};
+  const isFreeItem = getQuotationPayloadFreeState_(item);
   const qty = roundCurrency(parseQuotationNumericValue(item.qty || 0));
   const listPrice = roundCurrency(parseQuotationNumericValue(item.listPrice || 0));
-  const discountPercent = roundCurrency(parseQuotationNumericValue(item.discountPercent || item.discount || 0));
-  const unitPrice = roundCurrency(parseQuotationNumericValue(item.unitPrice || item.netPrice || (listPrice * (1 - discountPercent / 100))));
-  const lineTotal = roundCurrency(parseQuotationNumericValue(item.lineTotal || unitPrice * qty));
-  const vat = roundCurrency(parseQuotationNumericValue(item.vat || lineTotal * 0.07));
-  const grandTotal = roundCurrency(parseQuotationNumericValue(item.grandTotal || lineTotal + vat));
+  const discountPercent = isFreeItem ? 0 : roundCurrency(parseQuotationNumericValue(item.discountPercent || item.discount || 0));
+  const unitPrice = isFreeItem ? 0 : roundCurrency(parseQuotationNumericValue(item.unitPrice || item.netPrice || (listPrice * (1 - discountPercent / 100))));
+  const lineTotal = isFreeItem ? 0 : roundCurrency(parseQuotationNumericValue(item.lineTotal || unitPrice * qty));
+  const vat = isFreeItem ? 0 : roundCurrency(parseQuotationNumericValue(item.vat || lineTotal * 0.07));
+  const grandTotal = isFreeItem ? 0 : roundCurrency(parseQuotationNumericValue(item.grandTotal || lineTotal + vat));
   var productBusinessUnit = getQuotationProductBusinessUnit(item);
   if (!productBusinessUnit && item.productId) {
     const productResult = getProduct(item.productId);
@@ -1071,10 +1188,13 @@ function normalizeLoadedQuotationLine(line) {
     }
   }
   return Object.assign({}, item, {
+    lineId: String(item.lineId || '').trim(),
     lineNo: String(item.lineNo || item.lineOrder || item.sortOrder || '').trim(),
     lineOrder: String(item.lineOrder || item.sortOrder || item.lineNo || '').trim(),
     sortOrder: String(item.sortOrder || item.lineOrder || item.lineNo || '').trim(),
     productId: String(item.productId || '').trim(),
+    productCode: String(item.productCode || item.sku || item.productId || '').trim(),
+    sku: String(item.sku || item.productCode || item.productId || '').trim(),
     productBusinessUnit: productBusinessUnit,
     productName: String(item.productName || '').trim(),
     unit: String(item.unit || '').trim(),
@@ -1086,6 +1206,9 @@ function normalizeLoadedQuotationLine(line) {
     lineTotal: lineTotal,
     vat: vat,
     grandTotal: grandTotal,
+    isFreeItem: isFreeItem,
+    freeItem: isFreeItem,
+    isFree: isFreeItem,
     status: String(item.status || LINE_STATUSES.ACTIVE).trim() || LINE_STATUSES.ACTIVE
   });
 }
@@ -1240,6 +1363,8 @@ function duplicateQuotation(payload) {
       items: Array.isArray(original.lines) ? original.lines.map(function (line) {
         return {
           productId: line.productId,
+          productCode: line.productCode || line.sku || line.productId,
+          sku: line.sku || line.productCode || line.productId,
           lineOrder: line.lineOrder || line.sortOrder || line.lineNo,
           sortOrder: line.sortOrder || line.lineOrder || line.lineNo,
           productBusinessUnit: getQuotationProductBusinessUnit(line),
@@ -1249,9 +1374,13 @@ function duplicateQuotation(payload) {
           listPrice: line.listPrice,
           discountPercent: line.discountPercent,
           unitPrice: line.unitPrice,
+          netPrice: line.netPrice || line.unitPrice,
           lineTotal: line.lineTotal,
           vat: line.vat,
           grandTotal: line.grandTotal,
+          isFreeItem: getQuotationPayloadFreeState_(line),
+          freeItem: getQuotationPayloadFreeState_(line),
+          isFree: getQuotationPayloadFreeState_(line),
           status: LINE_STATUSES.ACTIVE
         };
       }) : [],
@@ -1587,6 +1716,7 @@ function recalcQuotationLine(line, customerId) {
   try {
     const productId = String(line.productId || '').trim();
     const quantity = roundCurrency(parseNumericValue(line.qty || 0));
+    const isFreeItem = getQuotationPayloadFreeState_(line);
     if (!productId || quantity <= 0) {
       return Object.assign({}, line, { qty: quantity, netPrice: 0, lineTotal: 0 });
     }
@@ -1597,15 +1727,21 @@ function recalcQuotationLine(line, customerId) {
     }
     const listPrice = roundCurrency(parseNumericValue(product.listPrice || product.price || line.listPrice || 0));
     const discountResult = getDiscount(customerId, getProductGroupCode(product));
-    const discountPercent = discountResult.ok ? roundCurrency(parseNumericValue(discountResult.data && discountResult.data.discountPercent)) : roundCurrency(parseNumericValue(line.discountPercent || 0));
-    const netPrice = roundCurrency(listPrice * (1 - discountPercent / 100));
+    const discountPercent = isFreeItem ? 0 : (discountResult.ok ? roundCurrency(parseNumericValue(discountResult.data && discountResult.data.discountPercent)) : roundCurrency(parseNumericValue(line.discountPercent || 0)));
+    const netPrice = isFreeItem ? 0 : roundCurrency(listPrice * (1 - discountPercent / 100));
     const lineTotal = roundCurrency(netPrice * quantity);
     return Object.assign({}, line, {
       qty: quantity,
       listPrice: listPrice,
       discountPercent: discountPercent,
+      unitPrice: netPrice,
       netPrice: netPrice,
-      lineTotal: lineTotal
+      lineTotal: lineTotal,
+      vat: isFreeItem ? 0 : roundCurrency(lineTotal * 0.07),
+      grandTotal: isFreeItem ? 0 : roundCurrency(lineTotal + roundCurrency(lineTotal * 0.07)),
+      isFreeItem: isFreeItem,
+      freeItem: isFreeItem,
+      isFree: isFreeItem
     });
   } catch (error) {
     logError('recalcQuotationLine', error);

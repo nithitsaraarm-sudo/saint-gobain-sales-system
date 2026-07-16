@@ -293,6 +293,21 @@ function getProductById(productId) {
 
 const PRODUCT_REFERENCE_FIELDS = ['productId', 'sku', 'productCode', 'id', 'itemCode'];
 const PRODUCT_ADD_IN_PROGRESS_KEYS = new Set();
+let QUOTE_PRODUCT_DECISION_MODAL = null;
+
+const QUOTE_PRODUCT_ADD_SOURCE = {
+  SEARCH: 'SEARCH',
+  FAVORITE: 'FAVORITE',
+  PINNED: 'PINNED'
+};
+
+const QUOTE_PRODUCT_ADD_MESSAGES = {
+  DUPLICATE_PAID_PRODUCT_LINE: 'สินค้านี้มีรายการซื้ออยู่แล้ว กรุณาปรับจำนวนจากรายการเดิม',
+  DUPLICATE_FREE_PRODUCT_LINE: 'สินค้านี้มีรายการสินค้าแถมอยู่แล้ว กรุณาปรับจำนวนจากรายการเดิม',
+  DUPLICATE_BOTH_PRODUCT_LINES: 'สินค้านี้มีทั้งรายการซื้อและสินค้าแถมอยู่แล้ว',
+  FREE_PRODUCT_ADDED: 'เพิ่มสินค้าแถมเรียบร้อยแล้ว',
+  PRODUCT_TYPE_CHANGE_DENIED: 'ไม่สามารถเปลี่ยนประเภทสินค้าได้ เพราะมีรายการประเภทเดียวกันอยู่แล้ว'
+};
 
 function normalizeProductReference(value) {
   return String(value == null ? '' : value).trim();
@@ -359,13 +374,192 @@ function resolveProductByReference(reference) {
   return { ok: false, code: 'PRODUCT_NOT_FOUND', references: references };
 }
 
+function normalizeQuoteProductKey(value) {
+  return normalizeProductReferenceForCompare(value);
+}
+
+function getQuoteProductKey(productOrLine) {
+  const item = productOrLine && typeof productOrLine === 'object' ? productOrLine : {};
+  return normalizeQuoteProductKey(getProductPrimaryKey(item) || item.productId || item.productCode || item.sku || productOrLine);
+}
+
+function getQuoteLineFreeState(line) {
+  return Boolean(line && (line.isFreeItem || line.isFree || line.freeItem || line.isGift));
+}
+
+function setQuoteLineFreeState(line, isFreeItem) {
+  const free = Boolean(isFreeItem);
+  line.isFree = free;
+  line.freeItem = free;
+  line.isFreeItem = free;
+  if (free) {
+    line.discountPercent = 0;
+    line.discount = 0;
+  }
+  return line;
+}
+
+function findQuoteLine(productReference, isFreeItem, excludeLineId) {
+  const targetKey = getQuoteProductKey(productReference);
+  const targetFreeState = Boolean(isFreeItem);
+  const excluded = String(excludeLineId || '').trim();
+  if (!targetKey) return null;
+  return CART.find(item => {
+    const sameLine = excluded && String(item.lineId || '').trim() === excluded;
+    return !sameLine && getQuoteProductKey(item) === targetKey && getQuoteLineFreeState(item) === targetFreeState;
+  }) || null;
+}
+
+function hasPaidLine(productReference, excludeLineId) {
+  return Boolean(findQuoteLine(productReference, false, excludeLineId));
+}
+
+function hasFreeLine(productReference, excludeLineId) {
+  return Boolean(findQuoteLine(productReference, true, excludeLineId));
+}
+
+function getQuoteProductLineState(productReference) {
+  return {
+    paidLine: findQuoteLine(productReference, false),
+    freeLine: findQuoteLine(productReference, true)
+  };
+}
+
+function ensureCartLineIdentityAndOrder() {
+  const seenLineIds = {};
+  CART.forEach((item, index) => {
+    const currentLineId = String(item.lineId || '').trim();
+    if (!currentLineId || seenLineIds[currentLineId]) {
+      item.lineId = createLineId();
+    }
+    seenLineIds[String(item.lineId)] = true;
+    item.lineNo = index + 1;
+    item.lineOrder = index + 1;
+    item.sortOrder = index + 1;
+    item.productId = normalizeProductReference(item.productId || item.productCode || item.sku || item.id);
+    item.productCode = normalizeProductReference(item.productCode || item.productId);
+    item.sku = normalizeProductReference(item.sku || item.productId);
+    setQuoteLineFreeState(item, getQuoteLineFreeState(item));
+  });
+}
+
+function createPaidQuoteLine(product, qty, discountPercent) {
+  const line = createCartLine(product, qty || 1, discountPercent || 0, { isFreeItem: false });
+  return setQuoteLineFreeState(line, false);
+}
+
+function createFreeQuoteLine(product, qty) {
+  const line = createCartLine(product, qty || 1, 0, { isFreeItem: true });
+  setQuoteLineFreeState(line, true);
+  return recalcLineItem(line);
+}
+
+function renderQuoteProductDecisionModal(title, html, actions) {
+  return new Promise(resolve => {
+    const modal = document.getElementById('modal');
+    const titleEl = document.getElementById('modalTitle');
+    const bodyEl = document.getElementById('modalBody');
+    if (!modal || !titleEl || !bodyEl) {
+      resolve('');
+      return;
+    }
+    if (QUOTE_PRODUCT_DECISION_MODAL && typeof QUOTE_PRODUCT_DECISION_MODAL.close === 'function') {
+      QUOTE_PRODUCT_DECISION_MODAL.close('');
+    }
+    const closeButton = modal.querySelector('.section-title .ghost');
+    const previousCloseOnclick = closeButton ? closeButton.getAttribute('onclick') : null;
+    const actionList = Array.isArray(actions) ? actions : [];
+    var settled = false;
+    const actionHtml = actionList.map((action, index) => {
+      const className = action.primary ? 'primary' : 'ghost';
+      return `<button type="button" class="${className}" data-quote-product-action="${index}">${action.label}</button>`;
+    }).join('');
+    function cleanup(result) {
+      if (settled) return;
+      settled = true;
+      modal.classList.remove('show');
+      modal.removeEventListener('click', overlayHandler);
+      document.removeEventListener('keydown', keyHandler);
+      if (closeButton) {
+        closeButton.removeEventListener('click', closeHandler);
+        if (previousCloseOnclick !== null) {
+          closeButton.setAttribute('onclick', previousCloseOnclick);
+        } else {
+          closeButton.removeAttribute('onclick');
+        }
+      }
+      QUOTE_PRODUCT_DECISION_MODAL = null;
+      resolve(result || '');
+    }
+    function overlayHandler(event) {
+      if (event.target === modal) cleanup('');
+    }
+    function keyHandler(event) {
+      if (event.key === 'Escape') cleanup('');
+    }
+    function closeHandler(event) {
+      event.preventDefault();
+      cleanup('');
+    }
+    titleEl.textContent = title;
+    bodyEl.innerHTML = `${html}<div class="actions quote-product-modal-actions">${actionHtml}</div>`;
+    bodyEl.querySelectorAll('[data-quote-product-action]').forEach(button => {
+      button.addEventListener('click', event => {
+        const selected = actionList[Number(event.currentTarget.dataset.quoteProductAction || 0)] || {};
+        bodyEl.querySelectorAll('button').forEach(item => { item.disabled = true; });
+        cleanup(selected.value || '');
+      });
+    });
+    if (closeButton) {
+      closeButton.removeAttribute('onclick');
+      closeButton.addEventListener('click', closeHandler);
+    }
+    modal.addEventListener('click', overlayHandler);
+    document.addEventListener('keydown', keyHandler);
+    modal.classList.add('show');
+    const focusTarget = bodyEl.querySelector('[data-quote-product-action]');
+    if (focusTarget && typeof focusTarget.focus === 'function') {
+      setTimeout(() => focusTarget.focus(), 0);
+    }
+    QUOTE_PRODUCT_DECISION_MODAL = { close: cleanup };
+  });
+}
+
+function showAddFreeItemConfirmation(product) {
+  const productName = product && (product.productName || product.name || product.productId) || '';
+  return renderQuoteProductDecisionModal(
+    'สินค้านี้มีอยู่แล้ว',
+    `<p>สินค้านี้มีอยู่ในรายการสินค้าซื้อแล้ว<br>ต้องการเพิ่มสินค้าเดียวกันเป็นสินค้าแถมหรือไม่?</p><p><b>${escapeQuotationPrintHtml(productName)}</b></p>`,
+    [
+      { label: 'ยกเลิก', value: '' },
+      { label: 'เพิ่มเป็นสินค้าแถม', value: 'FREE', primary: true }
+    ]
+  );
+}
+
+function showProductAlreadyHasBothModal(product) {
+  const productName = product && (product.productName || product.name || product.productId) || '';
+  return renderQuoteProductDecisionModal(
+    'สินค้านี้มีทั้งรายการซื้อและสินค้าแถมอยู่แล้ว',
+    `<p>สินค้านี้มีทั้งรายการซื้อและสินค้าแถมอยู่แล้ว<br>กรุณาปรับจำนวนจากรายการสินค้าในใบเสนอราคา</p><p><b>${escapeQuotationPrintHtml(productName)}</b></p>`,
+    [
+      { label: 'ปิด', value: '' },
+      { label: 'ไปยังรายการสินค้า', value: 'GO_TO_CART', primary: true }
+    ]
+  );
+}
+
 function quoteProductAddMessage(code) {
   const messages = {
     PRODUCT_NOT_FOUND: 'ไม่พบข้อมูลสินค้านี้ กรุณารีเฟรชหรือลบออกจากรายการโปรด',
     PRODUCT_INACTIVE: 'สินค้านี้ถูกปิดการใช้งานและไม่สามารถเพิ่มได้',
     PRODUCT_REFERENCE_INVALID: 'รหัสสินค้าไม่ถูกต้อง',
     PRODUCT_DATA_NOT_READY: 'กำลังโหลดข้อมูลสินค้า กรุณาลองอีกครั้ง',
-    PRODUCT_ADD_FAILED: 'เพิ่มสินค้าไม่สำเร็จ'
+    PRODUCT_ADD_FAILED: 'เพิ่มสินค้าไม่สำเร็จ',
+    DUPLICATE_PAID_PRODUCT_LINE: QUOTE_PRODUCT_ADD_MESSAGES.DUPLICATE_PAID_PRODUCT_LINE,
+    DUPLICATE_FREE_PRODUCT_LINE: QUOTE_PRODUCT_ADD_MESSAGES.DUPLICATE_FREE_PRODUCT_LINE,
+    DUPLICATE_BOTH_PRODUCT_LINES: QUOTE_PRODUCT_ADD_MESSAGES.DUPLICATE_BOTH_PRODUCT_LINES,
+    PRODUCT_TYPE_CHANGE_DENIED: QUOTE_PRODUCT_ADD_MESSAGES.PRODUCT_TYPE_CHANGE_DENIED
   };
   return messages[code] || messages.PRODUCT_ADD_FAILED;
 }
@@ -380,8 +574,12 @@ function logQuoteProductAddEvent(eventName, detail) {
       userId: USER && USER.userId || '',
       source: detail && detail.source || '',
       reference: detail && detail.reference || '',
+      quoteId: CURRENT_QUOTE && (CURRENT_QUOTE.quoteId || CURRENT_QUOTE.quoteNo) || '',
+      lineId: detail && detail.lineId || '',
       productId: detail && detail.productId || '',
+      productCode: detail && detail.productCode || detail && detail.productId || '',
       productBusinessUnit: detail && detail.productBusinessUnit || '',
+      isFreeItem: Boolean(detail && detail.isFreeItem),
       result: detail && detail.result || ''
     });
   } catch (ignore) {}
@@ -403,28 +601,12 @@ async function addProductToQuoteByReference(reference, source, qty) {
   if (button) button.disabled = true;
   logQuoteProductAddEvent(productSource + '_PRODUCT_ADD_REQUESTED', { source: productSource, reference: references[0] || '', result: 'requested' });
   try {
-    if ((!DB.products || !DB.products.length) && typeof loadProducts === 'function') {
-      await loadProducts();
-    }
-    const resolved = resolveProductByReference(productReference);
-    if (!resolved.ok) {
-      toastProductAddError(resolved);
-      logQuoteProductAddEvent('PRODUCT_REFERENCE_NOT_FOUND', { source: productSource, reference: references[0] || '', result: resolved.code });
-      return resolved;
-    }
-    if (!isProductActiveForQuote(resolved.product)) {
-      const inactive = { ok: false, code: 'PRODUCT_INACTIVE', product: resolved.product, productId: resolved.productId };
-      toastProductAddError(inactive);
-      logQuoteProductAddEvent('PRODUCT_ADD_FAILED', { source: productSource, reference: resolved.reference, productId: resolved.productId, productBusinessUnit: getProductBusinessUnitClient(resolved.product), result: inactive.code });
-      return inactive;
-    }
-    logQuoteProductAddEvent('PRODUCT_REFERENCE_RESOLVED', { source: productSource, reference: resolved.reference, productId: resolved.productId, productBusinessUnit: getProductBusinessUnitClient(resolved.product), result: 'resolved' });
-    const result = await addProduct(resolved.productId, qty || 1);
+    const result = await requestAddProductToQuote(productReference, productSource, qty || 1);
     if (document.getElementById('page-quote') && !document.getElementById('page-quote').classList.contains('active') && typeof go === 'function') {
       go('quote');
     }
-    logQuoteProductAddEvent('PRODUCT_ADDED_TO_QUOTE', { source: productSource, reference: resolved.reference, productId: resolved.productId, productBusinessUnit: getProductBusinessUnitClient(resolved.product), result: result && result.ok === false ? 'failed' : 'ok' });
-    return result || { ok: true, productId: resolved.productId };
+    logQuoteProductAddEvent('PRODUCT_ADD_FLOW_COMPLETED', Object.assign({ source: productSource, reference: references[0] || '' }, result || {}, { result: result && result.ok === false ? 'failed' : 'ok' }));
+    return result || { ok: true };
   } catch (error) {
     const failed = { ok: false, code: 'PRODUCT_ADD_FAILED', message: error && error.message ? error.message : String(error || '') };
     toastProductAddError(failed);
@@ -493,16 +675,15 @@ async function getDiscountPercentForProduct(customerId, product) {
 function recalcLineItem(item) {
   const qty = Math.max(0, Number(item.qty || 0));
   const listPrice = roundValue(toPriceNumber(item.listPrice));
-  const discountPercent = item.discountLoading ? 0 : roundValue(Number(item.discountPercent ?? item.discount ?? 0));
-  const isFree = Boolean(item.isFree || item.freeItem);
+  const isFree = getQuoteLineFreeState(item);
+  const discountPercent = isFree || item.discountLoading ? 0 : roundValue(Number(item.discountPercent ?? item.discount ?? 0));
   const unitPrice = isFree ? 0 : roundValue(listPrice * (1 - discountPercent / 100));
   const lineTotal = roundValue(unitPrice * qty);
   const vat = roundValue(lineTotal * 0.07);
   const grandTotal = roundValue(lineTotal + vat);
 
   item.qty = qty;
-  item.isFree = isFree;
-  item.freeItem = isFree;
+  setQuoteLineFreeState(item, isFree);
   item.listPrice = listPrice;
   item.discountPercent = discountPercent;
   item.discount = discountPercent;
@@ -514,19 +695,181 @@ function recalcLineItem(item) {
   return item;
 }
 
-function createCartLine(product, qty, discountPercent) {
+function createCartLine(product, qty, discountPercent, options) {
+  const opts = options || {};
   const productBusinessUnit = getProductBusinessUnitClient(product);
   return recalcLineItem({
     lineId: createLineId(),
     productId: getProductId(product),
+    productCode: normalizeProductReference(product.productCode || product.productId || product.sku || product.id || getProductId(product)),
+    sku: normalizeProductReference(product.sku || product.productId || product.productCode || product.id || getProductId(product)),
     productBusinessUnit: productBusinessUnit,
     businessUnit: productBusinessUnit,
     productName: String(product.productName || product.name || '').trim(),
     unit: String(product.unit || '').trim(),
     qty: Number(qty || 1),
     listPrice: roundValue(toPriceNumber(product.listPrice || product.price || 0)),
-    discountPercent: Number(discountPercent || 0)
+    discountPercent: opts.isFreeItem ? 0 : Number(discountPercent || 0),
+    isFree: Boolean(opts.isFreeItem),
+    freeItem: Boolean(opts.isFreeItem),
+    isFreeItem: Boolean(opts.isFreeItem)
   });
+}
+
+async function ensureQuoteReadyForProductAdd() {
+  if (!isQuoteBusinessUnitSelected()) {
+    const selectedType = await requestQuoteTypeSelection(true);
+    if (!selectedType) {
+      toast('กรุณาเลือก BU ก่อนเพิ่มสินค้า');
+      return false;
+    }
+  }
+  if (!CURRENT_QUOTE.customerId) {
+    const customerId = getSelectedCustomerIdForPricing();
+    if (customerId) {
+      const customer = DB.customers.find(c => String(c.customerId || '').trim() === String(customerId).trim()) || {};
+      CURRENT_QUOTE = {
+        quoteId: CURRENT_QUOTE.quoteId || '',
+        quoteNo: CURRENT_QUOTE.quoteNo || '',
+        customerId: String(customerId).trim(),
+        customerName: String(customer.customerName || '').trim(),
+        quoteType: getCurrentQuoteBusinessUnit(),
+        businessUnit: getCurrentQuoteBusinessUnit(),
+        shipping: Number(document.getElementById('shipping')?.value || 0),
+        specialDiscount: Number(document.getElementById('specialDiscount')?.value || 0),
+        status: 'DRAFT'
+      };
+      renderQuoteMeta();
+    } else {
+      toast('กรุณาเลือกลูกค้าก่อนเพิ่มสินค้า');
+      return false;
+    }
+  }
+  return true;
+}
+
+async function appendPaidQuoteLine(product, qty, source) {
+  const line = createPaidQuoteLine(product, qty || 1, 0);
+  line.discountLoading = true;
+  CART.push(line);
+  ensureCartLineIdentityAndOrder();
+  renderCart();
+  scheduleScrollToAddedItem(line.lineId);
+  const addedProductUnit = getProductBusinessUnitClient(product);
+  if (addedProductUnit && addedProductUnit !== getCurrentQuoteBusinessUnit()) {
+    toast(`เพิ่มสินค้า ${getQuoteTypeLabel(addedProductUnit)} ในใบเสนอราคา ${getQuoteTypeLabel(getCurrentQuoteBusinessUnit())} แล้ว`);
+  } else {
+    toast('กำลังโหลดส่วนลด...');
+  }
+  getDiscountPercentForProduct(CURRENT_QUOTE.customerId, product).then(discountPercent => {
+    const target = CART.find(item => item.lineId === line.lineId);
+    if (!target) return;
+    target.discountLoading = false;
+    target.discountPercent = Number(discountPercent || 0);
+    target.discount = target.discountPercent;
+    recalcLineItem(target);
+    renderCart();
+    if (QUOTE_ITEM_PENDING_SCROLL_LINE_ID === line.lineId) {
+      scheduleScrollToAddedItem(line.lineId);
+    }
+  }).catch(error => {
+    console.error(error);
+    const target = CART.find(item => item.lineId === line.lineId);
+    if (!target) return;
+    target.discountLoading = false;
+    recalcLineItem(target);
+    renderCart();
+    if (QUOTE_ITEM_PENDING_SCROLL_LINE_ID === line.lineId) {
+      scheduleScrollToAddedItem(line.lineId);
+    }
+  });
+  logQuoteProductAddEvent('QUOTE_PAID_PRODUCT_ADDED', {
+    source: source,
+    lineId: line.lineId,
+    productId: line.productId,
+    productCode: line.productCode,
+    productBusinessUnit: line.productBusinessUnit,
+    isFreeItem: false,
+    result: 'created'
+  });
+  return { ok: true, code: 'QUOTE_PAID_PRODUCT_ADDED', productId: line.productId, productCode: line.productCode, lineId: line.lineId, isFreeItem: false, updatedExisting: false };
+}
+
+function appendFreeQuoteLine(product, qty, source) {
+  const line = createFreeQuoteLine(product, qty || 1);
+  CART.push(line);
+  ensureCartLineIdentityAndOrder();
+  renderCart();
+  scheduleScrollToAddedItem(line.lineId);
+  toast(QUOTE_PRODUCT_ADD_MESSAGES.FREE_PRODUCT_ADDED);
+  logQuoteProductAddEvent('QUOTE_FREE_PRODUCT_ADDED', {
+    source: source,
+    lineId: line.lineId,
+    productId: line.productId,
+    productCode: line.productCode,
+    productBusinessUnit: line.productBusinessUnit,
+    isFreeItem: true,
+    result: 'created'
+  });
+  return { ok: true, code: 'QUOTE_FREE_PRODUCT_ADDED', productId: line.productId, productCode: line.productCode, lineId: line.lineId, isFreeItem: true, updatedExisting: false };
+}
+
+async function requestAddProductToQuote(productReference, source, qty) {
+  const productSource = normalizeProductReference(source || QUOTE_PRODUCT_ADD_SOURCE.SEARCH).toUpperCase() || QUOTE_PRODUCT_ADD_SOURCE.SEARCH;
+  const requestedQty = Number(qty || 1);
+  const normalizedQty = Math.max(1, requestedQty || 1);
+  if ((!DB.products || !DB.products.length) && typeof loadProducts === 'function') {
+    await loadProducts();
+  }
+  if (requestedQty <= 0) {
+    toast('จำนวนสินค้าต้องมากกว่า 0');
+    return { ok: false, code: 'PRODUCT_REFERENCE_INVALID' };
+  }
+  const resolved = resolveProductByReference(productReference);
+  if (!resolved.ok) {
+    toastProductAddError(resolved);
+    logQuoteProductAddEvent('PRODUCT_REFERENCE_NOT_FOUND', { source: productSource, reference: collectProductReferences(productReference)[0] || '', result: resolved.code });
+    return resolved;
+  }
+  const product = resolved.product;
+  if (!isProductActiveForQuote(product)) {
+    const inactive = { ok: false, code: 'PRODUCT_INACTIVE', product: product, productId: resolved.productId };
+    toastProductAddError(inactive);
+    logQuoteProductAddEvent('PRODUCT_ADD_FAILED', { source: productSource, reference: resolved.reference, productId: resolved.productId, productBusinessUnit: getProductBusinessUnitClient(product), result: inactive.code });
+    return inactive;
+  }
+  if (!(await ensureQuoteReadyForProductAdd())) {
+    return { ok: false, code: 'PRODUCT_ADD_FAILED' };
+  }
+  logQuoteProductAddEvent('PRODUCT_REFERENCE_RESOLVED', { source: productSource, reference: resolved.reference, productId: resolved.productId, productBusinessUnit: getProductBusinessUnitClient(product), result: 'resolved' });
+  ensureCartLineIdentityAndOrder();
+  const state = getQuoteProductLineState(product);
+  if (!state.paidLine && !state.freeLine) {
+    return appendPaidQuoteLine(product, 1, productSource);
+  }
+  if (!state.paidLine && state.freeLine) {
+    return appendPaidQuoteLine(product, 1, productSource);
+  }
+  if (state.paidLine && !state.freeLine) {
+    logQuoteProductAddEvent('QUOTE_DUPLICATE_PRODUCT_DETECTED', { source: productSource, productId: resolved.productId, isFreeItem: false, lineId: state.paidLine.lineId, result: 'paid_exists' });
+    const decision = await showAddFreeItemConfirmation(product);
+    if (decision !== 'FREE') {
+      logQuoteProductAddEvent('QUOTE_DUPLICATE_PRODUCT_ADD_CANCELLED', { source: productSource, productId: resolved.productId, isFreeItem: true, result: 'cancelled' });
+      return { ok: false, code: 'DUPLICATE_PAID_PRODUCT_LINE', productId: resolved.productId, lineId: state.paidLine.lineId, cancelled: true };
+    }
+    if (hasFreeLine(product)) {
+      toast(QUOTE_PRODUCT_ADD_MESSAGES.DUPLICATE_FREE_PRODUCT_LINE);
+      return { ok: false, code: 'DUPLICATE_FREE_PRODUCT_LINE', productId: resolved.productId };
+    }
+    return appendFreeQuoteLine(product, 1, productSource);
+  }
+  logQuoteProductAddEvent('QUOTE_DUPLICATE_PRODUCT_DETECTED', { source: productSource, productId: resolved.productId, isFreeItem: true, lineId: state.freeLine && state.freeLine.lineId, result: 'both_exist' });
+  const choice = await showProductAlreadyHasBothModal(product);
+  if (choice === 'GO_TO_CART') {
+    scheduleScrollToAddedItem((state.paidLine || state.freeLine).lineId);
+  }
+  toast(QUOTE_PRODUCT_ADD_MESSAGES.DUPLICATE_BOTH_PRODUCT_LINES);
+  return { ok: false, code: 'DUPLICATE_BOTH_PRODUCT_LINES', productId: resolved.productId, lineId: (state.paidLine || state.freeLine).lineId };
 }
 
 async function saveQuote() {
@@ -860,6 +1203,7 @@ function renderCart() {
     calcCart();
     return;
   }
+  ensureCartLineIdentityAndOrder();
   CART.forEach(recalcLineItem);
   cartList.innerHTML = CART.length ? CART.map(it => `<div class="row item-card quote-line"><div class="quote-line-main"><b>${it.productName||'-'}</b><br><small>${it.unit||'-'}</small><div class="quote-line-prices"><span>ราคาตั้ง ${money(it.listPrice)}</span><span>ส่วนลด <input style="width:60px;border:1px solid var(--line);border-radius:10px;padding:3px" type="number" value="${it.discountPercent||0}" onchange="changeDiscount('${it.lineId}', Number(this.value))">%</span><span>ราคาสุทธิ ${money(it.unitPrice)}</span><span>รวม ${money(it.lineTotal)}</span></div></div><div class="qty"><button onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button><b>${it.qty}</b><button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button></div><button class="ghost" onclick="removeProduct('${it.lineId}')">ลบ</button></div>`).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
   calcCart();
@@ -942,6 +1286,13 @@ async function changeDiscount(lineId, newDiscount) {
   if (!line) {
     return;
   }
+  if (getQuoteLineFreeState(line)) {
+    line.discountPercent = 0;
+    line.discount = 0;
+    recalcLineItem(line);
+    renderCart();
+    return;
+  }
   line.discountPercent = Number(newDiscount || 0);
   line.discount = line.discountPercent;
   recalcLineItem(line);
@@ -953,10 +1304,26 @@ function toggleFreeItem(lineId, checked) {
   if (!line) {
     return;
   }
-  line.isFree = Boolean(checked);
-  line.freeItem = line.isFree;
+  const nextFreeState = Boolean(checked);
+  const duplicate = findQuoteLine(line, nextFreeState, lineId);
+  if (duplicate) {
+    toast(nextFreeState ? QUOTE_PRODUCT_ADD_MESSAGES.DUPLICATE_FREE_PRODUCT_LINE : QUOTE_PRODUCT_ADD_MESSAGES.DUPLICATE_PAID_PRODUCT_LINE);
+    logQuoteProductAddEvent('QUOTE_PRODUCT_TYPE_CHANGE_DENIED', {
+      lineId: line.lineId,
+      productId: line.productId,
+      productCode: line.productCode || line.productId,
+      isFreeItem: nextFreeState,
+      result: 'duplicate_' + (nextFreeState ? 'free' : 'paid')
+    });
+    renderCart();
+    scheduleScrollToAddedItem(duplicate.lineId);
+    return { ok: false, code: 'PRODUCT_TYPE_CHANGE_DENIED' };
+  }
+  setQuoteLineFreeState(line, nextFreeState);
   recalcLineItem(line);
   renderCart();
+  scheduleScrollToAddedItem(line.lineId);
+  return { ok: true, isFreeItem: nextFreeState };
 }
 
 async function refreshQuotation() {
@@ -1036,6 +1403,7 @@ function renderQuoteMeta() {
 
 function buildQuotationPayload(status) {
   const totals = calcCart();
+  ensureCartLineIdentityAndOrder();
   return {
     quoteId: CURRENT_QUOTE.quoteId || '',
     quoteNo: CURRENT_QUOTE.quoteNo || '',
@@ -1049,7 +1417,10 @@ function buildQuotationPayload(status) {
         lineNo: index + 1,
         lineOrder: index + 1,
         sortOrder: index + 1,
+        lineId: item.lineId,
         productId: item.productId,
+        productCode: item.productCode || item.productId,
+        sku: item.sku || item.productId,
         productBusinessUnit: getProductBusinessUnitClient(item) || item.productBusinessUnit || '',
         productName: item.productName,
         unit: item.unit,
@@ -1057,11 +1428,13 @@ function buildQuotationPayload(status) {
         listPrice: item.listPrice,
         discountPercent: item.discountPercent,
         unitPrice: item.unitPrice,
+        netPrice: item.netPrice,
         lineTotal: item.lineTotal,
         vat: item.vat,
         grandTotal: item.grandTotal,
-        isFree: Boolean(item.isFree),
-        freeItem: Boolean(item.isFree),
+        isFreeItem: getQuoteLineFreeState(item),
+        isFree: getQuoteLineFreeState(item),
+        freeItem: getQuoteLineFreeState(item),
         status: item.status || 'ACTIVE'
       };
     }),
@@ -1174,11 +1547,13 @@ function applyLoadedQuotationResponse(response, fallbackQuoteId) {
   CART.length = 0;
   lines.forEach(line => {
     CART.push(recalcLineItem({
-      lineId: String(line.lineId || line.lineNo || createLineId()),
+      lineId: String(line.lineId || createLineId()),
       lineNo: String(line.lineNo || '').trim(),
       lineOrder: Number(String(line.lineOrder || line.sortOrder || line.lineNo || 0).replace(/,/g, '')) || 0,
       sortOrder: Number(String(line.sortOrder || line.lineOrder || line.lineNo || 0).replace(/,/g, '')) || 0,
       productId: String(line.productId || '').trim(),
+      productCode: String(line.productCode || line.sku || line.productId || '').trim(),
+      sku: String(line.sku || line.productCode || line.productId || '').trim(),
       productBusinessUnit: getProductBusinessUnitClient(line) || String(line.productBusinessUnit || line.businessUnit || '').trim(),
       businessUnit: getProductBusinessUnitClient(line) || String(line.productBusinessUnit || line.businessUnit || '').trim(),
       productName: String(line.productName || '').trim(),
@@ -1190,10 +1565,12 @@ function applyLoadedQuotationResponse(response, fallbackQuoteId) {
       lineTotal: roundValue(toPriceNumber(line.lineTotal || 0)),
       vat: roundValue(toPriceNumber(line.vat || 0)),
       grandTotal: roundValue(toPriceNumber(line.grandTotal || 0)),
-      isFree: Boolean(line.isFree || line.freeItem || String(line.free || '').toUpperCase() === 'FREE' || (toPriceNumber(line.listPrice || 0) > 0 && toPriceNumber(line.lineTotal || 0) === 0)),
+      isFree: Boolean(line.isFreeItem || line.isFree || line.freeItem || String(line.free || '').toUpperCase() === 'FREE' || (toPriceNumber(line.listPrice || 0) > 0 && toPriceNumber(line.lineTotal || 0) === 0)),
+      isFreeItem: Boolean(line.isFreeItem || line.isFree || line.freeItem || String(line.free || '').toUpperCase() === 'FREE' || (toPriceNumber(line.listPrice || 0) > 0 && toPriceNumber(line.lineTotal || 0) === 0)),
       status: String(line.status || 'ACTIVE')
     }));
   });
+  ensureCartLineIdentityAndOrder();
   const hidden = document.getElementById('quoteCustomer');
   if (hidden) hidden.value = CURRENT_QUOTE.customerId;
   if (window.selectedCustomerId !== undefined) window.selectedCustomerId = CURRENT_QUOTE.customerId;
@@ -1314,7 +1691,7 @@ function buildQuotationPrintHtml(data) {
     const qty = quotePrintNumber(line.qty);
     const listPrice = quotePrintNumber(line.listPrice);
     const discount = quotePrintNumber(line.discountPercent || line.discount);
-    const isFree = Boolean(line.isFree || line.freeItem || String(line.free || '').toUpperCase() === 'FREE' || (listPrice > 0 && quotePrintNumber(line.lineTotal || 0) === 0));
+    const isFree = Boolean(line.isFreeItem || line.isFree || line.freeItem || String(line.free || '').toUpperCase() === 'FREE' || (listPrice > 0 && quotePrintNumber(line.lineTotal || 0) === 0));
     const netPrice = isFree ? 0 : quotePrintNumber(line.unitPrice || line.netPrice || (listPrice * (1 - discount / 100)));
     const lineTotal = isFree ? 0 : quotePrintNumber(line.lineTotal || netPrice * qty);
     const freeText = isFree ? '<span class="print-free-badge">สินค้าโปรโมชั่นแถม</span>' : '';
@@ -1420,7 +1797,7 @@ function buildQuotationPrintRowHtml(line, index) {
   const qty = quotePrintNumber(item.qty);
   const listPrice = quotePrintNumber(item.listPrice);
   const discount = quotePrintNumber(item.discountPercent || item.discount);
-  const isFree = Boolean(item.isFree || item.freeItem || String(item.free || '').toUpperCase() === 'FREE' || (listPrice > 0 && quotePrintNumber(item.lineTotal || 0) === 0));
+  const isFree = Boolean(item.isFreeItem || item.isFree || item.freeItem || String(item.free || '').toUpperCase() === 'FREE' || (listPrice > 0 && quotePrintNumber(item.lineTotal || 0) === 0));
   const netPrice = isFree ? 0 : quotePrintNumber(item.unitPrice || item.netPrice || (listPrice * (1 - discount / 100)));
   const lineTotal = isFree ? 0 : quotePrintNumber(item.lineTotal || netPrice * qty);
   const freeText = isFree ? '<span class="print-free-badge">สินค้าโปรโมชั่นแถม</span>' : '';
@@ -2135,12 +2512,14 @@ function renderCart() {
   cartList.innerHTML = CART.length ? reorderHint + CART.map(it => {
     const discountText = it.discountLoading
       ? '<span class="loading-text">กำลังโหลดส่วนลด...</span>'
+      : it.isFree
+        ? '<span>แถม</span>'
       : `<input class="quote-discount-input" type="number" value="${it.discountPercent || 0}" onchange="changeDiscount('${it.lineId}', Number(this.value))"> %`;
     const freeBadge = it.isFree ? '<span class="pill yellow">FREE</span>' : '';
     const productUnit = getProductBusinessUnitClient(it);
     const productBuBadge = productUnit ? `<span class="quote-product-bu ${getQuoteTypeClass(productUnit)}">${getQuoteTypeLabel(productUnit)}</span>` : '';
     const crossBuNote = productUnit && productUnit !== getCurrentQuoteBusinessUnit() ? '<small class="quote-cross-bu-note">สินค้าร่วมข้าม BU</small>' : '';
-    return `<div class="row item-card quote-line" data-line-id="${it.lineId}" role="listitem" tabindex="0" aria-label="กดค้างแล้วลากเพื่อเรียงสินค้า หรือกด Alt พร้อมลูกศรขึ้นลง" title="กดค้างแล้วลากเพื่อเรียงสินค้า">
+    return `<div class="row item-card quote-line quote-item-card" data-line-id="${it.lineId}" role="listitem" tabindex="0" aria-label="กดค้างแล้วลากเพื่อเรียงสินค้า หรือกด Alt พร้อมลูกศรขึ้นลง" title="กดค้างแล้วลากเพื่อเรียงสินค้า">
       <div class="quote-line-main">
         <div class="quote-product-title">${productBuBadge}<b>${it.productName || '-'} ${freeBadge}</b>${crossBuNote}</div>
         <small>${it.productId || ''}${it.unit ? ' · ' + it.unit : ''}</small>
@@ -2157,7 +2536,7 @@ function renderCart() {
         <input type="number" min="1" value="${Number(it.qty) || 1}" onchange="changeQty('${it.lineId}', this.value)">
         <button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button>
       </div>
-      <button class="ghost" data-no-drag onclick="removeProduct('${it.lineId}')">ลบ</button>
+      <button class="ghost quote-item-delete" data-no-drag onclick="removeProduct('${it.lineId}')">ลบ</button>
     </div>`;
   }).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
   calcCart();
@@ -2444,92 +2823,7 @@ function setupCartReorder() {
   });
 }
 async function addProduct(productId, qty) {
-  const normalizedQty = Number(qty || 1);
-  if (normalizedQty <= 0) {
-    toast('จำนวนสินค้าต้องมากกว่า 0');
-    return { ok: false, code: 'PRODUCT_REFERENCE_INVALID' };
-  }
-  const resolved = resolveProductByReference(productId);
-  if (!resolved.ok) {
-    toastProductAddError(resolved);
-    return resolved;
-  }
-  const product = resolved.product;
-  if (!isProductActiveForQuote(product)) {
-    const inactive = { ok: false, code: 'PRODUCT_INACTIVE', productId: resolved.productId };
-    toastProductAddError(inactive);
-    return inactive;
-  }
-  if (!isQuoteBusinessUnitSelected()) {
-    const selectedType = await requestQuoteTypeSelection(true);
-    if (!selectedType) {
-      toast('กรุณาเลือก BU ก่อนเพิ่มสินค้า');
-      return { ok: false, code: 'PRODUCT_ADD_FAILED' };
-    }
-  }
-  if (!CURRENT_QUOTE.customerId) {
-    const customerId = getSelectedCustomerIdForPricing();
-    if (customerId) {
-      const customer = DB.customers.find(c => String(c.customerId || '').trim() === String(customerId).trim()) || {};
-      CURRENT_QUOTE = {
-        quoteId: CURRENT_QUOTE.quoteId || '',
-        quoteNo: CURRENT_QUOTE.quoteNo || '',
-        customerId: String(customerId).trim(),
-        customerName: String(customer.customerName || '').trim(),
-        quoteType: getCurrentQuoteBusinessUnit(),
-        businessUnit: getCurrentQuoteBusinessUnit(),
-        shipping: Number(document.getElementById('shipping')?.value || 0),
-        specialDiscount: Number(document.getElementById('specialDiscount')?.value || 0),
-        status: 'DRAFT'
-      };
-      renderQuoteMeta();
-    } else {
-      toast('กรุณาเลือกลูกค้าก่อนเพิ่มสินค้า');
-      return { ok: false, code: 'PRODUCT_ADD_FAILED' };
-    }
-  }
-  const existing = CART.find(item => getProductId(item) === getProductId(product));
-  if (existing) {
-    existing.qty = Number(existing.qty || 0) + normalizedQty;
-    recalcLineItem(existing);
-    renderCart();
-    scheduleScrollToAddedItem(existing.lineId);
-    return { ok: true, code: 'PRODUCT_ADDED_TO_QUOTE', productId: getProductId(product), lineId: existing.lineId, updatedExisting: true };
-  }
-  const line = createCartLine(product, normalizedQty, 0);
-  line.discountLoading = true;
-  CART.push(line);
-  renderCart();
-  scheduleScrollToAddedItem(line.lineId);
-  const addedProductUnit = getProductBusinessUnitClient(product);
-  if (addedProductUnit && addedProductUnit !== getCurrentQuoteBusinessUnit()) {
-    toast(`เพิ่มสินค้า ${getQuoteTypeLabel(addedProductUnit)} ในใบเสนอราคา ${getQuoteTypeLabel(getCurrentQuoteBusinessUnit())} แล้ว`);
-  } else {
-    toast('กำลังโหลดส่วนลด...');
-  }
-  getDiscountPercentForProduct(CURRENT_QUOTE.customerId, product).then(discountPercent => {
-    const target = CART.find(item => item.lineId === line.lineId);
-    if (!target) return;
-    target.discountLoading = false;
-    target.discountPercent = Number(discountPercent || 0);
-    target.discount = target.discountPercent;
-    recalcLineItem(target);
-    renderCart();
-    if (QUOTE_ITEM_PENDING_SCROLL_LINE_ID === line.lineId) {
-      scheduleScrollToAddedItem(line.lineId);
-    }
-  }).catch(error => {
-    console.error(error);
-    const target = CART.find(item => item.lineId === line.lineId);
-    if (!target) return;
-    target.discountLoading = false;
-    recalcLineItem(target);
-    renderCart();
-    if (QUOTE_ITEM_PENDING_SCROLL_LINE_ID === line.lineId) {
-      scheduleScrollToAddedItem(line.lineId);
-    }
-  });
-  return { ok: true, code: 'PRODUCT_ADDED_TO_QUOTE', productId: getProductId(product), lineId: line.lineId, updatedExisting: false };
+  return requestAddProductToQuote(productId, QUOTE_PRODUCT_ADD_SOURCE.SEARCH, qty || 1);
 }
 
 async function saveQuotationWithStatus(status) {
@@ -2598,12 +2892,14 @@ if (typeof window !== 'undefined') {
   window.selectCustomer = selectCustomer;
   window.newQuotation = newQuotation;
   window.addProduct = addProduct;
+  window.requestAddProductToQuote = requestAddProductToQuote;
   window.addProductToQuoteByReference = addProductToQuoteByReference;
   window.normalizeProductReference = normalizeProductReference;
   window.resolveProductByReference = resolveProductByReference;
   window.getProductPrimaryKey = getProductPrimaryKey;
   window.removeProduct = removeProduct;
   window.changeQty = changeQty;
+  window.toggleFreeItem = toggleFreeItem;
   window.refreshQuotation = refreshQuotation;
   window.loadQuotation = loadQuotation;
   window.openQuotation = openQuotation;
