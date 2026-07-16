@@ -1,7 +1,7 @@
 function api(action, payload) {
   try {
     const normalizedAction = String(action || '').trim();
-    const publicActions = ['login', 'demoLogin', 'register'];
+    const publicActions = ['login', 'demoLogin', 'register', 'getPublicSystemSettings'];
     const auth = publicActions.indexOf(normalizedAction) >= 0 ? null : requireApiUser(payload);
     const user = auth && auth.ok ? auth.data : null;
     const permissions = user ? getUserPermissions(user) : {};
@@ -14,6 +14,8 @@ function api(action, payload) {
     switch (normalizedAction) {
       case 'login':
         return authorizeAction(loginUser, [payload && payload.username, payload && payload.password]);
+      case 'getPublicSystemSettings':
+        return authorizeAction(getPublicSystemSettings, []);
       case 'demoLogin':
         return authorizeAction(demoLogin, []);
       case 'logout':
@@ -99,6 +101,12 @@ function api(action, payload) {
       case 'updateSettings':
         if (!permissions.canManageSettings) return forbidden('Insufficient permission');
         return authorizeAction(updateSettings, [payload]);
+      case 'getSystemIdentitySettings':
+        if (!hasRole(user, [USER_ROLES.SUPER_ADMIN])) return getSuperAdminOnlySystemIdentityError_();
+        return authorizeAction(getSystemIdentitySettings, [payload]);
+      case 'updateSystemIdentitySettings':
+        if (!hasRole(user, [USER_ROLES.SUPER_ADMIN])) return getSuperAdminOnlySystemIdentityError_();
+        return authorizeAction(updateSystemIdentitySettings, [payload]);
       case 'createQuotation':
         if (!permissions.canCreateQuotations) return forbidden('Insufficient permission');
         if (payload && typeof payload === 'object') payload.currentUser = user;

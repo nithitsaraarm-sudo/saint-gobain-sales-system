@@ -1216,6 +1216,15 @@ function quotePrintText(value, fallback) {
   return text || fallback || '-';
 }
 
+function getQuotationPrintCompanyName(user) {
+  if (typeof getSystemIdentitySettingsForUi === 'function') {
+    const identity = getSystemIdentitySettingsForUi();
+    if (identity && identity.companyName) return identity.companyName;
+  }
+  const settingsCompany = typeof DB !== 'undefined' && DB.settings ? DB.settings.companyName : '';
+  return quotePrintText(settingsCompany, 'SAINT-GOBAIN');
+}
+
 function quotePrintNumber(value) {
   const numeric = Number(String(value === undefined || value === null ? 0 : value).replace(/,/g, ''));
   return isNaN(numeric) ? 0 : numeric;
@@ -1292,7 +1301,7 @@ function buildQuotationPrintHtml(data) {
   const user = typeof USER !== 'undefined' && USER ? USER : {};
   const salesName = quotePrintText(quote.quoteDisplayName || quote.createdBy || user.quoteDisplayName || user.displayName || user.fullName || user.username, '-');
   const salesPosition = quotePrintText(user.jobTitle || user.position, '-');
-  const companyName = quotePrintText((typeof DB !== 'undefined' && DB.settings && DB.settings.companyName) || user.companyName, 'SAINT-GOBAIN');
+  const companyName = getQuotationPrintCompanyName(user);
   const remark = quotePrintText(quote.notes || quote.remark || quote.remarks, '-');
   const quoteTypeLabel = getQuoteTypeLabel(quote.quoteType || quote.businessUnit || CURRENT_QUOTE.quoteType || CURRENT_QUOTE_TYPE);
   const lineBusinessUnits = [];
@@ -1398,7 +1407,7 @@ function getQuotationPrintContext(data) {
     customerId: quotePrintText(quote.customerId || CURRENT_QUOTE.customerId, '-'),
     salesName: quotePrintText(quote.quoteDisplayName || quote.createdBy || user.quoteDisplayName || user.displayName || user.fullName || user.username, '-'),
     salesPosition: quotePrintText(user.jobTitle || user.position, '-'),
-    companyName: quotePrintText((typeof DB !== 'undefined' && DB.settings && DB.settings.companyName) || user.companyName, 'SAINT-GOBAIN'),
+    companyName: getQuotationPrintCompanyName(user),
     remark: quotePrintText(quote.notes || quote.remark || quote.remarks, '-'),
     subtotal: quotePrintNumber(totals.subtotal !== undefined ? totals.subtotal : quote.subtotal),
     vat: quotePrintNumber(totals.vat !== undefined ? totals.vat : quote.vat),

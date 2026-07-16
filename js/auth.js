@@ -176,6 +176,12 @@ async function logout() {
   if (document.getElementById('loginView')) {
     document.getElementById('loginView').classList.remove('hidden');
   }
+  if (typeof applySystemIdentityToUI === 'function') {
+    applySystemIdentityToUI();
+  }
+  if (typeof refreshPublicSystemSettings === 'function') {
+    refreshPublicSystemSettings({ silent: true });
+  }
 }
 
 async function changePassword() {

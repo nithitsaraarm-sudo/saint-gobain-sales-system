@@ -403,7 +403,7 @@ function getHeadersForSheet(sheetName) {
     return ['customerId', 'productId', 'oldDiscount', 'newDiscount', 'changedBy', 'createdAt'];
   }
   if (sheetName === SHEET_NAMES.SETTINGS) {
-    return ['key', 'value', 'updatedAt', 'updatedBy'];
+    return ['key', 'value', 'type', 'category', 'isPublic', 'updatedAt', 'updatedBy'];
   }
   if (sheetName === SHEET_NAMES.PROMOTIONS) {
     return ['promotionId', 'brand', 'productName', 'description', 'discountText', 'active', 'createdAt', 'updatedAt'];
