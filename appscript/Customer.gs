@@ -1,13 +1,16 @@
 function getCustomers() {
   const timer = startPerformanceTimer('customers');
   try {
+    if (typeof clearSheetDataCache === 'function') {
+      clearSheetDataCache(CUSTOMERS_SHEET);
+    }
     const result = getSheetData(CUSTOMERS_SHEET);
     if (!result.ok) {
       logWarning('getCustomers', 'Unable to read Customers sheet');
       endPerformanceTimer(timer, 'ok=false');
       return success([]);
     }
-    const customers = Array.isArray(result.data) ? result.data.map(normalizeCustomerObject) : [];
+    const customers = normalizeCustomerRows_(result.data);
     const activeCustomers = customers.filter(isActiveCustomer);
     endPerformanceTimer(timer, 'count=' + activeCustomers.length);
     return success(activeCustomers);
@@ -29,7 +32,7 @@ function getCustomer(customerId) {
       logWarning('getCustomer', 'Unable to read Customers sheet');
       return fail('Unable to load customer');
     }
-    const customers = Array.isArray(result.data) ? result.data.map(normalizeCustomerObject) : [];
+    const customers = normalizeCustomerRows_(result.data);
     const customer = customers.find(function (item) {
       return String(item.customerId || '').trim() === String(customerId || '').trim();
     });
@@ -55,7 +58,7 @@ function searchCustomers(keyword) {
       logWarning('searchCustomers', 'Unable to read Customers sheet');
       return success([]);
     }
-    const customers = Array.isArray(result.data) ? result.data.map(normalizeCustomerObject) : [];
+    const customers = normalizeCustomerRows_(result.data).filter(isActiveCustomer);
     const matches = customers.filter(function (item) {
       return [
         String(item.customerId || ''),
@@ -104,6 +107,7 @@ function saveCustomer(payload) {
     if (!insertResult.ok) {
       return insertResult;
     }
+    clearCustomerCaches_();
     logInfo('saveCustomer', 'Customer created ' + row.customerId);
     return success(row, 'Customer saved');
   } catch (error) {
@@ -137,6 +141,7 @@ function updateCustomer(customerId, payload) {
     if (!result.ok) {
       return result;
     }
+    clearCustomerCaches_();
     const actor = payload && payload.currentUser ? payload.currentUser : {};
     logActivity(actor.userId || '', 'CUSTOMER_UPDATED', 'Customer updated ' + customerId);
     return success(updateObject, 'Customer updated');
@@ -196,7 +201,7 @@ function getCustomersByProvince(province) {
       logWarning('getCustomersByProvince', 'Unable to read Customers sheet');
       return success([]);
     }
-    const customers = Array.isArray(result.data) ? result.data.map(normalizeCustomerObject) : [];
+    const customers = normalizeCustomerRows_(result.data).filter(isActiveCustomer);
     const matches = customers.filter(function (item) {
       return String(item.province || '').toLowerCase() === value;
     });
@@ -256,34 +261,97 @@ function parseDate(value) {
   return isNaN(date.getTime()) ? null : date;
 }
 
-function normalizeCustomerObject(row) {
-  const source = row && typeof row === 'object' ? row : {};
-  const code = String(source.customerId || '').trim();
-  const customerName = String(source.customerName || '').trim();
-  const province = String(source.province || '').trim();
-  const status = String(source.status || '').trim();
-  const defaultGyprocDiscount = String(source.defaultGyprocDiscount || '').trim();
-  const defaultWeberDiscount = String(source.defaultWeberDiscount || '').trim();
-  const notes = String(source.notes || '').trim();
-  const address = String(source.address || '').trim();
-  const phone = String(source.phone || '-').trim() || '-';
-  const customerType = getCustomerBusinessType(source);
-
-  return Object.assign({}, source, {
-    id: code,
-    customerId: code,
-    customerCode: code,
-    customerName: customerName,
-    status: status,
-    customerType: customerType,
-    defaultGyprocDiscount: defaultGyprocDiscount,
-    defaultWeberDiscount: defaultWeberDiscount,
-    notes: notes,
-    address: address,
-    province: province,
-    phone: phone,
-    active: isActiveStatus(status)
+function normalizeCustomerRows_(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const customers = [];
+  list.forEach(function (row, index) {
+    const normalized = normalizeCustomerObject(row, index + 2);
+    if (normalized) {
+      customers.push(normalized);
+    }
   });
+  return customers;
+}
+
+function logMalformedCustomerRow_(customerId, rowNumber, reason) {
+  logWarning('normalizeCustomerObject', 'customerId=' + String(customerId || '').trim() + '; rowNumber=' + String(rowNumber || '').trim() + '; reason=' + String(reason || '').trim());
+}
+
+function parseCustomerActiveFlag_(value) {
+  if (value === true) return true;
+  if (value === false) return false;
+  const text = String(value === null || value === undefined ? '' : value).trim().toLowerCase();
+  if (!text) return null;
+  if (text === 'true' || text === 'yes' || text === '1' || text === 'active' || text === 'ใช้งาน') return true;
+  if (text === 'false' || text === 'no' || text === '0' || text === 'inactive' || text === 'disabled' || text === 'ไม่ใช้งาน') return false;
+  return null;
+}
+
+function resolveCustomerActive_(source) {
+  const activeValue = source && Object.prototype.hasOwnProperty.call(source, 'active') ? parseCustomerActiveFlag_(source.active) : null;
+  if (activeValue !== null) {
+    return activeValue;
+  }
+  const statusValue = source && Object.prototype.hasOwnProperty.call(source, 'status') ? parseCustomerActiveFlag_(source.status) : null;
+  if (statusValue !== null) {
+    return statusValue;
+  }
+  return isActiveStatus(source && source.status);
+}
+
+function clearCustomerCaches_() {
+  if (typeof clearSheetDataCache === 'function') {
+    clearSheetDataCache(CUSTOMERS_SHEET);
+  }
+}
+
+function normalizeCustomerObject(row, rowNumber) {
+  try {
+    const source = row && typeof row === 'object' ? row : {};
+    const code = String(source.customerId || source.customerCode || source.id || '').trim();
+    if (!code) {
+      logMalformedCustomerRow_('', rowNumber, 'missing_customerId');
+      return null;
+    }
+    const customerName = String(source.customerName || '').trim();
+    const province = String(source.province || '').trim();
+    const status = String(source.status || '').trim();
+    const defaultGyprocDiscount = String(source.defaultGyprocDiscount || '').trim();
+    const defaultWeberDiscount = String(source.defaultWeberDiscount || '').trim();
+    const notes = String(source.notes || '').trim();
+    const address = String(source.address || '').trim();
+    const phone = String(source.phone || '-').trim() || '-';
+    const customerType = getCustomerBusinessType(source);
+    const active = resolveCustomerActive_(source);
+    const hasActive = Object.prototype.hasOwnProperty.call(source, 'active') && String(source.active || '').trim() !== '';
+    const hasStatus = Object.prototype.hasOwnProperty.call(source, 'status') && String(source.status || '').trim() !== '';
+    if (hasActive && parseCustomerActiveFlag_(source.active) === null) {
+      logMalformedCustomerRow_(code, rowNumber, 'invalid_active');
+    }
+    if (!hasActive && hasStatus && parseCustomerActiveFlag_(source.status) === null) {
+      logMalformedCustomerRow_(code, rowNumber, 'invalid_status');
+    }
+
+    return Object.assign({}, source, {
+      id: code,
+      customerId: code,
+      customerCode: code,
+      customerName: customerName,
+      status: status,
+      customerType: customerType,
+      defaultGyprocDiscount: defaultGyprocDiscount,
+      defaultWeberDiscount: defaultWeberDiscount,
+      notes: notes,
+      address: address,
+      province: province,
+      phone: phone,
+      active: active
+    });
+  } catch (error) {
+    const source = row && typeof row === 'object' ? row : {};
+    logMalformedCustomerRow_(source.customerId || source.customerCode || source.id || '', rowNumber, 'normalize_error');
+    return null;
+  }
 }
 
 function getCustomerBusinessType(source) {
@@ -303,16 +371,13 @@ function getCustomerBusinessType(source) {
 }
 
 function isActiveCustomer(customer) {
-  const statusValue = String(customer.status || customer.active || '').trim().toLowerCase();
-  if (!statusValue) {
-    return true;
-  }
-  return statusValue === 'true' || statusValue === 'yes' || statusValue === '1' || statusValue === 'active' || statusValue === 'ใช้งาน';
+  const value = customer && typeof customer.active === 'boolean' ? customer.active : resolveCustomerActive_(customer || {});
+  return value !== false;
 }
 function isActiveStatus(status) {
-  const statusValue = String(status || '').trim().toLowerCase();
-  if (!statusValue) {
+  const parsed = parseCustomerActiveFlag_(status);
+  if (parsed === null && !String(status || '').trim()) {
     return true;
   }
-  return statusValue === 'true' || statusValue === 'yes' || statusValue === '1' || statusValue === 'active';
+  return parsed === true;
 }
