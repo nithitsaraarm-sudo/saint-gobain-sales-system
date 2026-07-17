@@ -39,13 +39,28 @@ function api(action, payload) {
       case 'customers':
       case 'getCustomers':
         if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES, USER_ROLES.VIEWER])) return forbidden('Insufficient permission');
-        return authorizeAction(getCustomers, []);
+        if (!payload || typeof payload !== 'object') payload = {};
+        payload.currentUser = user;
+        return authorizeAction(getCustomers, [payload]);
       case 'customer':
         if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES, USER_ROLES.VIEWER])) return forbidden('Insufficient permission');
-        return authorizeAction(getCustomer, [payload && (payload.customerId || payload.value)]);
+        if (!payload || typeof payload !== 'object') payload = { value: payload };
+        payload.currentUser = user;
+        return authorizeAction(getCustomer, [payload && (payload.customerId || payload.value), payload]);
       case 'searchCustomers':
         if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES, USER_ROLES.VIEWER])) return forbidden('Insufficient permission');
-        return authorizeAction(searchCustomers, [payload && payload.keyword]);
+        if (!payload || typeof payload !== 'object') payload = { keyword: payload };
+        payload.currentUser = user;
+        return authorizeAction(searchCustomers, [payload && typeof payload === 'object' ? payload.keyword : payload, payload]);
+      case 'getCustomerFilters':
+      case 'getAreas':
+      case 'getAssignableSalesUsers':
+        if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES, USER_ROLES.VIEWER])) return forbidden('Insufficient permission');
+        if (!payload || typeof payload !== 'object') payload = {};
+        payload.currentUser = user;
+        return normalizedAction === 'getCustomerFilters'
+          ? authorizeAction(getCustomerFilters, [payload])
+          : (normalizedAction === 'getAreas' ? authorizeAction(getAreas, [payload]) : authorizeAction(getAssignableSalesUsers, [payload]));
       case 'products':
       case 'getProducts':
         if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES])) return forbidden('Insufficient permission');
@@ -79,10 +94,13 @@ function api(action, payload) {
         return authorizeAction(getDiscount, [payload && payload.customerId, payload && payload.groupCode]);
       case 'saveCustomer':
         if (!permissions.canManageCustomers) return forbidden('Insufficient permission');
+        if (!payload || typeof payload !== 'object') payload = {};
+        payload.currentUser = user;
         return authorizeAction(saveCustomer, [payload]);
       case 'updateCustomer':
         if (!permissions.canManageCustomers) return forbidden('Insufficient permission');
-        if (payload && typeof payload === 'object') payload.currentUser = user;
+        if (!payload || typeof payload !== 'object') payload = {};
+        payload.currentUser = user;
         return authorizeAction(updateCustomer, [payload && payload.customerId, payload]);
       case 'getFavoriteCustomers':
         return authorizeAction(getFavoriteCustomers, [payload]);

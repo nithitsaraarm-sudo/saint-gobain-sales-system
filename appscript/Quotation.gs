@@ -51,7 +51,7 @@ function createQuotation(customerId) {
     if (!idCheck.ok) {
       return idCheck;
     }
-    const customerResult = getCustomer(targetCustomerId);
+    const customerResult = getCustomer(targetCustomerId, { currentUser: auth.data });
     if (!customerResult.ok) {
       return customerResult;
     }
@@ -399,11 +399,15 @@ function saveQuotationPayload(payload) {
     }
 
     const customerId = String(data.customerId || '').trim();
-    const customerName = String(data.customerName || '').trim();
     const items = Array.isArray(data.items) ? data.items : [];
     if (!customerId) {
       return validationError('customerId is required');
     }
+    const customerResult = getCustomer(customerId, { currentUser: auth.data });
+    if (!customerResult.ok) {
+      return customerResult;
+    }
+    const customerName = String(data.customerName || customerResult.data && customerResult.data.customerName || '').trim();
     if (!items.length) {
       return validationError('items is required');
     }

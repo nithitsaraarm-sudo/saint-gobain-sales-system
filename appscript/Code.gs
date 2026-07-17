@@ -58,6 +58,10 @@ function getBootstrapData(payload) {
     const allQuotes = getBootstrapQuoteHistoryRows(200);
     const quotes = filterQuotesForUser(allQuotes, currentUser);
     const quoteLines = getBootstrapQuoteLineRows(quotes);
+    const scopedCustomers = typeof getCustomers === 'function' ? getCustomers({ currentUser: currentUser }) : null;
+    const customerCount = scopedCustomers && scopedCustomers.ok && Array.isArray(scopedCustomers.data)
+      ? scopedCustomers.data.length
+      : countSheetDataRows(CUSTOMERS_SHEET);
     const data = {
       environment: env,
       sheetInitialized: true,
@@ -73,7 +77,7 @@ function getBootstrapData(payload) {
         vatRate: 7
       },
       counts: {
-        customers: countSheetDataRows(CUSTOMERS_SHEET),
+        customers: customerCount,
         products: countSheetDataRows(SHEET_NAMES.PRODUCTS)
       },
       quotes: quotes.slice(0, 50),
