@@ -267,7 +267,10 @@ function renderCart() {
 function calcCart() {
   const shipping = Number(document.getElementById('shipping')?.value || 0);
   const specialDiscount = Number(document.getElementById('specialDiscount')?.value || 0);
-  let subtotal = CART.reduce((sum, it) => sum + (Number(it.listPrice) * (1 - Number(it.discount || 0) / 100) * Number(it.qty || 0)), 0);
+  let subtotal = CART.reduce((sum, it) => {
+    recalcLineItem(it);
+    return sum + Number(it.lineTotal || 0);
+  }, 0);
   subtotal = roundValue(subtotal);
   const vat = roundValue(subtotal * Number(DB.settings?.vatRate || 7) / 100);
   const total = roundValue(subtotal + vat + shipping - specialDiscount);
@@ -308,8 +311,17 @@ const QUOTE_PRODUCT_ADD_MESSAGES = {
   DUPLICATE_FREE_PRODUCT_LINE: 'สินค้านี้มีรายการสินค้าแถมอยู่แล้ว กรุณาปรับจำนวนจากรายการเดิม',
   DUPLICATE_BOTH_PRODUCT_LINES: 'สินค้านี้มีทั้งรายการซื้อและสินค้าแถมอยู่แล้ว',
   FREE_PRODUCT_ADDED: 'เพิ่มสินค้าแถมเรียบร้อยแล้ว',
-  PRODUCT_TYPE_CHANGE_DENIED: 'ไม่สามารถเปลี่ยนประเภทสินค้าได้ เพราะมีรายการประเภทเดียวกันอยู่แล้ว'
+  PRODUCT_TYPE_CHANGE_DENIED: 'ไม่สามารถเปลี่ยนประเภทสินค้าได้ เพราะมีรายการประเภทเดียวกันอยู่แล้ว',
+  PRICE_REQUIRED: 'กรุณากรอกราคาตั้งมากกว่า 0',
+  PRICE_SAVED: 'บันทึกราคาตั้งเรียบร้อยแล้ว',
+  UNIT_SAVED: 'บันทึกหน่วยสินค้าเรียบร้อยแล้ว',
+  PRICE_SAVE_FAILED: 'ไม่สามารถบันทึกราคาได้ กรุณาลองใหม่อีกครั้ง',
+  UNIT_SAVE_FAILED: 'ไม่สามารถบันทึกหน่วยสินค้าได้ กรุณาลองใหม่อีกครั้ง'
 };
+
+const QUOTE_PRICE_MAX = 999999999;
+const QUOTE_PRICE_DECIMAL_LIMIT = 4;
+const QUOTE_UNIT_OPTIONS = ['แผ่น', 'ถุง', 'ม้วน', 'เส้น', 'ชิ้น', 'กล่อง', 'ลัง', 'ชุด', 'กิโลกรัม', 'ตารางเมตร', 'เมตร', 'อื่น ๆ'];
 
 function normalizeProductReference(value) {
   return String(value == null ? '' : value).trim();
@@ -551,6 +563,170 @@ function showProductAlreadyHasBothModal(product) {
   );
 }
 
+function showQuotePriceInputModal(options) {
+  const opts = options || {};
+  return new Promise(resolve => {
+    const modal = document.getElementById('modal');
+    const titleEl = document.getElementById('modalTitle');
+    const bodyEl = document.getElementById('modalBody');
+    if (!modal || !titleEl || !bodyEl) {
+      resolve(null);
+      return;
+    }
+    if (QUOTE_PRODUCT_DECISION_MODAL && typeof QUOTE_PRODUCT_DECISION_MODAL.close === 'function') {
+      QUOTE_PRODUCT_DECISION_MODAL.close('');
+    }
+    const closeButton = modal.querySelector('.section-title .ghost');
+    const previousCloseOnclick = closeButton ? closeButton.getAttribute('onclick') : null;
+    var settled = false;
+    function cleanup(value) {
+      if (settled) return;
+      settled = true;
+      modal.classList.remove('show');
+      document.removeEventListener('keydown', keyHandler);
+      if (closeButton) {
+        closeButton.removeEventListener('click', cancelHandler);
+        if (previousCloseOnclick !== null) closeButton.setAttribute('onclick', previousCloseOnclick);
+        else closeButton.removeAttribute('onclick');
+      }
+      QUOTE_PRODUCT_DECISION_MODAL = null;
+      resolve(value);
+    }
+    function keyHandler(event) {
+      if (event.key === 'Escape') cleanup(null);
+    }
+    function cancelHandler(event) {
+      if (event) event.preventDefault();
+      cleanup(null);
+    }
+    titleEl.textContent = opts.title || 'กรุณาระบุราคาตั้ง';
+    bodyEl.innerHTML = `<div class="quote-price-modal-form">
+      <p>${escapeQuotationPrintHtml(opts.message || 'สินค้านี้ยังไม่มีราคาตั้ง กรุณาระบุราคาก่อนเพิ่มสินค้าเข้าใบเสนอราคา')}</p>
+      ${opts.productName ? `<p><b>${escapeQuotationPrintHtml(opts.productName)}</b></p>` : ''}
+      <label class="field"><span>ราคาตั้ง (บาท)</span><input id="quotePriceModalInput" type="text" inputmode="decimal" autocomplete="off" value="${escapeQuotationPrintHtml(opts.value || '')}"></label>
+      <div id="quotePriceModalError" class="quote-modal-error" role="alert"></div>
+      <div class="actions quote-product-modal-actions"><button type="button" class="ghost" id="quotePriceModalCancel">ยกเลิก</button><button type="button" class="primary" id="quotePriceModalSave">${escapeQuotationPrintHtml(opts.saveLabel || 'บันทึกและเพิ่มสินค้า')}</button></div>
+    </div>`;
+    const input = document.getElementById('quotePriceModalInput');
+    const error = document.getElementById('quotePriceModalError');
+    const cancel = document.getElementById('quotePriceModalCancel');
+    const save = document.getElementById('quotePriceModalSave');
+    function saveHandler() {
+      const parsed = parseQuotePriceInput(input && input.value);
+      if (!parsed.ok) {
+        if (error) error.textContent = parsed.message || QUOTE_PRODUCT_ADD_MESSAGES.PRICE_REQUIRED;
+        if (input) input.focus();
+        return;
+      }
+      if (save) save.disabled = true;
+      if (cancel) cancel.disabled = true;
+      cleanup(parsed.value);
+    }
+    if (cancel) cancel.addEventListener('click', cancelHandler);
+    if (save) save.addEventListener('click', saveHandler);
+    if (input) {
+      input.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          saveHandler();
+        }
+      });
+    }
+    if (closeButton) {
+      closeButton.removeAttribute('onclick');
+      closeButton.addEventListener('click', cancelHandler);
+    }
+    document.addEventListener('keydown', keyHandler);
+    modal.classList.add('show');
+    setTimeout(() => {
+      if (input && typeof input.focus === 'function') {
+        input.focus();
+        try {
+          const length = String(input.value || '').length;
+          input.setSelectionRange(length, length);
+        } catch (error) {}
+      }
+    }, 0);
+    QUOTE_PRODUCT_DECISION_MODAL = { close: cleanup };
+  });
+}
+
+function showQuoteCustomUnitModal(currentUnit) {
+  const initialUnit = sanitizeQuoteUnit(currentUnit);
+  return new Promise(resolve => {
+    const modal = document.getElementById('modal');
+    const titleEl = document.getElementById('modalTitle');
+    const bodyEl = document.getElementById('modalBody');
+    if (!modal || !titleEl || !bodyEl) {
+      resolve('');
+      return;
+    }
+    if (QUOTE_PRODUCT_DECISION_MODAL && typeof QUOTE_PRODUCT_DECISION_MODAL.close === 'function') {
+      QUOTE_PRODUCT_DECISION_MODAL.close('');
+    }
+    const closeButton = modal.querySelector('.section-title .ghost');
+    const previousCloseOnclick = closeButton ? closeButton.getAttribute('onclick') : null;
+    var settled = false;
+    function cleanup(value) {
+      if (settled) return;
+      settled = true;
+      modal.classList.remove('show');
+      document.removeEventListener('keydown', keyHandler);
+      if (closeButton) {
+        closeButton.removeEventListener('click', cancelHandler);
+        if (previousCloseOnclick !== null) closeButton.setAttribute('onclick', previousCloseOnclick);
+        else closeButton.removeAttribute('onclick');
+      }
+      QUOTE_PRODUCT_DECISION_MODAL = null;
+      resolve(value || '');
+    }
+    function keyHandler(event) {
+      if (event.key === 'Escape') cleanup('');
+    }
+    function cancelHandler(event) {
+      if (event) event.preventDefault();
+      cleanup('');
+    }
+    titleEl.textContent = 'ระบุหน่วยสินค้า';
+    bodyEl.innerHTML = `<div class="quote-price-modal-form">
+      <label class="field"><span>หน่วยสินค้า</span><input id="quoteUnitModalInput" type="text" maxlength="50" autocomplete="off" value="${escapeQuotationPrintHtml(initialUnit)}"></label>
+      <div id="quoteUnitModalError" class="quote-modal-error" role="alert"></div>
+      <div class="actions quote-product-modal-actions"><button type="button" class="ghost" id="quoteUnitModalCancel">ยกเลิก</button><button type="button" class="primary" id="quoteUnitModalSave">บันทึกหน่วยสินค้า</button></div>
+    </div>`;
+    const input = document.getElementById('quoteUnitModalInput');
+    const error = document.getElementById('quoteUnitModalError');
+    const cancel = document.getElementById('quoteUnitModalCancel');
+    const save = document.getElementById('quoteUnitModalSave');
+    function saveHandler() {
+      const unit = sanitizeQuoteUnit(input && input.value);
+      if (!unit) {
+        if (error) error.textContent = 'กรุณาระบุหน่วยสินค้า';
+        if (input) input.focus();
+        return;
+      }
+      if (save) save.disabled = true;
+      if (cancel) cancel.disabled = true;
+      cleanup(unit);
+    }
+    if (cancel) cancel.addEventListener('click', cancelHandler);
+    if (save) save.addEventListener('click', saveHandler);
+    if (input) input.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        saveHandler();
+      }
+    });
+    if (closeButton) {
+      closeButton.removeAttribute('onclick');
+      closeButton.addEventListener('click', cancelHandler);
+    }
+    document.addEventListener('keydown', keyHandler);
+    modal.classList.add('show');
+    setTimeout(() => input && input.focus && input.focus(), 0);
+    QUOTE_PRODUCT_DECISION_MODAL = { close: cleanup };
+  });
+}
+
 function quoteProductAddMessage(code) {
   const messages = {
     PRODUCT_NOT_FOUND: 'ไม่พบข้อมูลสินค้านี้ กรุณารีเฟรชหรือลบออกจากรายการโปรด',
@@ -624,9 +800,80 @@ function createLineId() {
   return QUOTE_LINE_PREFIX + Date.now() + '_' + Math.floor(Math.random() * 10000);
 }
 
+function normalizeQuoteDecimalText(value) {
+  return String(value === undefined || value === null ? '' : value).trim().replace(/,/g, '');
+}
+
 function toPriceNumber(value) {
-  const numericValue = Number(String(value || '').replace(/,/g, ''));
+  const numericValue = Number(normalizeQuoteDecimalText(value));
   return isNaN(numericValue) ? 0 : numericValue;
+}
+
+function parseQuotePriceInput(value) {
+  const text = normalizeQuoteDecimalText(value);
+  if (!text || !/^\d+(?:\.\d{1,4})?$/.test(text)) {
+    return { ok: false, message: QUOTE_PRODUCT_ADD_MESSAGES.PRICE_REQUIRED };
+  }
+  const price = Number(text);
+  if (!Number.isFinite(price) || price <= 0 || price > QUOTE_PRICE_MAX) {
+    return { ok: false, message: QUOTE_PRODUCT_ADD_MESSAGES.PRICE_REQUIRED };
+  }
+  return { ok: true, value: roundValue(price) };
+}
+
+function sanitizeQuoteUnit(value) {
+  return String(value || '').replace(/[<>]/g, '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 50);
+}
+
+function getQuoteMasterListPrice(source) {
+  const item = source && typeof source === 'object' ? source : {};
+  return roundValue(toPriceNumber(item.masterListPrice ?? item.masterPrice ?? item.productListPrice ?? item.listPrice ?? item.price ?? 0));
+}
+
+function getQuoteLineListPrice(source) {
+  const item = source && typeof source === 'object' ? source : {};
+  const value = item.quotedListPrice ?? item.listPrice ?? item.unitListPrice ?? item.price ?? item.masterListPrice ?? 0;
+  return roundValue(toPriceNumber(value));
+}
+
+function getQuoteMasterUnit(source) {
+  const item = source && typeof source === 'object' ? source : {};
+  return sanitizeQuoteUnit(item.masterUnit ?? item.productUnit ?? item.unit ?? item.uom ?? item.unitName ?? item.salesUnit ?? '');
+}
+
+function getQuoteLineUnit(source) {
+  const item = source && typeof source === 'object' ? source : {};
+  return sanitizeQuoteUnit(item.quotedUnit ?? item.unit ?? item.masterUnit ?? item.uom ?? item.unitName ?? item.salesUnit ?? '');
+}
+
+function getCurrentQuoteAuditName() {
+  return String(USER?.quoteDisplayName || USER?.fullName || USER?.displayName || USER?.username || '').trim();
+}
+
+function syncQuoteLineSnapshot(item) {
+  if (!item || typeof item !== 'object') return item;
+  const masterListPrice = roundValue(toPriceNumber(item.masterListPrice !== undefined ? item.masterListPrice : item.listPrice));
+  const quotedListPrice = roundValue(toPriceNumber(item.quotedListPrice !== undefined ? item.quotedListPrice : item.listPrice));
+  const masterUnit = sanitizeQuoteUnit(item.masterUnit || item.unit || item.quotedUnit);
+  const quotedUnit = sanitizeQuoteUnit(item.quotedUnit || item.unit || masterUnit);
+  item.masterListPrice = masterListPrice;
+  item.quotedListPrice = quotedListPrice;
+  item.listPrice = quotedListPrice;
+  item.masterUnit = masterUnit;
+  item.quotedUnit = quotedUnit;
+  item.unit = quotedUnit;
+  item.priceOverridden = Boolean(item.priceOverridden) || (masterListPrice > 0 && quotedListPrice > 0 && roundValue(masterListPrice) !== roundValue(quotedListPrice)) || (masterListPrice <= 0 && quotedListPrice > 0);
+  item.unitOverridden = Boolean(item.unitOverridden) || (masterUnit && quotedUnit && normalizeProductReferenceForCompare(masterUnit) !== normalizeProductReferenceForCompare(quotedUnit));
+  return item;
+}
+
+function canEditQuoteLineSnapshots() {
+  const status = String(CURRENT_QUOTE && CURRENT_QUOTE.status || 'DRAFT').trim().toUpperCase();
+  const role = String(USER && USER.role || '').trim().toUpperCase();
+  if (status === 'CANCELLED' || role === 'VIEWER') {
+    return false;
+  }
+  return true;
 }
 
 function getSelectedCustomerIdForPricing() {
@@ -675,8 +922,9 @@ async function getDiscountPercentForProduct(customerId, product) {
 }
 
 function recalcLineItem(item) {
+  syncQuoteLineSnapshot(item);
   const qty = Math.max(0, Number(item.qty || 0));
-  const listPrice = roundValue(toPriceNumber(item.listPrice));
+  const listPrice = getQuoteLineListPrice(item);
   const isFree = getQuoteLineFreeState(item);
   const discountPercent = isFree || item.discountLoading ? 0 : roundValue(Number(item.discountPercent ?? item.discount ?? 0));
   const unitPrice = isFree ? 0 : roundValue(listPrice * (1 - discountPercent / 100));
@@ -686,7 +934,10 @@ function recalcLineItem(item) {
 
   item.qty = qty;
   setQuoteLineFreeState(item, isFree);
+  item.quotedListPrice = listPrice;
   item.listPrice = listPrice;
+  item.quotedUnit = getQuoteLineUnit(item);
+  item.unit = item.quotedUnit;
   item.discountPercent = discountPercent;
   item.discount = discountPercent;
   item.unitPrice = unitPrice;
@@ -700,6 +951,10 @@ function recalcLineItem(item) {
 function createCartLine(product, qty, discountPercent, options) {
   const opts = options || {};
   const productBusinessUnit = getProductBusinessUnitClient(product);
+  const masterListPrice = getQuoteMasterListPrice(product);
+  const quotedListPrice = opts.quotedListPrice !== undefined ? roundValue(toPriceNumber(opts.quotedListPrice)) : masterListPrice;
+  const masterUnit = getQuoteMasterUnit(product);
+  const quotedUnit = sanitizeQuoteUnit(opts.quotedUnit || masterUnit);
   return recalcLineItem({
     lineId: createLineId(),
     productId: getProductId(product),
@@ -708,9 +963,18 @@ function createCartLine(product, qty, discountPercent, options) {
     productBusinessUnit: productBusinessUnit,
     businessUnit: productBusinessUnit,
     productName: String(product.productName || product.name || '').trim(),
-    unit: String(product.unit || '').trim(),
+    unit: quotedUnit,
+    masterUnit: masterUnit,
+    quotedUnit: quotedUnit,
     qty: Number(qty || 1),
-    listPrice: roundValue(toPriceNumber(product.listPrice || product.price || 0)),
+    masterListPrice: masterListPrice,
+    quotedListPrice: quotedListPrice,
+    listPrice: quotedListPrice,
+    priceOverridden: Boolean(opts.priceOverridden) || (masterListPrice <= 0 && quotedListPrice > 0) || (masterListPrice > 0 && roundValue(masterListPrice) !== roundValue(quotedListPrice)),
+    unitOverridden: Boolean(opts.unitOverridden) || (masterUnit && quotedUnit && normalizeProductReferenceForCompare(masterUnit) !== normalizeProductReferenceForCompare(quotedUnit)),
+    overrideReason: String(opts.overrideReason || '').trim(),
+    updatedAt: opts.updatedAt || new Date().toISOString(),
+    updatedBy: opts.updatedBy || getCurrentQuoteAuditName(),
     discountPercent: opts.isFreeItem ? 0 : Number(discountPercent || 0),
     isFree: Boolean(opts.isFreeItem),
     freeItem: Boolean(opts.isFreeItem),
@@ -750,8 +1014,38 @@ async function ensureQuoteReadyForProductAdd() {
   return true;
 }
 
-async function appendPaidQuoteLine(product, qty, source) {
-  const line = createPaidQuoteLine(product, qty || 1, 0);
+async function getPaidProductAddPriceOptions(product) {
+  const masterListPrice = getQuoteMasterListPrice(product);
+  if (masterListPrice > 0) {
+    return { ok: true, quotedListPrice: masterListPrice, priceOverridden: false };
+  }
+  const enteredPrice = await showQuotePriceInputModal({
+    title: 'กรุณาระบุราคาตั้ง',
+    message: 'สินค้านี้ยังไม่มีราคาตั้ง กรุณาระบุราคาก่อนเพิ่มสินค้าเข้าใบเสนอราคา',
+    productName: product && (product.productName || product.name || product.productId) || '',
+    saveLabel: 'บันทึกและเพิ่มสินค้า'
+  });
+  if (!enteredPrice) {
+    return { ok: false, code: 'QUOTE_LINE_PRICE_REQUIRED', cancelled: true };
+  }
+  return {
+    ok: true,
+    quotedListPrice: enteredPrice,
+    priceOverridden: true,
+    overrideReason: 'MISSING_MASTER_PRICE'
+  };
+}
+
+async function appendPaidQuoteLine(product, qty, source, options) {
+  const opts = options || {};
+  const line = createCartLine(product, qty || 1, 0, {
+    isFreeItem: false,
+    quotedListPrice: opts.quotedListPrice,
+    priceOverridden: opts.priceOverridden,
+    overrideReason: opts.overrideReason,
+    updatedBy: getCurrentQuoteAuditName()
+  });
+  setQuoteLineFreeState(line, false);
   line.discountLoading = true;
   CART.push(line);
   ensureCartLineIdentityAndOrder();
@@ -847,10 +1141,14 @@ async function requestAddProductToQuote(productReference, source, qty) {
   ensureCartLineIdentityAndOrder();
   const state = getQuoteProductLineState(product);
   if (!state.paidLine && !state.freeLine) {
-    return appendPaidQuoteLine(product, 1, productSource);
+    const priceOptions = await getPaidProductAddPriceOptions(product);
+    if (!priceOptions.ok) return priceOptions;
+    return appendPaidQuoteLine(product, 1, productSource, priceOptions);
   }
   if (!state.paidLine && state.freeLine) {
-    return appendPaidQuoteLine(product, 1, productSource);
+    const priceOptions = await getPaidProductAddPriceOptions(product);
+    if (!priceOptions.ok) return priceOptions;
+    return appendPaidQuoteLine(product, 1, productSource, priceOptions);
   }
   if (state.paidLine && !state.freeLine) {
     logQuoteProductAddEvent('QUOTE_DUPLICATE_PRODUCT_DETECTED', { source: productSource, productId: resolved.productId, isFreeItem: false, lineId: state.paidLine.lineId, result: 'paid_exists' });
@@ -1301,7 +1599,94 @@ async function changeDiscount(lineId, newDiscount) {
   renderCart();
 }
 
-function toggleFreeItem(lineId, checked) {
+async function openQuoteLinePriceEditor(lineId) {
+  const line = CART.find(item => item.lineId === lineId);
+  if (!line) {
+    toast('ไม่พบรายการสินค้า');
+    return { ok: false, code: 'QUOTE_LINE_NOT_FOUND' };
+  }
+  if (!canEditQuoteLineSnapshots()) {
+    toast('คุณไม่มีสิทธิ์แก้ไขราคาหรือใบเสนอราคานี้ถูกล็อก');
+    return { ok: false, code: 'PRICE_EDIT_FORBIDDEN' };
+  }
+  const enteredPrice = await showQuotePriceInputModal({
+    title: 'แก้ไขราคาตั้ง',
+    message: 'แก้ไขราคาตั้งเฉพาะใบเสนอราคานี้ โดยไม่กระทบ Product Master',
+    productName: line.productName || line.productId || '',
+    value: getQuoteLineListPrice(line) > 0 ? getQuoteLineListPrice(line) : '',
+    saveLabel: 'บันทึกราคา'
+  });
+  if (!enteredPrice) {
+    return { ok: false, code: 'QUOTE_LINE_PRICE_REQUIRED', cancelled: true };
+  }
+  const oldPrice = getQuoteLineListPrice(line);
+  line.quotedListPrice = enteredPrice;
+  line.listPrice = enteredPrice;
+  line.priceOverridden = roundValue(getQuoteMasterListPrice(line)) !== roundValue(enteredPrice);
+  line.overrideReason = line.priceOverridden ? (line.overrideReason || 'USER_PRICE_OVERRIDE') : '';
+  line.updatedAt = new Date().toISOString();
+  line.updatedBy = getCurrentQuoteAuditName();
+  recalcLineItem(line);
+  renderCart();
+  scheduleScrollToAddedItem(line.lineId);
+  logQuoteProductAddEvent('QUOTE_LINE_PRICE_CHANGED', {
+    lineId: line.lineId,
+    productId: line.productId,
+    productCode: line.productCode,
+    result: oldPrice + '->' + enteredPrice
+  });
+  toast(QUOTE_PRODUCT_ADD_MESSAGES.PRICE_SAVED);
+  return { ok: true, lineId: line.lineId, oldPrice: oldPrice, newPrice: enteredPrice };
+}
+
+function getQuoteUnitOptionsForLine(line) {
+  const current = sanitizeQuoteUnit(line && (line.quotedUnit || line.unit || line.masterUnit));
+  const options = QUOTE_UNIT_OPTIONS.slice();
+  if (current && options.indexOf(current) < 0) {
+    options.unshift(current);
+  }
+  return options;
+}
+
+async function changeQuoteLineUnit(lineId, value) {
+  const line = CART.find(item => item.lineId === lineId);
+  if (!line) {
+    toast('ไม่พบรายการสินค้า');
+    return { ok: false, code: 'QUOTE_LINE_NOT_FOUND' };
+  }
+  if (!canEditQuoteLineSnapshots()) {
+    toast('คุณไม่มีสิทธิ์แก้ไขหน่วยหรือใบเสนอราคานี้ถูกล็อก');
+    renderCart();
+    return { ok: false, code: 'UNIT_EDIT_FORBIDDEN' };
+  }
+  var nextUnit = sanitizeQuoteUnit(value);
+  if (nextUnit === 'อื่น ๆ') {
+    nextUnit = await showQuoteCustomUnitModal(line.quotedUnit || line.unit || line.masterUnit);
+  }
+  if (!nextUnit) {
+    toast('กรุณาระบุหน่วยสินค้า');
+    renderCart();
+    return { ok: false, code: 'QUOTE_LINE_UNIT_REQUIRED' };
+  }
+  const oldUnit = line.quotedUnit || line.unit || '';
+  line.quotedUnit = nextUnit;
+  line.unit = nextUnit;
+  line.unitOverridden = Boolean(line.masterUnit) && normalizeProductReferenceForCompare(line.masterUnit) !== normalizeProductReferenceForCompare(nextUnit);
+  line.updatedAt = new Date().toISOString();
+  line.updatedBy = getCurrentQuoteAuditName();
+  recalcLineItem(line);
+  renderCart();
+  logQuoteProductAddEvent('QUOTE_LINE_UNIT_CHANGED', {
+    lineId: line.lineId,
+    productId: line.productId,
+    productCode: line.productCode,
+    result: oldUnit + '->' + nextUnit
+  });
+  toast(QUOTE_PRODUCT_ADD_MESSAGES.UNIT_SAVED);
+  return { ok: true, lineId: line.lineId, oldUnit: oldUnit, newUnit: nextUnit };
+}
+
+async function toggleFreeItem(lineId, checked) {
   const line = CART.find(item => item.lineId === lineId);
   if (!line) {
     return;
@@ -1321,7 +1706,25 @@ function toggleFreeItem(lineId, checked) {
     scheduleScrollToAddedItem(duplicate.lineId);
     return { ok: false, code: 'PRODUCT_TYPE_CHANGE_DENIED' };
   }
+  if (!nextFreeState && getQuoteLineListPrice(line) <= 0) {
+    const enteredPrice = await showQuotePriceInputModal({
+      title: 'กรุณาระบุราคาตั้ง',
+      message: 'สินค้าซื้อต้องมีราคาตั้งมากกว่า 0 กรุณาระบุราคาก่อนเปลี่ยนเป็นสินค้าซื้อ',
+      productName: line.productName || line.productId || '',
+      saveLabel: 'บันทึกราคา'
+    });
+    if (!enteredPrice) {
+      renderCart();
+      return { ok: false, code: 'QUOTE_LINE_PRICE_REQUIRED', cancelled: true };
+    }
+    line.quotedListPrice = enteredPrice;
+    line.listPrice = enteredPrice;
+    line.priceOverridden = true;
+    line.overrideReason = line.overrideReason || 'REQUIRED_FOR_PAID_LINE';
+  }
   setQuoteLineFreeState(line, nextFreeState);
+  line.updatedAt = new Date().toISOString();
+  line.updatedBy = getCurrentQuoteAuditName();
   recalcLineItem(line);
   renderCart();
   scheduleScrollToAddedItem(line.lineId);
@@ -1425,9 +1828,18 @@ function buildQuotationPayload(status) {
         sku: item.sku || item.productId,
         productBusinessUnit: getProductBusinessUnitClient(item) || item.productBusinessUnit || '',
         productName: item.productName,
-        unit: item.unit,
+        unit: item.quotedUnit || item.unit,
+        masterUnit: item.masterUnit || '',
+        quotedUnit: item.quotedUnit || item.unit || '',
         qty: item.qty,
-        listPrice: item.listPrice,
+        listPrice: item.quotedListPrice || item.listPrice,
+        masterListPrice: item.masterListPrice || 0,
+        quotedListPrice: item.quotedListPrice || item.listPrice,
+        priceOverridden: Boolean(item.priceOverridden),
+        unitOverridden: Boolean(item.unitOverridden),
+        overrideReason: item.overrideReason || '',
+        updatedAt: item.updatedAt || '',
+        updatedBy: item.updatedBy || '',
         discountPercent: item.discountPercent,
         unitPrice: item.unitPrice,
         netPrice: item.netPrice,
@@ -1548,6 +1960,11 @@ function applyLoadedQuotationResponse(response, fallbackQuoteId) {
   setCurrentQuoteType(CURRENT_QUOTE.quoteType, true);
   CART.length = 0;
   lines.forEach(line => {
+    const masterProduct = getProductById(line.productId || line.productCode || line.sku) || {};
+    const masterListPrice = roundValue(toPriceNumber(line.masterListPrice !== undefined ? line.masterListPrice : (masterProduct.listPrice !== undefined ? masterProduct.listPrice : line.listPrice || 0)));
+    const quotedListPrice = roundValue(toPriceNumber(line.quotedListPrice !== undefined ? line.quotedListPrice : (line.listPrice !== undefined ? line.listPrice : masterListPrice)));
+    const masterUnit = sanitizeQuoteUnit(line.masterUnit || masterProduct.unit || line.unit || '');
+    const quotedUnit = sanitizeQuoteUnit(line.quotedUnit || line.unit || masterUnit);
     CART.push(recalcLineItem({
       lineId: String(line.lineId || createLineId()),
       lineNo: String(line.lineNo || '').trim(),
@@ -1559,9 +1976,18 @@ function applyLoadedQuotationResponse(response, fallbackQuoteId) {
       productBusinessUnit: getProductBusinessUnitClient(line) || String(line.productBusinessUnit || line.businessUnit || '').trim(),
       businessUnit: getProductBusinessUnitClient(line) || String(line.productBusinessUnit || line.businessUnit || '').trim(),
       productName: String(line.productName || '').trim(),
-      unit: String(line.unit || '').trim(),
+      unit: quotedUnit,
+      masterUnit: masterUnit,
+      quotedUnit: quotedUnit,
       qty: Number(String(line.qty || 0).replace(/,/g, '')),
-      listPrice: roundValue(toPriceNumber(line.listPrice || 0)),
+      masterListPrice: masterListPrice,
+      quotedListPrice: quotedListPrice,
+      listPrice: quotedListPrice,
+      priceOverridden: Boolean(line.priceOverridden) || (masterListPrice > 0 && quotedListPrice > 0 && roundValue(masterListPrice) !== roundValue(quotedListPrice)) || (masterListPrice <= 0 && quotedListPrice > 0),
+      unitOverridden: Boolean(line.unitOverridden) || (masterUnit && quotedUnit && normalizeProductReferenceForCompare(masterUnit) !== normalizeProductReferenceForCompare(quotedUnit)),
+      overrideReason: String(line.overrideReason || '').trim(),
+      updatedAt: String(line.updatedAt || '').trim(),
+      updatedBy: String(line.updatedBy || '').trim(),
       discountPercent: Number(String(line.discountPercent || line.discount || 0).replace(/,/g, '')),
       unitPrice: roundValue(toPriceNumber(line.unitPrice || line.netPrice || 0)),
       lineTotal: roundValue(toPriceNumber(line.lineTotal || 0)),
@@ -1691,7 +2117,8 @@ function buildQuotationPrintHtml(data) {
   const businessUnitsHtml = lineBusinessUnits.length > 1 ? `<p class="quote-business-units">Business Units: ${escapeQuotationPrintHtml(lineBusinessUnits.map(getQuoteTypeLabel).join(' / '))}</p>` : '';
   const rows = lines.length ? lines.map((line, index) => {
     const qty = quotePrintNumber(line.qty);
-    const listPrice = quotePrintNumber(line.listPrice);
+    const listPrice = quotePrintNumber(line.quotedListPrice !== undefined ? line.quotedListPrice : line.listPrice);
+    const unitLabel = quotePrintText(line.quotedUnit || line.unit, '-');
     const discount = quotePrintNumber(line.discountPercent || line.discount);
     const isFree = Boolean(line.isFreeItem || line.isFree || line.freeItem || String(line.free || '').toUpperCase() === 'FREE' || (listPrice > 0 && quotePrintNumber(line.lineTotal || 0) === 0));
     const netPrice = isFree ? 0 : quotePrintNumber(line.unitPrice || line.netPrice || (listPrice * (1 - discount / 100)));
@@ -1705,7 +2132,7 @@ function buildQuotationPrintHtml(data) {
       <td class="num print-discount">${isFree ? 'แถม' : discount.toLocaleString('th-TH') + '%'}</td>
       <td class="num">${quotePrintMoney(netPrice)}</td>
       <td class="num">${qty.toLocaleString('th-TH')}</td>
-      <td class="num">${escapeQuotationPrintHtml(line.unit || '-')}</td>
+      <td class="num">${escapeQuotationPrintHtml(unitLabel)}</td>
       <td class="num">${quotePrintMoney(lineTotal)}</td>
     </tr>`;
   }).join('') : '<tr><td class="print-empty" colspan="8">ไม่มีรายการสินค้า</td></tr>';
@@ -1797,7 +2224,8 @@ function getQuotationPrintContext(data) {
 function buildQuotationPrintRowHtml(line, index) {
   const item = line || {};
   const qty = quotePrintNumber(item.qty);
-  const listPrice = quotePrintNumber(item.listPrice);
+  const listPrice = quotePrintNumber(item.quotedListPrice !== undefined ? item.quotedListPrice : item.listPrice);
+  const unitLabel = quotePrintText(item.quotedUnit || item.unit, '-');
   const discount = quotePrintNumber(item.discountPercent || item.discount);
   const isFree = Boolean(item.isFreeItem || item.isFree || item.freeItem || String(item.free || '').toUpperCase() === 'FREE' || (listPrice > 0 && quotePrintNumber(item.lineTotal || 0) === 0));
   const netPrice = isFree ? 0 : quotePrintNumber(item.unitPrice || item.netPrice || (listPrice * (1 - discount / 100)));
@@ -1811,7 +2239,7 @@ function buildQuotationPrintRowHtml(line, index) {
     <td class="num print-discount">${isFree ? 'แถม' : discount.toLocaleString('th-TH') + '%'}</td>
     <td class="num">${quotePrintMoney(netPrice)}</td>
     <td class="num">${qty.toLocaleString('th-TH')}</td>
-    <td class="num">${escapeQuotationPrintHtml(item.unit || '-')}</td>
+    <td class="num">${escapeQuotationPrintHtml(unitLabel)}</td>
     <td class="num">${quotePrintMoney(lineTotal)}</td>
   </tr>`;
 }
@@ -2512,12 +2940,18 @@ function renderCart() {
   })();
   const reorderHint = showReorderHint ? '<div class="quote-reorder-hint">กดค้างที่การ์ดแล้วลากเพื่อเรียงสินค้า</div>' : '';
   cartList.innerHTML = CART.length ? reorderHint + CART.map(it => {
+    syncQuoteLineSnapshot(it);
+    const canEditSnapshots = canEditQuoteLineSnapshots();
+    const editDisabledAttr = canEditSnapshots ? '' : ' disabled aria-disabled="true"';
     const discountText = it.discountLoading
       ? '<span class="loading-text">กำลังโหลดส่วนลด...</span>'
       : it.isFree
         ? '<span>แถม</span>'
-      : `<input class="quote-discount-input" type="number" value="${it.discountPercent || 0}" onchange="changeDiscount('${it.lineId}', Number(this.value))"> %`;
+      : `<input class="quote-discount-input" type="number" value="${it.discountPercent || 0}"${editDisabledAttr} onchange="changeDiscount('${it.lineId}', Number(this.value))"> %`;
     const freeBadge = it.isFree ? '<span class="pill yellow">FREE</span>' : '';
+    const priceOverrideBadge = it.priceOverridden ? '<span class="quote-line-override-badge" title="ราคานี้ใช้เฉพาะใบเสนอราคานี้">แก้ไขแล้ว</span>' : '';
+    const unitOverrideBadge = it.unitOverridden ? '<span class="quote-line-override-badge" title="หน่วยนี้ใช้เฉพาะใบเสนอราคานี้">แก้ไขแล้ว</span>' : '';
+    const unitOptions = getQuoteUnitOptionsForLine(it).map(unit => `<option value="${escapeQuotationPrintHtml(unit)}" ${sanitizeQuoteUnit(it.quotedUnit || it.unit) === unit ? 'selected' : ''}>${escapeQuotationPrintHtml(unit)}</option>`).join('');
     const productUnit = getProductBusinessUnitClient(it);
     const productBuBadge = productUnit ? `<span class="quote-product-bu ${getQuoteTypeClass(productUnit)}">${getQuoteTypeLabel(productUnit)}</span>` : '';
     const crossBuNote = productUnit && productUnit !== getCurrentQuoteBusinessUnit() ? '<small class="quote-cross-bu-note">สินค้าร่วมข้าม BU</small>' : '';
@@ -2526,11 +2960,12 @@ function renderCart() {
         <div class="quote-product-title">${productBuBadge}<b>${it.productName || '-'} ${freeBadge}</b>${crossBuNote}</div>
         <small>${it.productId || ''}${it.unit ? ' · ' + it.unit : ''}</small>
         <div class="quote-line-prices">
-          <span>ราคาตั้ง ${money(it.listPrice)}</span>
+          <span data-no-drag>ราคาตั้ง ${money(it.listPrice)} ${priceOverrideBadge}<button type="button" class="quote-line-mini-action" onclick="openQuoteLinePriceEditor('${it.lineId}')" title="แก้ไขราคาตั้ง"${editDisabledAttr}>แก้ไข</button></span>
           <span data-no-drag>ส่วนลด ${discountText}</span>
           <span>ราคาสุทธิ ${it.isFree ? 'FREE' : money(it.unitPrice)}</span>
           <span>รวม ${it.isFree ? 'FREE' : money(it.lineTotal)}</span>
-          <label class="free-item-toggle" data-no-drag><input type="checkbox" ${it.isFree ? 'checked' : ''} onchange="toggleFreeItem('${it.lineId}', this.checked)"> สินค้าแถม</label>
+          <label class="quote-line-unit-editor" data-no-drag>หน่วย <select${editDisabledAttr} onchange="changeQuoteLineUnit('${it.lineId}', this.value)">${unitOptions}</select>${unitOverrideBadge}</label>
+          <label class="free-item-toggle" data-no-drag><input type="checkbox" ${it.isFree ? 'checked' : ''}${editDisabledAttr} onchange="toggleFreeItem('${it.lineId}', this.checked)"> สินค้าแถม</label>
         </div>
       </div>
       <div class="qty quote-qty-control" data-no-drag>
@@ -3128,6 +3563,8 @@ if (typeof window !== 'undefined') {
   window.isProductForCurrentQuoteBusinessUnit = isProductForCurrentQuoteBusinessUnit;
   window.changeDiscount = changeDiscount;
   window.toggleFreeItem = toggleFreeItem;
+  window.openQuoteLinePriceEditor = openQuoteLinePriceEditor;
+  window.changeQuoteLineUnit = changeQuoteLineUnit;
   window.navigateToProductSearch = navigateToProductSearch;
   window.getProductSearchInput = getProductSearchInput;
   window.cancelPendingQuoteItemScroll = cancelPendingQuoteItemScroll;
