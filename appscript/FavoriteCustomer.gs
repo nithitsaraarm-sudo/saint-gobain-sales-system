@@ -10,7 +10,7 @@ function getFavoriteCustomers(payload) {
     const auth = requireApiUser(payload);
     if (!auth.ok) return auth;
     const userId = String(auth.data.userId || '').trim();
-    const customersResult = getCustomers();
+    const customersResult = getCustomers({ currentUser: auth.data });
     if (!customersResult.ok) return customersResult;
     const customerMap = {};
     customersResult.data.forEach(function (customer) {
@@ -41,13 +41,13 @@ function addFavoriteCustomer(payload) {
     const userId = String(auth.data.userId || '').trim();
     const customerId = String(payload && payload.customerId || '').trim();
     if (!customerId) return validationError('customerId is required');
-    const customer = getCustomer(customerId);
+    const customer = getCustomer(customerId, { currentUser: auth.data });
     if (!customer.ok || !isActiveCustomer(customer.data)) return notFound('Customer not found');
     lock = LockService.getScriptLock();
     lock.waitLock(10000);
     const mine = getFavoriteRows_().filter(function (row) { return String(row.userId || '').trim() === userId; });
     if (mine.some(function (row) { return String(row.customerId || '').trim() === customerId; })) return success(customer.data, 'Already favorite');
-    const activeCustomers = getCustomers();
+    const activeCustomers = getCustomers({ currentUser: auth.data });
     const activeIds = activeCustomers.ok ? activeCustomers.data.map(function (item) { return String(item.customerId || '').trim(); }) : [];
     const activeMine = mine.filter(function (row) { return activeIds.indexOf(String(row.customerId || '').trim()) >= 0; });
     if (activeMine.length >= MAX_FAVORITE_CUSTOMERS) return validationError('สามารถปักร้านค้าโปรดได้สูงสุด 5 ร้าน');
@@ -73,6 +73,8 @@ function removeFavoriteCustomer(payload) {
     if (!auth.ok) return auth;
     const userId = String(auth.data.userId || '').trim();
     const customerId = String(payload && payload.customerId || '').trim();
+    const scopeCheck = getCustomer(customerId, { currentUser: auth.data });
+    if (!scopeCheck.ok && (scopeCheck.code === 'CUSTOMER_OUTSIDE_ASSIGNED_AREA' || scopeCheck.code === 'CUSTOMER_ACCESS_DENIED')) return scopeCheck;
     const sheet = ensureSheet(getUserFavoriteCustomersSheetName(), getHeadersForSheet(getUserFavoriteCustomersSheetName()));
     if (!sheet || sheet.getLastRow() < 1) return success({ customerId: customerId }, 'นำร้านค้าออกจากรายการโปรดแล้ว');
     const rows = sheet.getDataRange().getDisplayValues();
@@ -97,11 +99,18 @@ function reorderFavoriteCustomers(payload) {
     const userId = String(auth.data.userId || '').trim();
     const customerIds = Array.isArray(payload && payload.customerIds) ? payload.customerIds.map(function (id) { return String(id || '').trim(); }).filter(Boolean) : [];
     if (customerIds.length > MAX_FAVORITE_CUSTOMERS || new Set(customerIds).size !== customerIds.length) return validationError('Invalid favorite order');
+    const scopedCustomers = getCustomers({ currentUser: auth.data });
+    if (!scopedCustomers.ok) return scopedCustomers;
+    const scopedIds = scopedCustomers.data.map(function (customer) {
+      return String(customer.customerId || '').trim();
+    });
+    if (customerIds.some(function (customerId) { return scopedIds.indexOf(customerId) < 0; })) return fail('CUSTOMER_OUTSIDE_ASSIGNED_AREA', 'CUSTOMER_OUTSIDE_ASSIGNED_AREA');
     const mine = getFavoriteRows_().filter(function (row) { return String(row.userId || '').trim() === userId; });
-    if (mine.length !== customerIds.length || mine.some(function (row) { return customerIds.indexOf(String(row.customerId || '').trim()) < 0; })) return validationError('Favorite list changed; reload and try again');
+    const scopedMine = mine.filter(function (row) { return scopedIds.indexOf(String(row.customerId || '').trim()) >= 0; });
+    if (scopedMine.length !== customerIds.length || scopedMine.some(function (row) { return customerIds.indexOf(String(row.customerId || '').trim()) < 0; })) return validationError('Favorite list changed; reload and try again');
     const now = new Date().toISOString();
     customerIds.forEach(function (customerId, index) {
-      const row = mine.find(function (item) { return String(item.customerId || '').trim() === customerId; });
+      const row = scopedMine.find(function (item) { return String(item.customerId || '').trim() === customerId; });
       updateRowById(getUserFavoriteCustomersSheetName(), 'favoriteId', row.favoriteId, { sortOrder: index + 1, updatedAt: now });
     });
     logActivity(userId, 'FAVORITE_CUSTOMER_REORDERED', 'customerIds=' + customerIds.join(','));
