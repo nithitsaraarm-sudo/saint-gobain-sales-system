@@ -116,6 +116,11 @@ function saveCustomer(payload) {
       return brandCheck;
     }
     const assigned = normalizeCustomerAssignedSales_(data);
+    const assignedCheck = validateAssignedSalesForCustomer_(assigned.assignedSalesUserId, salesArea, assigned.assignedSalesUsername);
+    if (!assignedCheck.ok) {
+      return assignedCheck;
+    }
+    const resolvedAssigned = assignedCheck.data || assigned;
     const now = new Date().toISOString();
     const row = {
       customerId: String(data.customerId || '').trim(),
@@ -127,8 +132,8 @@ function saveCustomer(payload) {
       address: String(data.address || '').trim(),
       group: String(data.group || '').trim(),
       salesArea: salesArea,
-      assignedSalesUserId: assigned.assignedSalesUserId,
-      assignedSalesUsername: assigned.assignedSalesUsername,
+      assignedSalesUserId: resolvedAssigned.assignedSalesUserId,
+      assignedSalesUsername: resolvedAssigned.assignedSalesUsername,
       sellsWeber: brandCheck.data.sellsWeber ? 'TRUE' : 'FALSE',
       sellsGyproc: brandCheck.data.sellsGyproc ? 'TRUE' : 'FALSE',
       active: 'TRUE',
@@ -141,6 +146,11 @@ function saveCustomer(payload) {
       return insertResult;
     }
     clearCustomerCaches_();
+    logCustomerAreaChange_(auth.data, row.customerId, '', row.salesArea, 'CUSTOMER_AREA_ASSIGNED');
+    logCustomerBrandChange_(auth.data, row.customerId, '', getCustomerBrandLogValue_(brandCheck.data));
+    if (row.assignedSalesUserId) {
+      logCustomerAssignedSalesChange_(auth.data, row.customerId, '', row.assignedSalesUserId);
+    }
     logInfo('saveCustomer', 'Customer created ' + row.customerId);
     return success(row, 'Customer saved');
   } catch (error) {
@@ -177,17 +187,35 @@ function updateCustomer(customerId, payload) {
     if (!brandCheck.ok) {
       return brandCheck;
     }
+    const submittedAssigned = normalizeCustomerAssignedSales_(payload);
+    const nextAssignedUserId = (payload.assignedSalesUserId !== undefined || payload.assignedSalesUsername !== undefined)
+      ? submittedAssigned.assignedSalesUserId
+      : String(existingCustomer.assignedSalesUserId || '').trim();
+    const nextAssignedUsername = (payload.assignedSalesUserId !== undefined || payload.assignedSalesUsername !== undefined)
+      ? submittedAssigned.assignedSalesUsername
+      : String(existingCustomer.assignedSalesUsername || '').trim();
+    const assignedCheck = validateAssignedSalesForCustomer_(nextAssignedUserId, salesArea, nextAssignedUsername);
+    if (!assignedCheck.ok) {
+      return assignedCheck;
+    }
+    const activeCheck = validateCustomerActiveInput_(payload);
+    if (!activeCheck.ok) {
+      return activeCheck;
+    }
     const updateObject = {};
-    ['customerName', 'province', 'district', 'phone', 'address', 'notes', 'group', 'active'].forEach(function (field) {
+    ['customerName', 'province', 'district', 'phone', 'address', 'notes', 'group'].forEach(function (field) {
       if (payload[field] !== undefined) {
         updateObject[field] = field === 'phone' && typeof normalizePhone === 'function' ? normalizePhone(payload[field]) : String(payload[field]).trim();
       }
     });
+    if (payload.active !== undefined) {
+      updateObject.active = activeCheck.data ? 'TRUE' : 'FALSE';
+    }
     if (payload.salesArea !== undefined || payload.area !== undefined || payload.branch !== undefined || !existingCustomer.salesArea) {
       updateObject.salesArea = salesArea;
     }
     if (payload.assignedSalesUserId !== undefined || payload.assignedSalesUsername !== undefined) {
-      const assigned = normalizeCustomerAssignedSales_(payload);
+      const assigned = assignedCheck.data || submittedAssigned;
       updateObject.assignedSalesUserId = assigned.assignedSalesUserId;
       updateObject.assignedSalesUsername = assigned.assignedSalesUsername;
     }
@@ -203,6 +231,19 @@ function updateCustomer(customerId, payload) {
     }
     clearCustomerCaches_();
     const actor = auth.data || {};
+    if (updateObject.salesArea !== undefined && normalizeString(existingCustomer.salesArea) !== normalizeString(updateObject.salesArea)) {
+      logCustomerAreaChange_(actor, customerId, existingCustomer.salesArea, updateObject.salesArea, 'CUSTOMER_AREA_CHANGED');
+    }
+    if (updateObject.sellsWeber !== undefined || updateObject.sellsGyproc !== undefined) {
+      const oldBrands = getCustomerBrandLogValue_(existingCustomer);
+      const newBrands = getCustomerBrandLogValue_(brandCheck.data);
+      if (oldBrands !== newBrands) {
+        logCustomerBrandChange_(actor, customerId, oldBrands, newBrands);
+      }
+    }
+    if (updateObject.assignedSalesUserId !== undefined && normalizeString(existingCustomer.assignedSalesUserId) !== normalizeString(updateObject.assignedSalesUserId)) {
+      logCustomerAssignedSalesChange_(actor, customerId, existingCustomer.assignedSalesUserId, updateObject.assignedSalesUserId);
+    }
     logActivity(actor.userId || '', 'CUSTOMER_UPDATED', 'Customer updated ' + customerId);
     return success(updateObject, 'Customer updated');
   } catch (error) {
@@ -474,7 +515,7 @@ function validateCustomerSalesAreaForActor_(actor, salesArea) {
   return success(true);
 }
 
-function canAccessCustomerRecord_(user, customer) {
+function canAccessCustomerRecord_(user, customer, options) {
   if (!user) {
     return success(true);
   }
@@ -483,16 +524,16 @@ function canAccessCustomerRecord_(user, customer) {
   }
   const userArea = getCustomerUserArea_(user);
   if (!userArea) {
-    return fail('CUSTOMER_OUTSIDE_ASSIGNED_AREA', 'CUSTOMER_OUTSIDE_ASSIGNED_AREA');
+    return denyCustomerScopeAccess_(user, customer, 'CUSTOMER_OUTSIDE_ASSIGNED_AREA', options);
   }
   const customerArea = normalizeCustomerSalesArea_(customer);
   if (normalizeString(customerArea) !== normalizeString(userArea)) {
-    return fail('CUSTOMER_OUTSIDE_ASSIGNED_AREA', 'CUSTOMER_OUTSIDE_ASSIGNED_AREA');
+    return denyCustomerScopeAccess_(user, customer, 'CUSTOMER_OUTSIDE_ASSIGNED_AREA', options);
   }
   if (hasRole(user, [USER_ROLES.SALES])) {
     const assignedUserId = String(customer && customer.assignedSalesUserId || '').trim();
     if (assignedUserId && normalizeString(assignedUserId) !== normalizeString(user.userId)) {
-      return fail('CUSTOMER_ACCESS_DENIED', 'CUSTOMER_ACCESS_DENIED');
+      return denyCustomerScopeAccess_(user, customer, 'CUSTOMER_ACCESS_DENIED', options);
     }
   }
   return success(true);
@@ -504,7 +545,7 @@ function filterCustomersForScope_(customers, user) {
     return list;
   }
   return list.filter(function (customer) {
-    return canAccessCustomerRecord_(user, customer).ok;
+    return canAccessCustomerRecord_(user, customer, { silent: true }).ok;
   });
 }
 
@@ -552,7 +593,37 @@ function inferCustomerBrandFlags_(source) {
   };
 }
 
+function validateCustomerBooleanInput_(payload, field) {
+  const data = payload && typeof payload === 'object' ? payload : {};
+  if (!Object.prototype.hasOwnProperty.call(data, field)) {
+    return success(true);
+  }
+  const value = data[field];
+  const text = String(value === null || value === undefined ? '' : value).trim();
+  if (!text) {
+    return success(true);
+  }
+  return parseCustomerBooleanFlag_(value) === null ? validationError(field + ' must be Boolean') : success(true);
+}
+
+function validateCustomerActiveInput_(payload) {
+  const data = payload && typeof payload === 'object' ? payload : {};
+  if (!Object.prototype.hasOwnProperty.call(data, 'active')) {
+    return success(true);
+  }
+  const active = parseCustomerActiveFlag_(data.active);
+  return active === null ? validationError('active must be Boolean') : success(active);
+}
+
 function validateSubmittedCustomerBrands_(payload, existingCustomer, required) {
+  const weberCheck = validateCustomerBooleanInput_(payload, 'sellsWeber');
+  if (!weberCheck.ok) {
+    return weberCheck;
+  }
+  const gyprocCheck = validateCustomerBooleanInput_(payload, 'sellsGyproc');
+  if (!gyprocCheck.ok) {
+    return gyprocCheck;
+  }
   const merged = Object.assign({}, existingCustomer || {}, payload || {});
   const brands = inferCustomerBrandFlags_(merged);
   if (required && !brands.sellsWeber && !brands.sellsGyproc) {
@@ -574,6 +645,143 @@ function normalizeCustomerAssignedSales_(source) {
     assignedSalesUserId: String(item.assignedSalesUserId || item.salesUserId || item.ownerUserId || '').trim(),
     assignedSalesUsername: String(item.assignedSalesUsername || item.assignedSalesName || item.salesUsername || item.ownerUsername || '').trim()
   };
+}
+
+function findAssignedSalesUser_(assignedSalesUserId, assignedSalesUsername) {
+  const assignedId = String(assignedSalesUserId || '').trim();
+  const assignedUsername = String(assignedSalesUsername || '').trim();
+  if (!assignedId && !assignedUsername) {
+    return success(null);
+  }
+  if (assignedId && typeof getUserById === 'function') {
+    const byId = getUserById(assignedId);
+    if (byId.ok) {
+      return success(normalizeUserAccount(byId.data));
+    }
+  }
+  if (typeof listUserAccounts !== 'function') {
+    return fail('INVALID_ASSIGNED_SALES', 'INVALID_ASSIGNED_SALES', { assignedSalesUserId: assignedId });
+  }
+  const usersResult = listUserAccounts();
+  if (!usersResult.ok) {
+    return fail('INVALID_ASSIGNED_SALES', 'INVALID_ASSIGNED_SALES', { assignedSalesUserId: assignedId });
+  }
+  const normalizedUsername = normalizeString(assignedUsername);
+  const user = (Array.isArray(usersResult.data) ? usersResult.data : []).map(normalizeUserAccount).find(function (item) {
+    if (assignedId && normalizeString(item.userId) === normalizeString(assignedId)) return true;
+    return normalizedUsername && normalizeString(item.username) === normalizedUsername;
+  });
+  return user ? success(user) : fail('INVALID_ASSIGNED_SALES', 'INVALID_ASSIGNED_SALES', { assignedSalesUserId: assignedId });
+}
+
+function validateAssignedSalesForCustomer_(assignedSalesUserId, salesArea, assignedSalesUsername) {
+  const userResult = findAssignedSalesUser_(assignedSalesUserId, assignedSalesUsername);
+  if (!userResult.ok) {
+    return userResult;
+  }
+  const user = userResult.data;
+  if (!user) {
+    return success({ assignedSalesUserId: '', assignedSalesUsername: '' });
+  }
+  const assignedId = String(user.userId || '').trim();
+  if (user.status && user.status !== USER_STATUSES.ACTIVE) {
+    return fail('ASSIGNED_USER_INACTIVE', 'ASSIGNED_USER_INACTIVE', { assignedSalesUserId: assignedId });
+  }
+  if (!hasRole(user, [USER_ROLES.SALES])) {
+    return fail('INVALID_ASSIGNED_SALES', 'INVALID_ASSIGNED_SALES', { assignedSalesUserId: assignedId });
+  }
+  const targetArea = String(salesArea || '').trim();
+  if (!targetArea) {
+    return validationError('salesArea is required');
+  }
+  if (normalizeString(user.area || user.branch) !== normalizeString(targetArea)) {
+    return fail('SALES_AREA_MISMATCH', 'SALES_AREA_MISMATCH', { assignedSalesUserId: assignedId, salesArea: targetArea });
+  }
+  return success({
+    assignedSalesUserId: assignedId,
+    assignedSalesUsername: String(user.username || '').trim()
+  });
+}
+
+function sanitizeCustomerAuditValue_(value) {
+  return String(value === null || value === undefined ? '' : value).replace(/[;\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+
+function getCustomerBrandLogValue_(source) {
+  const flags = inferCustomerBrandFlags_(source || {});
+  if (flags.sellsWeber && flags.sellsGyproc) return 'WEBER+GYPROC';
+  if (flags.sellsWeber) return 'WEBER';
+  if (flags.sellsGyproc) return 'GYPROC';
+  return 'NONE';
+}
+
+function buildCustomerAuditDetail_(actor, detail) {
+  const data = detail && typeof detail === 'object' ? detail : {};
+  const actorId = sanitizeCustomerAuditValue_(data.actorUserId || actor && (actor.userId || actor.username));
+  const pairs = [
+    ['customerId', data.customerId],
+    ['oldArea', data.oldArea],
+    ['newArea', data.newArea],
+    ['oldBrands', data.oldBrands],
+    ['newBrands', data.newBrands],
+    ['oldAssignedSalesUserId', data.oldAssignedSalesUserId],
+    ['newAssignedSalesUserId', data.newAssignedSalesUserId],
+    ['actorUserId', actorId],
+    ['timestamp', data.timestamp || new Date().toISOString()],
+    ['result', data.result || 'ok']
+  ];
+  return pairs.map(function (pair) {
+    return pair[0] + '=' + sanitizeCustomerAuditValue_(pair[1]);
+  }).join(';');
+}
+
+function logCustomerAudit_(actor, action, detail) {
+  const eventName = String(action || '').trim();
+  if (!eventName) {
+    return;
+  }
+  const actorId = String(actor && (actor.userId || actor.username) || '').trim();
+  const detailText = buildCustomerAuditDetail_(actor, detail);
+  if (typeof logActivity === 'function') {
+    logActivity(actorId, eventName, detailText);
+  } else {
+    logInfo(eventName, detailText);
+  }
+}
+
+function logCustomerAreaChange_(actor, customerId, oldArea, newArea, action) {
+  logCustomerAudit_(actor, action || 'CUSTOMER_AREA_CHANGED', {
+    customerId: customerId,
+    oldArea: oldArea,
+    newArea: newArea
+  });
+}
+
+function logCustomerBrandChange_(actor, customerId, oldBrands, newBrands) {
+  logCustomerAudit_(actor, 'CUSTOMER_BRANDS_CHANGED', {
+    customerId: customerId,
+    oldBrands: oldBrands,
+    newBrands: newBrands
+  });
+}
+
+function logCustomerAssignedSalesChange_(actor, customerId, oldAssignedSalesUserId, newAssignedSalesUserId) {
+  logCustomerAudit_(actor, 'CUSTOMER_ASSIGNED_SALES_CHANGED', {
+    customerId: customerId,
+    oldAssignedSalesUserId: oldAssignedSalesUserId,
+    newAssignedSalesUserId: newAssignedSalesUserId
+  });
+}
+
+function denyCustomerScopeAccess_(user, customer, code, options) {
+  if (!options || !options.silent) {
+    logCustomerAudit_(user, 'CUSTOMER_SCOPE_ACCESS_DENIED', {
+      customerId: customer && (customer.customerId || customer.customerCode || customer.id),
+      newArea: normalizeCustomerSalesArea_(customer),
+      result: code
+    });
+  }
+  return fail(code, code);
 }
 
 function customerRowToObject_(headers, rowValues) {
