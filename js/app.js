@@ -7,7 +7,7 @@ let PRODUCT_CALC_PRODUCT=null;
 let PROFILE_IMAGE_DATA='';
 let bootstrapLoaded=false, bootstrapPromise=null;
 let quoteHistoryLoaded=false, quoteHistoryPromise=null;
-let customersLoaded=false, productsLoaded=false, customersPromise=null, productsPromise=null;
+let customersLoaded=false, productsLoaded=false, customersPromise=null, customerRefreshPromise=null, productsPromise=null;
 let FAVORITE_CUSTOMERS=[];
 let FAVORITE_PRODUCTS=[], PINNED_PRODUCTS=[], productPreferencesLoaded=false, productPreferencesPromise=null;
 const openQuotationDetailPromises={};
@@ -557,6 +557,18 @@ function ensureCustomerCrmUi(){
     filter.onchange=renderCustomers;
     toolbar.appendChild(filter);
   }
+  if(toolbar&&!$('refreshCustomersButton')){
+    const button=document.createElement('button');
+    button.type='button';
+    button.id='refreshCustomersButton';
+    button.className='ghost customer-refresh-button';
+    button.setAttribute('aria-label','อัปเดตข้อมูลร้านค้า');
+    button.textContent='🔄 อัปเดตข้อมูลร้านค้า';
+    button.onclick=refreshCustomersFromServer;
+    const filter=$('customerTypeFilter');
+    if(filter)toolbar.insertBefore(button,filter);
+    else toolbar.appendChild(button);
+  }
   if(grid&&!$('customerSummary')){
     const summary=document.createElement('div');
     summary.id='customerSummary';
@@ -711,6 +723,21 @@ function setCustomersData(items){
   customersLoaded=true;
   if(typeof setCache==='function')setCache('sg_customers_cache',DB.customers,15);
 }
+function clearCustomersFrontendCache(){
+  if(typeof clearCache==='function')clearCache('sg_customers_cache');
+}
+function invalidateBootstrapCustomerCacheIfNeeded(){
+  if(typeof getCache!=='function'||typeof clearCache!=='function')return;
+  try{
+    const cachedBootstrap=getCache('sg_bootstrap_cache');
+    if(cachedBootstrap&&Array.isArray(cachedBootstrap.customers)){
+      clearCache('sg_bootstrap_cache');
+      bootstrapLoaded=false;
+    }
+  }catch(error){
+    console.warn('Customer bootstrap cache invalidation skipped');
+  }
+}
 function setProductsData(items){
   DB.products=Array.isArray(items)?items.map(normalizeProduct):[];
   productsLoaded=true;
@@ -731,7 +758,7 @@ async function loadCustomers(options){
   const force=!!(options&&options.force);
   const background=!!(options&&options.background);
   if(customersLoaded&&!force)return {ok:true,data:DB.customers,cached:true};
-  if(customersPromise&&!force)return customersPromise;
+  if(customersPromise)return customersPromise;
   if(!force&&typeof getCache==='function'){
     const cached=getCache('sg_customers_cache');
     if(Array.isArray(cached)){
@@ -745,10 +772,19 @@ async function loadCustomers(options){
       if(!background)toast('กำลังโหลดข้อมูล...');
       const response=await callApi('customers',{});
       if(response&&response.ok){
-        setCustomersData(response.data||[]);
+        if(!Array.isArray(response.data)){
+          const invalidResponse={ok:false,message:'Invalid customers response: expected an array'};
+          if(!background)toast(invalidResponse.message);
+          console.warn('Customer load rejected invalid response');
+          return invalidResponse;
+        }
+        setCustomersData(response.data);
         renderCustomerViews();
+        return {ok:true,data:DB.customers};
       }
-      return response;
+      const failed=response||{ok:false,message:'โหลดข้อมูลร้านค้าไม่สำเร็จ'};
+      if(!background)toast(failed.message||'โหลดข้อมูลร้านค้าไม่สำเร็จ');
+      return failed;
     }catch(error){
       console.error(error);
       if(!background)toast('โหลดข้อมูลร้านค้าไม่สำเร็จ');
@@ -758,6 +794,44 @@ async function loadCustomers(options){
     }
   })();
   return customersPromise;
+}
+function setCustomerRefreshButtonLoading(isLoading){
+  const button=$('refreshCustomersButton');
+  if(!button)return;
+  if(button.dataset.originalText===undefined){
+    button.dataset.originalText=button.textContent||'🔄 อัปเดตข้อมูลร้านค้า';
+  }
+  button.disabled=!!isLoading;
+  button.setAttribute('aria-busy',String(!!isLoading));
+  button.textContent=isLoading?'⏳ กำลังอัปเดต...':button.dataset.originalText;
+}
+function refreshCustomersFromServer(){
+  if(customerRefreshPromise)return customerRefreshPromise;
+  customerRefreshPromise=(async()=>{
+    setCustomerRefreshButtonLoading(true);
+    try{
+      clearCustomersFrontendCache();
+      customersLoaded=false;
+      const response=await loadCustomers({force:true,background:true});
+      if(!response||!response.ok){
+        toast(response&&response.message?response.message:'อัปเดตข้อมูลร้านค้าไม่สำเร็จ');
+        console.warn('Customer refresh failed');
+        return response||{ok:false,message:'Customer refresh failed'};
+      }
+      renderCustomerViews();
+      toast('อัปเดตข้อมูลร้านค้าแล้ว '+DB.customers.length+' รายการ');
+      console.info('Customer refresh completed count='+DB.customers.length);
+      return response;
+    }catch(error){
+      console.warn('Customer refresh failed');
+      toast('อัปเดตข้อมูลร้านค้าไม่สำเร็จ');
+      return {ok:false,message:String(error&&error.message?error.message:error)};
+    }finally{
+      setCustomerRefreshButtonLoading(false);
+      customerRefreshPromise=null;
+    }
+  })();
+  return customerRefreshPromise;
 }
 async function loadProducts(options){
   const force=!!(options&&options.force);
@@ -1575,7 +1649,7 @@ function customerFormHtml(customer){const c=customer||{};return `<div class="fie
 function openModal(type){let title={customer:'เพิ่มร้านค้า',product:'เพิ่มสินค้า',promo:'เพิ่มโปรโมชั่น'}[type]; document.getElementById('modalTitle').textContent=title; let html=''; if(type==='customer')html=customerFormHtml(); if(type==='product')html=`<div class="field"><label>ชื่อสินค้า</label><input id="mName"></div><div class="field"><label>แบรนด์</label><select id="mBrand"><option>Weber</option><option>Gyproc</option></select></div><div class="field"><label>หน่วย</label><input id="mUnit"></div><div class="field"><label>ราคา</label><input id="mPrice" type="number"></div><button class="primary" onclick="saveModal('product')">บันทึก</button>`; if(type==='promo')html=`<div class="field"><label>แบรนด์</label><select id="mBrand"><option>Weber</option><option>Gyproc</option></select></div><div class="field"><label>สินค้า</label><input id="mName"></div><div class="field"><label>รายละเอียด</label><textarea id="mDesc"></textarea></div><div class="field"><label>ส่วนลด/โปร</label><input id="mDiscount"></div><button class="primary" onclick="saveModal('promo')">บันทึก</button>`; document.getElementById('modalBody').innerHTML=html; document.getElementById('modal').classList.add('show')}
 function canEditCustomers(){return !!(DB.permissions&&DB.permissions.canManageCustomers)||['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0}
 function openCustomerEditModal(customerId){if(!canEditCustomers()){toast('คุณไม่มีสิทธิ์แก้ไขข้อมูลร้านค้า');return;}const customer=findCustomerById(customerId);if(!customer){toast('ไม่พบข้อมูลร้านค้า');return;}$('modalTitle').textContent='แก้ไขข้อมูลร้านค้า';$('modalBody').innerHTML=customerFormHtml(customer);$('modal').classList.add('show')}
-async function saveCustomerModal(existingId){const button=$('saveCustomerModalButton');const customerId=String(existingId||$('mCustomerId')?.value||'').trim();const phone=normalizePhone($('mPhone')?.value||'');if(!customerId||!String($('mName')?.value||'').trim()){toast('กรุณากรอกรหัสและชื่อร้านค้า');return;}if(phone&&!isValidPhone(phone)){toast('กรุณากรอกเบอร์โทรศัพท์ให้ถูกต้อง');return;}const payload={customerId:customerId,customerName:$('mName')?.value||'',province:$('mProvince')?.value||'',phone:phone,address:$('mAddress')?.value||'',notes:$('mNotes')?.value||''};try{if(button)button.disabled=true;const response=await callApi(existingId?'updateCustomer':'saveCustomer',payload);toast(response.message||(response.ok?'บันทึกแล้ว':'บันทึกไม่สำเร็จ'));if(!response.ok)return;closeModal();if(typeof clearCache==='function')clearCache('sg_customers_cache');customersLoaded=false;await loadCustomers({force:true});await loadFavoriteCustomers();}finally{if(button)button.disabled=false}}
+async function saveCustomerModal(existingId){const button=$('saveCustomerModalButton');const customerId=String(existingId||$('mCustomerId')?.value||'').trim();const phone=normalizePhone($('mPhone')?.value||'');if(!customerId||!String($('mName')?.value||'').trim()){toast('กรุณากรอกรหัสและชื่อร้านค้า');return;}if(phone&&!isValidPhone(phone)){toast('กรุณากรอกเบอร์โทรศัพท์ให้ถูกต้อง');return;}const payload={customerId:customerId,customerName:$('mName')?.value||'',province:$('mProvince')?.value||'',phone:phone,address:$('mAddress')?.value||'',notes:$('mNotes')?.value||''};try{if(button)button.disabled=true;const response=await callApi(existingId?'updateCustomer':'saveCustomer',payload);toast(response.message||(response.ok?'บันทึกแล้ว':'บันทึกไม่สำเร็จ'));if(!response.ok)return;closeModal();clearCustomersFrontendCache();invalidateBootstrapCustomerCacheIfNeeded();customersLoaded=false;await loadCustomers({force:true});await loadFavoriteCustomers();}finally{if(button)button.disabled=false}}
 function closeModal(){document.getElementById('modal').classList.remove('show')}
 async function saveModal(type){
   let r;
@@ -1595,7 +1669,8 @@ async function saveModal(type){
   closeModal();
   toast('บันทึกแล้ว');
   if(type==='customer'){
-    if(typeof clearCache==='function')clearCache('sg_customers_cache');
+    clearCustomersFrontendCache();
+    invalidateBootstrapCustomerCacheIfNeeded();
     customersLoaded=false;
     await loadCustomers({force:true});
     return;
@@ -1872,5 +1947,5 @@ const baseFilterQuoteProductsByBusinessUnitForPreferences=filterQuoteProductsByB
 filterQuoteProductsByBusinessUnit=function(query,businessUnit){return baseFilterQuoteProductsByBusinessUnitForPreferences(query,businessUnit).map(decorateQuotePreferenceProduct).sort((a,b)=>productPreferenceRank(a)-productPreferenceRank(b)||rankQuoteProductBusinessUnit(a,businessUnit)-rankQuoteProductBusinessUnit(b,businessUnit)||rankQuoteProduct(a,query)-rankQuoteProduct(b,query)||String(a.productName||'').localeCompare(String(b.productName||''),'th'))};
 const baseRenderQuoteProductPickerForPreferences=renderQuoteProductPicker;
 renderQuoteProductPicker=function(){const requestId=++quoteProductSearchSequence;ensureProductPreferenceContainers();if(!productPreferencesLoaded&&!productPreferencesPromise&&USER)loadProductPreferences();const q=$('productSearch')?.value||'';const picker=$('productPicker');if(!picker)return;if(!isQuoteBusinessUnitReadyForProducts()){picker.innerHTML='<div class="row quote-empty">กรุณาเลือก BU ก่อนแสดงสินค้า</div>';renderQuoteProductPreferenceSections();return;}const businessUnit=getSelectedQuoteBusinessUnitForProducts();const businessUnitLabel=quoteBusinessUnitLabel(businessUnit);if(!productsLoaded&&!DB.products.length){picker.innerHTML=`<div class="row quote-empty">กำลังโหลดสินค้า โดยเรียง ${businessUnitLabel} ก่อน...</div>`;if(document.activeElement===$('productSearch')){loadProducts().then(()=>{if(requestId===quoteProductSearchSequence&&businessUnit===getSelectedQuoteBusinessUnitForProducts())renderQuoteProductPicker();});}renderQuoteProductPreferenceSections();return;}const matchesAll=filterQuoteProductsByBusinessUnit(q,businessUnit);const limited=limitList(matchesAll,QUOTE_PICKER_LIMIT);const notice=limited.limited?`<div class="list-limit">แสดง 30 รายการแรกจากทุก BU โดยเรียง ${businessUnitLabel} และสินค้าปักหมุดก่อน กรุณาค้นหาเพิ่มเติม</div>`:'';picker.innerHTML=limited.items.length?notice+limited.items.map(product=>renderQuoteProductPreferenceCard(product,{source:'SEARCH'})).join(''):`<div class="row quote-empty">ไม่พบสินค้าที่ตรงกับคำค้น</div>`;renderQuoteProductPreferenceSections();};
-window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.addProductCardToQuote=addProductCardToQuote; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
+window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.addProductCardToQuote=addProductCardToQuote; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
 window.normalizeSystemIdentitySettings=normalizeSystemIdentitySettings; window.applySystemIdentityToUI=applySystemIdentityToUI; window.renderLoginBranding=renderLoginBranding; window.renderSidebarBranding=renderSidebarBranding; window.refreshPublicSystemSettings=refreshPublicSystemSettings; window.setPublicSystemSettings=setPublicSystemSettings; window.loadSystemIdentitySettingsForSettings=loadSystemIdentitySettingsForSettings; window.saveSystemIdentitySettings=saveSystemIdentitySettings; window.savePersonalGreetingSettings=savePersonalGreetingSettings; window.saveSystemGreetingSettings=saveSystemGreetingSettings; window.canManageSystemIdentitySettings=canManageSystemIdentitySettings; window.applySettingsPermissionUi=applySettingsPermissionUi;
