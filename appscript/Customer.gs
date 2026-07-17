@@ -3,7 +3,8 @@ const CUSTOMER_UNASSIGNED_AREA = 'UNASSIGNED';
 function getCustomers(payload) {
   const timer = startPerformanceTimer('customers');
   try {
-    if (typeof clearSheetDataCache === 'function') {
+    const data = payload && typeof payload === 'object' ? payload : {};
+    if (data.force && typeof clearSheetDataCache === 'function') {
       clearSheetDataCache(CUSTOMERS_SHEET);
     }
     const result = getSheetData(CUSTOMERS_SHEET);
@@ -12,8 +13,7 @@ function getCustomers(payload) {
       endPerformanceTimer(timer, 'ok=false');
       return success([]);
     }
-    const customers = normalizeCustomerRows_(result.data);
-    const activeCustomers = filterCustomersForScope_(customers.filter(isActiveCustomer), getCustomerScopeUser_(payload));
+    const activeCustomers = normalizeActiveCustomerRowsForScope_(result.data, getCustomerScopeUser_(data));
     endPerformanceTimer(timer, 'count=' + activeCustomers.length);
     return success(activeCustomers);
   } catch (error) {
@@ -67,7 +67,7 @@ function searchCustomers(keyword, payload) {
       logWarning('searchCustomers', 'Unable to read Customers sheet');
       return success([]);
     }
-    const customers = filterCustomersForScope_(normalizeCustomerRows_(result.data).filter(isActiveCustomer), getCustomerScopeUser_(payload));
+    const customers = normalizeActiveCustomerRowsForScope_(result.data, getCustomerScopeUser_(payload));
     const matches = customers.filter(function (item) {
       return [
         String(item.customerId || ''),
@@ -305,7 +305,7 @@ function getCustomersByProvince(province, payload) {
       logWarning('getCustomersByProvince', 'Unable to read Customers sheet');
       return success([]);
     }
-    const customers = filterCustomersForScope_(normalizeCustomerRows_(result.data).filter(isActiveCustomer), getCustomerScopeUser_(payload));
+    const customers = normalizeActiveCustomerRowsForScope_(result.data, getCustomerScopeUser_(payload));
     const matches = customers.filter(function (item) {
       return String(item.province || '').toLowerCase() === value;
     });
@@ -869,6 +869,18 @@ function normalizeCustomerRows_(rows) {
   list.forEach(function (row, index) {
     const normalized = normalizeCustomerObject(row, index + 2);
     if (normalized) {
+      customers.push(normalized);
+    }
+  });
+  return customers;
+}
+
+function normalizeActiveCustomerRowsForScope_(rows, user) {
+  const list = Array.isArray(rows) ? rows : [];
+  const customers = [];
+  list.forEach(function (row, index) {
+    const normalized = normalizeCustomerObject(row, index + 2);
+    if (normalized && isActiveCustomer(normalized) && canAccessCustomerRecord_(user, normalized, { silent: true }).ok) {
       customers.push(normalized);
     }
   });

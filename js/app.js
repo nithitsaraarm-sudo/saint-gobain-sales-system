@@ -7,8 +7,8 @@ let PRODUCT_CALC_PRODUCT=null;
 let PROFILE_IMAGE_DATA='';
 let bootstrapLoaded=false, bootstrapPromise=null;
 let quoteHistoryLoaded=false, quoteHistoryPromise=null;
-let customersLoaded=false, productsLoaded=false, customersPromise=null, customerRefreshPromise=null, productsPromise=null;
-let FAVORITE_CUSTOMERS=[];
+let customersLoaded=false, productsLoaded=false, customersPromise=null, customersPromiseForce=false, customersQueuedForce=false, customersRequestSeq=0, customerRefreshPromise=null, productsPromise=null;
+let FAVORITE_CUSTOMERS=[], FAVORITE_CUSTOMER_ROWS=[], favoriteCustomersPromise=null;
 let FAVORITE_PRODUCTS=[], PINNED_PRODUCTS=[], productPreferencesLoaded=false, productPreferencesPromise=null;
 const openQuotationDetailPromises={};
 const LIST_RENDER_LIMIT=Number(window.DEFAULT_PAGE_SIZE||50), QUOTE_PICKER_LIMIT=30, SEARCH_DEBOUNCE_MS=300;
@@ -847,6 +847,7 @@ function getProductDiscount(customerId, product){
 function setCustomersData(items){
   DB.customers=Array.isArray(items)?items.map(normalizeCustomer):[];
   customersLoaded=true;
+  if(FAVORITE_CUSTOMER_ROWS.length)FAVORITE_CUSTOMERS=joinFavoriteCustomerRows(FAVORITE_CUSTOMER_ROWS);
   if(typeof setCache==='function')setCache(getCustomersFrontendCacheKey(),DB.customers,15);
 }
 function getCustomersFrontendCacheKey(){
@@ -891,7 +892,13 @@ async function loadCustomers(options){
   const force=!!(options&&options.force);
   const background=!!(options&&options.background);
   if(customersLoaded&&!force)return {ok:true,data:DB.customers,cached:true};
-  if(customersPromise)return customersPromise;
+  if(customersPromise){
+    if(force&&!customersPromiseForce){
+      customersQueuedForce=true;
+      return customersPromise.then(()=>customersQueuedForce?(customersQueuedForce=false,loadCustomers({force:true,background:background})):{ok:true,data:DB.customers,cached:true});
+    }
+    return customersPromise;
+  }
   if(!force&&typeof getCache==='function'){
     const cached=getCache(getCustomersFrontendCacheKey());
     if(Array.isArray(cached)){
@@ -900,10 +907,12 @@ async function loadCustomers(options){
       return {ok:true,data:DB.customers,cached:true};
     }
   }
+  customersPromiseForce=force;
+  const requestSeq=++customersRequestSeq;
   customersPromise=(async()=>{
     try{
       if(!background)toast('กำลังโหลดข้อมูล...');
-      const response=await callApi('customers',{});
+      const response=await callApi('customers',force?{force:true}:{});
       if(response&&response.ok){
         if(!Array.isArray(response.data)){
           const invalidResponse={ok:false,message:'Invalid customers response: expected an array'};
@@ -911,9 +920,11 @@ async function loadCustomers(options){
           console.warn('Customer load rejected invalid response');
           return invalidResponse;
         }
-        setCustomersData(response.data);
-        renderCustomerViews();
-        return {ok:true,data:DB.customers};
+        if(requestSeq===customersRequestSeq){
+          setCustomersData(response.data);
+          renderCustomerViews();
+        }
+        return {ok:true,data:DB.customers,stale:requestSeq!==customersRequestSeq};
       }
       const failed=response||{ok:false,message:'โหลดข้อมูลร้านค้าไม่สำเร็จ'};
       if(!background)toast(failed.message||'โหลดข้อมูลร้านค้าไม่สำเร็จ');
@@ -924,6 +935,7 @@ async function loadCustomers(options){
       return {ok:false,message:String(error&&error.message?error.message:error)};
     }finally{
       customersPromise=null;
+      customersPromiseForce=false;
     }
   })();
   return customersPromise;
@@ -1924,7 +1936,41 @@ function renderCustomers(){
   if(!customersLoaded&&!DB.customers.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;}
   grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(c=>renderCustomerCard(c,isFavoriteCustomer(c.customerId))).join('');
 }
-async function loadFavoriteCustomers(){const response=await callApi('getFavoriteCustomers',{});if(response&&response.ok)FAVORITE_CUSTOMERS=Array.isArray(response.data)?response.data:[];renderCustomers();return response}
+function getCustomersByIdMap(){
+  const map=new Map();
+  (Array.isArray(DB.customers)?DB.customers:[]).forEach(customer=>{
+    const id=String(customer.customerId||customer.customerCode||customer.id||'').trim();
+    if(id)map.set(id,customer);
+  });
+  return map;
+}
+function joinFavoriteCustomerRows(rows){
+  const map=getCustomersByIdMap();
+  return (Array.isArray(rows)?rows:[]).map(row=>{
+    const id=String(row&&row.customerId||'').trim();
+    const customer=map.get(id);
+    if(!customer)return null;
+    return Object.assign({},customer,{favoriteId:String(row.favoriteId||'').trim(),sortOrder:Number(row.sortOrder||0)});
+  }).filter(Boolean);
+}
+async function loadFavoriteCustomers(){
+  if(favoriteCustomersPromise)return favoriteCustomersPromise;
+  favoriteCustomersPromise=callApi('getFavoriteCustomers',{idsOnly:true}).then(response=>{
+    if(response&&response.ok){
+      FAVORITE_CUSTOMER_ROWS=Array.isArray(response.data)?response.data:[];
+      FAVORITE_CUSTOMERS=joinFavoriteCustomerRows(FAVORITE_CUSTOMER_ROWS);
+    }
+    renderCustomers();
+    return response;
+  }).catch(error=>{
+    console.warn('Favorite customers load failed');
+    renderCustomers();
+    return {ok:false,message:String(error&&error.message?error.message:error)};
+  }).finally(()=>{
+    favoriteCustomersPromise=null;
+  });
+  return favoriteCustomersPromise;
+}
 async function toggleFavoriteCustomer(customerId){const favorite=isFavoriteCustomer(customerId);if(!favorite&&FAVORITE_CUSTOMERS.length>=5){toast('สามารถปักร้านค้าโปรดได้สูงสุด 5 ร้าน');return;}const response=await callApi(favorite?'removeFavoriteCustomer':'addFavoriteCustomer',{customerId:customerId});toast(response.message||(response.ok?'บันทึกแล้ว':'บันทึกไม่สำเร็จ'));if(response.ok)await loadFavoriteCustomers()}
 async function persistFavoriteOrder(){const grid=$('favoriteCustomerGrid');if(!grid)return;const customerIds=Array.from(grid.querySelectorAll('[data-customer-id]')).map(el=>el.dataset.customerId);const response=await callApi('reorderFavoriteCustomers',{customerIds:customerIds});if(!response.ok){toast(response.message||'จัดลำดับไม่สำเร็จ');await loadFavoriteCustomers();return;}const map=new Map(FAVORITE_CUSTOMERS.map(c=>[String(c.customerId),c]));FAVORITE_CUSTOMERS=customerIds.map(id=>map.get(id)).filter(Boolean)}
 function bindFavoriteDragAndDrop(){const grid=$('favoriteCustomerGrid');if(!grid||grid.dataset.bound)return;grid.dataset.bound='true';let dragged=null;grid.addEventListener('dragstart',event=>{dragged=event.target.closest('.favorite-card');if(!dragged)return;dragged.classList.add('is-dragging');event.dataTransfer.effectAllowed='move'});grid.addEventListener('dragover',event=>{event.preventDefault();const target=event.target.closest('.favorite-card');if(dragged&&target&&target!==dragged)grid.insertBefore(dragged,target)});grid.addEventListener('dragend',()=>{if(dragged)dragged.classList.remove('is-dragging');dragged=null;persistFavoriteOrder()});let timer=null,touchCard=null;grid.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'||event.target.closest('button,a'))return;touchCard=event.target.closest('.favorite-card');if(touchCard)timer=setTimeout(()=>{touchCard.classList.add('is-dragging');touchCard.setPointerCapture(event.pointerId)},350)});grid.addEventListener('pointermove',event=>{if(!touchCard||!touchCard.classList.contains('is-dragging'))return;event.preventDefault();const target=document.elementFromPoint(event.clientX,event.clientY)?.closest('.favorite-card');if(target&&target!==touchCard)grid.insertBefore(touchCard,target)});const finish=()=>{clearTimeout(timer);if(touchCard&&touchCard.classList.contains('is-dragging')){touchCard.classList.remove('is-dragging');persistFavoriteOrder()}touchCard=null};grid.addEventListener('pointerup',finish);grid.addEventListener('pointercancel',finish)}
@@ -2042,7 +2088,7 @@ renderAll=function(){baseRenderAllForAuth();renderUsers();applyRolePermissions()
 const baseGoForAuth=go;
 go=function(page,btn){if(!canAccessPage(page)){toast('ไม่มีสิทธิ์เข้าใช้งานหน้านี้');return;}baseGoForAuth(page,btn);applyRolePermissions();};
 const baseEnsurePageDataForAuth=ensurePageData;
-ensurePageData=function(page){if(page==='users'){return loadUsers();}if(page==='customers'){return Promise.all([baseEnsurePageDataForAuth(page),loadFavoriteCustomers()]);}if(page==='quote'){return Promise.all([baseEnsurePageDataForAuth(page),loadProductPreferences()]);}return baseEnsurePageDataForAuth(page);};
+ensurePageData=function(page){if(page==='users'){return loadUsers();}if(page==='customers'){return baseEnsurePageDataForAuth(page).then(()=>loadFavoriteCustomers());}if(page==='quote'){return Promise.all([baseEnsurePageDataForAuth(page),loadProductPreferences()]);}return baseEnsurePageDataForAuth(page);};
 async function loadUsers(){
   if(['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0)return {ok:false,message:'Insufficient permission'};
   const response=await callApi('loadUsers',{});

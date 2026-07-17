@@ -10,16 +10,30 @@ function getFavoriteCustomers(payload) {
     const auth = requireApiUser(payload);
     if (!auth.ok) return auth;
     const userId = String(auth.data.userId || '').trim();
+    const favoriteRows = getFavoriteRows_().filter(function (row) {
+      return String(row.userId || '').trim() === userId;
+    }).sort(function (a, b) {
+      return Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
+    });
     const customersResult = getCustomers({ currentUser: auth.data });
     if (!customersResult.ok) return customersResult;
     const customerMap = {};
     customersResult.data.forEach(function (customer) {
       customerMap[String(customer.customerId || '').trim()] = customer;
     });
-    const favorites = getFavoriteRows_().filter(function (row) {
-      return String(row.userId || '').trim() === userId && customerMap[String(row.customerId || '').trim()];
-    }).sort(function (a, b) {
-      return Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
+    if (payload && payload.idsOnly) {
+      return success(favoriteRows.map(function (row) {
+        return {
+          favoriteId: String(row.favoriteId || '').trim(),
+          customerId: String(row.customerId || '').trim(),
+          sortOrder: Number(row.sortOrder || 0)
+        };
+      }).filter(function (row) {
+        return row.customerId && customerMap[row.customerId];
+      }));
+    }
+    const favorites = favoriteRows.filter(function (row) {
+      return customerMap[String(row.customerId || '').trim()];
     }).map(function (row) {
       return Object.assign({}, customerMap[String(row.customerId || '').trim()], {
         favoriteId: String(row.favoriteId || '').trim(),
