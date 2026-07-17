@@ -1,6 +1,7 @@
 const QUOTATION_SAVE_LOCK_TIMEOUT_MS = 15000;
 const QUOTATION_SAVE_IDEMPOTENCY_TTL_SECONDS = 600;
 const QUOTATION_SAVE_IN_PROGRESS_TTL_SECONDS = 90;
+const QUOTATION_LINE_PRICE_MAX = 999999999;
 
 function normalizeQuoteType(value) {
   const text = String(value || '').trim().toUpperCase();
@@ -130,6 +131,10 @@ function addQuotationItem(quoteId, productId, qty) {
     }
     const discountResult = getDiscount(quote.customerId, getProductGroupCode(product));
     const listPrice = roundCurrency(parseNumericValue(product.listPrice || product.price || 0));
+    if (listPrice <= 0) {
+      logQuotationAuditAction_('', 'QUOTE_LINE_PRICE_REQUIRED', 'quoteId=' + quoteId + ';productId=' + productId + ';timestamp=' + new Date().toISOString());
+      return fail('quotedListPrice is required', 'QUOTE_LINE_PRICE_REQUIRED', { productId: productId });
+    }
     const discountPercent = discountResult.ok ? roundCurrency(parseNumericValue(discountResult.data && discountResult.data.discountPercent)) : 0;
     const netPrice = roundCurrency(listPrice * (1 - discountPercent / 100));
     const lineTotal = roundCurrency(netPrice * quantity);
@@ -151,8 +156,13 @@ function addQuotationItem(quoteId, productId, qty) {
       sku: String(product.sku || product.productCode || product.productId || productId).trim(),
       productBusinessUnit: lineProductCheck.data && lineProductCheck.data.productBusinessUnit || '',
       productName: String(product.productName || product.name || product.product || '').trim(),
+      unit: sanitizeQuotationUnit_(product.unit || ''),
+      masterUnit: sanitizeQuotationUnit_(product.unit || ''),
+      quotedUnit: sanitizeQuotationUnit_(product.unit || ''),
       qty: quantity,
       listPrice: listPrice,
+      masterListPrice: listPrice,
+      quotedListPrice: listPrice,
       discountPercent: discountPercent,
       unitPrice: netPrice,
       netPrice: netPrice,
@@ -213,13 +223,14 @@ function updateQuotationItem(quoteId, lineId, qty) {
     }
     const product = productResult.data || {};
     const discountResult = getDiscount(quote.customerId, getProductGroupCode(product));
-    const listPrice = roundCurrency(parseNumericValue(product.listPrice || product.price || line.listPrice || 0));
+    const listPrice = roundCurrency(parseNumericValue(line.quotedListPrice || line.listPrice || product.listPrice || product.price || 0));
     const discountPercent = isFreeItem ? 0 : (discountResult.ok ? roundCurrency(parseNumericValue(discountResult.data && discountResult.data.discountPercent)) : 0);
     const netPrice = isFreeItem ? 0 : roundCurrency(listPrice * (1 - discountPercent / 100));
     const lineTotal = roundCurrency(netPrice * quantity);
     const updateObject = {
       qty: quantity,
       listPrice: listPrice,
+      quotedListPrice: listPrice,
       discountPercent: discountPercent,
       unitPrice: netPrice,
       netPrice: netPrice,
@@ -365,6 +376,9 @@ function saveQuotationPayload(payload) {
     if (!auth.ok) {
       return auth;
     }
+    if (!canEditQuotationLineSnapshots_(auth.data)) {
+      return forbidden('PRICE_EDIT_FORBIDDEN');
+    }
     const cacheScope = getQuotationSaveUserCacheScope_(auth.data);
     requestCacheKey = requestId ? getQuotationSaveResultCacheKey_(requestId, cacheScope) : '';
     progressCacheKey = requestId ? getQuotationSaveProgressCacheKey_(requestId, cacheScope) : '';
@@ -411,12 +425,16 @@ function saveQuotationPayload(payload) {
     }
     const productBusinessUnits = businessUnitCheck.data && businessUnitCheck.data.productBusinessUnits || {};
     const canonicalProductIds = businessUnitCheck.data && businessUnitCheck.data.canonicalProductIds || {};
+    const productSnapshots = businessUnitCheck.data && businessUnitCheck.data.productSnapshots || {};
     const normalizedItems = items.map(function (rawItem, index) {
       const rawProductId = String(rawItem && (rawItem.productId || rawItem.productCode || rawItem.sku) || '').trim();
-      return normalizeQuotationPayloadItem(rawItem, index + 1, productBusinessUnits[normalizeString(rawProductId)], canonicalProductIds[normalizeString(rawProductId)]);
+      return normalizeQuotationPayloadItem(rawItem, index + 1, productBusinessUnits[normalizeString(rawProductId)], canonicalProductIds[normalizeString(rawProductId)], productSnapshots[normalizeString(rawProductId)], auth.data);
     });
     const lineValidation = validateNormalizedQuotationPayloadItems_(normalizedItems);
     if (!lineValidation.ok) {
+      if (lineValidation.code === 'QUOTE_LINE_PRICE_REQUIRED') {
+        logQuotationAuditAction_(auth.data && (auth.data.userId || auth.data.username), 'QUOTE_LINE_PRICE_REQUIRED', 'quoteId=' + (requestedQuoteId || String(data.quoteNo || '').trim()) + ';productId=' + String(lineValidation.data && lineValidation.data.productId || '').trim() + ';lineId=' + String(lineValidation.data && lineValidation.data.lineId || '').trim() + ';timestamp=' + new Date().toISOString());
+      }
       return lineValidation;
     }
     subtotal = sumQuotationItems(normalizedItems, 'lineTotal');
@@ -450,6 +468,9 @@ function saveQuotationPayload(payload) {
       const permissionResult = canAccessQuotationRecord(auth.data, existingQuote);
       if (!permissionResult.ok) {
         return permissionResult;
+      }
+      if (normalizeString(existingQuote.status) === normalizeString(QUOTE_STATUSES.CANCELLED)) {
+        return forbidden('PRICE_EDIT_FORBIDDEN');
       }
     }
     const quoteType = normalizeQuoteType(data.quoteType || data.businessUnit || (existingQuote && (existingQuote.quoteType || existingQuote.businessUnit)));
@@ -501,6 +522,10 @@ function saveQuotationPayload(payload) {
     const lineObjects = normalizedItems.map(function (item) {
       return buildQuotationLineObject_(quoteId, item);
     });
+    const previousLinesResult = existingQuote ? getQuoteLines(quoteId) : null;
+    const previousLinesForAudit = previousLinesResult && previousLinesResult.ok && Array.isArray(previousLinesResult.data)
+      ? previousLinesResult.data
+      : [];
 
     const writeResult = existingQuote
       ? updateQuotationWithLinesLocked_(quoteId, existingQuote, headerObject, lineObjects)
@@ -510,6 +535,7 @@ function saveQuotationPayload(payload) {
     }
 
     clearQuotationCaches(quoteId, resolvedQuoteNo);
+    logQuotationLineOverrideAudit_(auditId || auditUsername, quoteId, normalizedItems, previousLinesForAudit);
     logInfo('saveQuotation', 'Saved quotation ' + resolvedQuoteNo);
     const saveResult = success({
       quoteId: quoteId,
@@ -613,18 +639,27 @@ function buildQuotationLineObject_(quoteId, item) {
     productBusinessUnit: item.productBusinessUnit,
     productName: item.productName,
     unit: item.unit,
+    masterUnit: item.masterUnit,
+    quotedUnit: item.quotedUnit,
     qty: item.qty,
     listPrice: item.listPrice,
+    masterListPrice: item.masterListPrice,
+    quotedListPrice: item.quotedListPrice,
     discountPercent: item.discountPercent,
     unitPrice: item.unitPrice,
     netPrice: item.netPrice,
     lineTotal: item.lineTotal,
     vat: item.vat,
     grandTotal: item.grandTotal,
+    priceOverridden: item.priceOverridden,
+    unitOverridden: item.unitOverridden,
+    overrideReason: item.overrideReason,
     isFreeItem: item.isFreeItem,
     freeItem: item.freeItem,
     isFree: item.isFree,
-    status: item.status
+    status: item.status,
+    updatedAt: item.updatedAt,
+    updatedBy: item.updatedBy
   };
 }
 
@@ -841,17 +876,119 @@ function getQuotationPayloadLineId_(item) {
   return value || generateId('LINE');
 }
 
-function normalizeQuotationPayloadItem(item, lineNo, productBusinessUnit, canonicalProductId) {
+function sanitizeQuotationUnit_(value) {
+  return String(value || '').replace(/[<>]/g, '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 50);
+}
+
+function getQuotationLineSnapshotProduct_(productSnapshot) {
+  const product = productSnapshot && typeof productSnapshot === 'object' ? productSnapshot : {};
+  return {
+    productId: String(product.productId || product.sku || product.productCode || product.id || '').trim(),
+    listPrice: roundCurrency(parseQuotationNumericValue(product.listPrice || product.price || 0)),
+    unit: sanitizeQuotationUnit_(product.unit || product.uom || product.unitName || product.salesUnit || '')
+  };
+}
+
+function parseQuotationOverrideFlag_(value) {
+  if (value === true) return true;
+  if (value === false) return false;
+  const text = String(value || '').trim().toLowerCase();
+  return text === 'true' || text === 'yes' || text === '1' || text === 'y';
+}
+
+function isValidQuotationLinePrice_(value) {
+  const numeric = Number(value);
+  return isFinite(numeric) && numeric > 0 && numeric <= QUOTATION_LINE_PRICE_MAX;
+}
+
+function canEditQuotationLineSnapshots_(user) {
+  return !hasRole(user, [USER_ROLES.VIEWER]);
+}
+
+function logQuotationAuditAction_(actorId, action, detail) {
+  const actor = String(actorId || '').trim();
+  const eventName = String(action || '').trim();
+  const eventDetail = String(detail || '').trim();
+  if (!eventName) {
+    return;
+  }
+  if (typeof logActivity === 'function') {
+    logActivity(actor, eventName, eventDetail);
+  } else {
+    logInfo(eventName, eventDetail);
+  }
+}
+
+function logQuotationLineOverrideAudit_(actorId, quoteId, items, previousLines) {
+  try {
+    const previousByLineId = {};
+    (Array.isArray(previousLines) ? previousLines : []).forEach(function (line) {
+      const lineId = String(line && line.lineId || '').trim();
+      if (lineId) {
+        previousByLineId[normalizeString(lineId)] = line;
+      }
+    });
+    (Array.isArray(items) ? items : []).forEach(function (item) {
+      const lineId = String(item && item.lineId || '').trim();
+      const previous = previousByLineId[normalizeString(lineId)] || {};
+      const oldPriceRaw = previous.quotedListPrice !== undefined && previous.quotedListPrice !== ''
+        ? previous.quotedListPrice
+        : previous.listPrice;
+      const newPriceRaw = item.quotedListPrice !== undefined && item.quotedListPrice !== ''
+        ? item.quotedListPrice
+        : item.listPrice;
+      const oldPrice = roundCurrency(parseQuotationNumericValue(oldPriceRaw));
+      const newPrice = roundCurrency(parseQuotationNumericValue(newPriceRaw));
+      const oldUnit = sanitizeQuotationUnit_(previous.quotedUnit || previous.unit || '');
+      const newUnit = sanitizeQuotationUnit_(item.quotedUnit || item.unit || '');
+      const productId = String(item.productId || item.productCode || item.sku || '').trim();
+      const actor = String(actorId || item.updatedBy || '').trim();
+      const logDetailBase = 'quoteId=' + String(quoteId || '').trim() + ';lineId=' + lineId + ';productId=' + productId + ';timestamp=' + new Date().toISOString();
+      const hasPrevious = Boolean(previous && (previous.lineId || previous.productId));
+      const priceChanged = hasPrevious
+        ? oldPrice !== newPrice
+        : Boolean(item.priceOverridden);
+      const unitChanged = hasPrevious
+        ? normalizeString(oldUnit) !== normalizeString(newUnit)
+        : Boolean(item.unitOverridden);
+      if (priceChanged) {
+        const priceDetail = logDetailBase + ';oldPrice=' + oldPrice + ';newPrice=' + newPrice + ';reason=' + String(item.overrideReason || '').trim();
+        logQuotationAuditAction_(actor, 'QUOTE_LINE_PRICE_CHANGED', priceDetail);
+        if (item.priceOverridden) {
+          logQuotationAuditAction_(actor, 'QUOTE_LINE_PRICE_OVERRIDDEN', priceDetail);
+        }
+      }
+      if (unitChanged) {
+        const unitDetail = logDetailBase + ';oldUnit=' + oldUnit + ';newUnit=' + newUnit;
+        logQuotationAuditAction_(actor, 'QUOTE_LINE_UNIT_CHANGED', unitDetail);
+        if (item.unitOverridden) {
+          logQuotationAuditAction_(actor, 'QUOTE_LINE_UNIT_OVERRIDDEN', unitDetail);
+        }
+      }
+    });
+  } catch (error) {
+    logWarning('logQuotationLineOverrideAudit_', error && error.message ? error.message : String(error || 'Audit log failed'));
+  }
+}
+
+function normalizeQuotationPayloadItem(item, lineNo, productBusinessUnit, canonicalProductId, productSnapshot, auditUser) {
   const data = item || {};
   const isFreeItem = getQuotationPayloadFreeState_(data);
   const qty = roundCurrency(parseQuotationNumericValue(data.qty || 1));
-  const listPrice = roundCurrency(parseQuotationNumericValue(data.listPrice));
+  const product = getQuotationLineSnapshotProduct_(productSnapshot);
+  const masterListPrice = roundCurrency(parseQuotationNumericValue(data.masterListPrice !== undefined ? data.masterListPrice : product.listPrice));
+  const quotedListPrice = roundCurrency(parseQuotationNumericValue(data.quotedListPrice !== undefined ? data.quotedListPrice : (data.listPrice !== undefined ? data.listPrice : masterListPrice)));
+  const listPrice = quotedListPrice;
   const discountPercent = isFreeItem ? 0 : roundCurrency(parseQuotationNumericValue(data.discountPercent || data.discount));
-  const unitPrice = isFreeItem ? 0 : roundCurrency(data.unitPrice !== undefined ? parseQuotationNumericValue(data.unitPrice) : listPrice * (1 - discountPercent / 100));
-  const lineTotal = isFreeItem ? 0 : roundCurrency(data.lineTotal !== undefined ? parseQuotationNumericValue(data.lineTotal) : unitPrice * qty);
-  const vat = isFreeItem ? 0 : roundCurrency(data.vat !== undefined ? parseQuotationNumericValue(data.vat) : lineTotal * 0.07);
-  const grandTotal = isFreeItem ? 0 : roundCurrency(data.grandTotal !== undefined ? parseQuotationNumericValue(data.grandTotal) : lineTotal + vat);
+  const unitPrice = isFreeItem ? 0 : roundCurrency(listPrice * (1 - discountPercent / 100));
+  const lineTotal = isFreeItem ? 0 : roundCurrency(unitPrice * qty);
+  const vat = isFreeItem ? 0 : roundCurrency(lineTotal * 0.07);
+  const grandTotal = isFreeItem ? 0 : roundCurrency(lineTotal + vat);
   const productId = String(canonicalProductId || data.productId || data.productCode || data.sku || '').trim();
+  const masterUnit = sanitizeQuotationUnit_(data.masterUnit || product.unit || data.unit || '');
+  const quotedUnit = sanitizeQuotationUnit_(data.quotedUnit || data.unit || masterUnit);
+  const audit = auditUser && typeof auditUser === 'object' ? auditUser : {};
+  const updatedBy = String(data.updatedBy || audit.quoteDisplayName || audit.fullName || audit.displayName || audit.username || '').trim();
   return {
     lineId: getQuotationPayloadLineId_(data),
     lineNo: lineNo,
@@ -862,15 +999,24 @@ function normalizeQuotationPayloadItem(item, lineNo, productBusinessUnit, canoni
     sku: String(data.sku || data.productCode || productId).trim(),
     productBusinessUnit: getQuotationProductBusinessUnit({ businessUnit: productBusinessUnit || data.productBusinessUnit || data.businessUnit || data.quoteType || data.brand }),
     productName: String(data.productName || '').trim(),
-    unit: String(data.unit || '').trim(),
+    unit: quotedUnit,
+    masterUnit: masterUnit,
+    quotedUnit: quotedUnit,
     qty: qty,
     listPrice: listPrice,
+    masterListPrice: masterListPrice,
+    quotedListPrice: quotedListPrice,
     discountPercent: discountPercent,
     unitPrice: unitPrice,
     netPrice: unitPrice,
     lineTotal: lineTotal,
     vat: vat,
     grandTotal: grandTotal,
+    priceOverridden: parseQuotationOverrideFlag_(data.priceOverridden) || (masterListPrice > 0 && quotedListPrice > 0 && roundCurrency(masterListPrice) !== roundCurrency(quotedListPrice)) || (masterListPrice <= 0 && quotedListPrice > 0),
+    unitOverridden: parseQuotationOverrideFlag_(data.unitOverridden) || Boolean(masterUnit && quotedUnit && normalizeString(masterUnit) !== normalizeString(quotedUnit)),
+    overrideReason: sanitizeQuotationUnit_(data.overrideReason || ''),
+    updatedAt: String(data.updatedAt || new Date().toISOString()).trim(),
+    updatedBy: updatedBy,
     isFreeItem: isFreeItem,
     freeItem: isFreeItem,
     isFree: isFreeItem,
@@ -904,6 +1050,16 @@ function validateNormalizedQuotationPayloadItems_(items) {
     if (!productKey) {
       return fail('productId is required', 'PRODUCT_NOT_FOUND', { index: i + 1 });
     }
+    if (parseQuotationNumericValue(item.qty) <= 0) {
+      return fail('qty must be greater than zero', 'INVALID_QUOTE_LINE', { productId: item.productId, lineId: lineId });
+    }
+    if (!sanitizeQuotationUnit_(item.quotedUnit || item.unit)) {
+      return fail('quotedUnit is required', 'QUOTE_LINE_UNIT_REQUIRED', { productId: item.productId, lineId: lineId });
+    }
+    const discountPercent = parseQuotationNumericValue(item.discountPercent);
+    if (!isFreeItem && (discountPercent < 0 || discountPercent > 100)) {
+      return fail('discountPercent is invalid', 'INVALID_QUOTE_LINE', { productId: item.productId, lineId: lineId });
+    }
     if (typeof item.isFreeItem !== 'boolean') {
       return fail('isFreeItem must be Boolean', 'INVALID_FREE_ITEM_STATE', { productId: item.productId || item.productCode || item.sku });
     }
@@ -916,6 +1072,9 @@ function validateNormalizedQuotationPayloadItems_(items) {
         return fail('Free product line must have zero totals', 'INVALID_FREE_ITEM_STATE', { productId: item.productId, lineId: lineId });
       }
     } else {
+      if (!isValidQuotationLinePrice_(item.quotedListPrice || item.listPrice)) {
+        return fail('quotedListPrice is required', 'QUOTE_LINE_PRICE_REQUIRED', { productId: item.productId, lineId: lineId });
+      }
       if (paidProductKeys[productKey]) {
         return fail('Duplicate paid product line detected', 'DUPLICATE_PAID_PRODUCT_LINE', { productId: item.productId, lineId: lineId });
       }
@@ -935,6 +1094,7 @@ function validateQuotationPayloadProductsBusinessUnit(items, quoteType) {
     const list = Array.isArray(items) ? items : [];
     const productBusinessUnits = {};
     const canonicalProductIds = {};
+    const productSnapshots = {};
     for (var i = 0; i < list.length; i++) {
       const productId = String(list[i] && (list[i].productId || list[i].productCode || list[i].sku) || '').trim();
       if (!productId) {
@@ -954,22 +1114,31 @@ function validateQuotationPayloadProductsBusinessUnit(items, quoteType) {
       }
       const canonicalProductId = String(product.productId || product.sku || product.productCode || product.id || productId).trim();
       const businessUnit = match.data && match.data.productBusinessUnit || '';
+      const snapshot = {
+        productId: canonicalProductId,
+        listPrice: roundCurrency(parseQuotationNumericValue(product.listPrice || product.price || 0)),
+        unit: sanitizeQuotationUnit_(product.unit || product.uom || product.unitName || product.salesUnit || '')
+      };
       productBusinessUnits[normalizeString(productId)] = businessUnit;
       canonicalProductIds[normalizeString(productId)] = canonicalProductId;
+      productSnapshots[normalizeString(productId)] = snapshot;
       if (list[i] && list[i].productId) {
         productBusinessUnits[normalizeString(list[i].productId)] = businessUnit;
         canonicalProductIds[normalizeString(list[i].productId)] = canonicalProductId;
+        productSnapshots[normalizeString(list[i].productId)] = snapshot;
       }
       if (list[i] && list[i].productCode) {
         productBusinessUnits[normalizeString(list[i].productCode)] = businessUnit;
         canonicalProductIds[normalizeString(list[i].productCode)] = canonicalProductId;
+        productSnapshots[normalizeString(list[i].productCode)] = snapshot;
       }
       if (list[i] && list[i].sku) {
         productBusinessUnits[normalizeString(list[i].sku)] = businessUnit;
         canonicalProductIds[normalizeString(list[i].sku)] = canonicalProductId;
+        productSnapshots[normalizeString(list[i].sku)] = snapshot;
       }
     }
-    return success({ productBusinessUnits: productBusinessUnits, canonicalProductIds: canonicalProductIds });
+    return success({ productBusinessUnits: productBusinessUnits, canonicalProductIds: canonicalProductIds, productSnapshots: productSnapshots });
   } catch (error) {
     logError('validateQuotationPayloadProductsBusinessUnit', error);
     return fail(error && error.message ? error.message : 'Failed to validate quotation products');
@@ -1160,7 +1329,7 @@ function getQuoteHistoryHeaders() {
 }
 
 function getQuoteLineHeaders() {
-  return ['quoteId', 'lineId', 'lineNo', 'lineOrder', 'sortOrder', 'productId', 'productCode', 'sku', 'productBusinessUnit', 'productName', 'unit', 'qty', 'listPrice', 'discountPercent', 'unitPrice', 'netPrice', 'lineTotal', 'vat', 'grandTotal', 'isFreeItem', 'freeItem', 'isFree', 'status'];
+  return ['quoteId', 'lineId', 'lineNo', 'lineOrder', 'sortOrder', 'productId', 'productCode', 'sku', 'productBusinessUnit', 'productName', 'unit', 'masterUnit', 'quotedUnit', 'qty', 'listPrice', 'masterListPrice', 'quotedListPrice', 'discountPercent', 'unitPrice', 'netPrice', 'lineTotal', 'vat', 'grandTotal', 'priceOverridden', 'unitOverridden', 'overrideReason', 'isFreeItem', 'freeItem', 'isFree', 'status', 'updatedAt', 'updatedBy'];
 }
 
 function extractQuoteId(payload) {
@@ -1174,7 +1343,9 @@ function normalizeLoadedQuotationLine(line) {
   const item = line || {};
   const isFreeItem = getQuotationPayloadFreeState_(item);
   const qty = roundCurrency(parseQuotationNumericValue(item.qty || 0));
-  const listPrice = roundCurrency(parseQuotationNumericValue(item.listPrice || 0));
+  const masterListPrice = roundCurrency(parseQuotationNumericValue(item.masterListPrice !== undefined ? item.masterListPrice : item.listPrice || 0));
+  const quotedListPrice = roundCurrency(parseQuotationNumericValue(item.quotedListPrice !== undefined ? item.quotedListPrice : item.listPrice || masterListPrice));
+  const listPrice = quotedListPrice;
   const discountPercent = isFreeItem ? 0 : roundCurrency(parseQuotationNumericValue(item.discountPercent || item.discount || 0));
   const unitPrice = isFreeItem ? 0 : roundCurrency(parseQuotationNumericValue(item.unitPrice || item.netPrice || (listPrice * (1 - discountPercent / 100))));
   const lineTotal = isFreeItem ? 0 : roundCurrency(parseQuotationNumericValue(item.lineTotal || unitPrice * qty));
@@ -1197,15 +1368,22 @@ function normalizeLoadedQuotationLine(line) {
     sku: String(item.sku || item.productCode || item.productId || '').trim(),
     productBusinessUnit: productBusinessUnit,
     productName: String(item.productName || '').trim(),
-    unit: String(item.unit || '').trim(),
+    unit: sanitizeQuotationUnit_(item.quotedUnit || item.unit || item.masterUnit),
+    masterUnit: sanitizeQuotationUnit_(item.masterUnit || item.unit || item.quotedUnit),
+    quotedUnit: sanitizeQuotationUnit_(item.quotedUnit || item.unit || item.masterUnit),
     qty: qty,
     listPrice: listPrice,
+    masterListPrice: masterListPrice,
+    quotedListPrice: quotedListPrice,
     discountPercent: discountPercent,
     unitPrice: unitPrice,
     netPrice: unitPrice,
     lineTotal: lineTotal,
     vat: vat,
     grandTotal: grandTotal,
+    priceOverridden: parseQuotationOverrideFlag_(item.priceOverridden) || (masterListPrice > 0 && quotedListPrice > 0 && roundCurrency(masterListPrice) !== roundCurrency(quotedListPrice)) || (masterListPrice <= 0 && quotedListPrice > 0),
+    unitOverridden: parseQuotationOverrideFlag_(item.unitOverridden) || Boolean(sanitizeQuotationUnit_(item.masterUnit) && sanitizeQuotationUnit_(item.quotedUnit || item.unit) && normalizeString(item.masterUnit) !== normalizeString(item.quotedUnit || item.unit)),
+    overrideReason: sanitizeQuotationUnit_(item.overrideReason || ''),
     isFreeItem: isFreeItem,
     freeItem: isFreeItem,
     isFree: isFreeItem,
@@ -1369,15 +1547,22 @@ function duplicateQuotation(payload) {
           sortOrder: line.sortOrder || line.lineOrder || line.lineNo,
           productBusinessUnit: getQuotationProductBusinessUnit(line),
           productName: line.productName,
-          unit: line.unit,
+          unit: line.quotedUnit || line.unit,
+          masterUnit: line.masterUnit || line.unit,
+          quotedUnit: line.quotedUnit || line.unit,
           qty: line.qty,
-          listPrice: line.listPrice,
+          listPrice: line.quotedListPrice || line.listPrice,
+          masterListPrice: line.masterListPrice || line.listPrice,
+          quotedListPrice: line.quotedListPrice || line.listPrice,
           discountPercent: line.discountPercent,
           unitPrice: line.unitPrice,
           netPrice: line.netPrice || line.unitPrice,
           lineTotal: line.lineTotal,
           vat: line.vat,
           grandTotal: line.grandTotal,
+          priceOverridden: line.priceOverridden,
+          unitOverridden: line.unitOverridden,
+          overrideReason: line.overrideReason,
           isFreeItem: getQuotationPayloadFreeState_(line),
           freeItem: getQuotationPayloadFreeState_(line),
           isFree: getQuotationPayloadFreeState_(line),
@@ -1725,7 +1910,7 @@ function recalcQuotationLine(line, customerId) {
     if (productResult.ok) {
       product = productResult.data || {};
     }
-    const listPrice = roundCurrency(parseNumericValue(product.listPrice || product.price || line.listPrice || 0));
+    const listPrice = roundCurrency(parseNumericValue(line.quotedListPrice || line.listPrice || product.listPrice || product.price || 0));
     const discountResult = getDiscount(customerId, getProductGroupCode(product));
     const discountPercent = isFreeItem ? 0 : (discountResult.ok ? roundCurrency(parseNumericValue(discountResult.data && discountResult.data.discountPercent)) : roundCurrency(parseNumericValue(line.discountPercent || 0)));
     const netPrice = isFreeItem ? 0 : roundCurrency(listPrice * (1 - discountPercent / 100));
@@ -1733,6 +1918,11 @@ function recalcQuotationLine(line, customerId) {
     return Object.assign({}, line, {
       qty: quantity,
       listPrice: listPrice,
+      quotedListPrice: listPrice,
+      masterListPrice: roundCurrency(parseNumericValue(line.masterListPrice || product.listPrice || product.price || listPrice)),
+      unit: sanitizeQuotationUnit_(line.quotedUnit || line.unit || product.unit || ''),
+      quotedUnit: sanitizeQuotationUnit_(line.quotedUnit || line.unit || product.unit || ''),
+      masterUnit: sanitizeQuotationUnit_(line.masterUnit || product.unit || line.unit || ''),
       discountPercent: discountPercent,
       unitPrice: netPrice,
       netPrice: netPrice,
