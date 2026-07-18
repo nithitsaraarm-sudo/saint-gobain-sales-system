@@ -367,7 +367,7 @@ function getHeadersForSheet(sheetName) {
     return ['userId', 'action', 'detail', 'createdAt'];
   }
   if (sheetName === SHEET_NAMES.CUSTOMERS) {
-    return ['customerId', 'customerName', 'province', 'district', 'phone', 'status', 'active', 'salesArea', 'assignedSalesUserId', 'assignedSalesUsername', 'sellsWeber', 'sellsGyproc', 'defaultGyprocDiscount', 'defaultWeberDiscount', 'notes', 'address', 'group', 'createdAt', 'updatedAt', 'updatedBy'];
+    return ['customerId', 'customerName', 'province', 'district', 'phone', 'status', 'active', 'salesArea', 'assignedSalesUserId', 'assignedSalesUsername', 'assignedSalesNameSnapshot', 'sellsWeber', 'sellsGyproc', 'defaultGyprocDiscount', 'defaultWeberDiscount', 'notes', 'address', 'group', 'createdAt', 'updatedAt', 'updatedBy'];
   }
   if (sheetName === SHEET_NAMES.PRODUCTS) {
     return ['productId', 'brand', 'discountGroup', 'groupCode', 'itemName', 'itemDesc', 'unit', 'listPrice', 'imageUrl', 'status', 'active', 'notes', 'promoText'];

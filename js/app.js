@@ -7,8 +7,9 @@ let PRODUCT_CALC_PRODUCT=null;
 let PROFILE_IMAGE_DATA='';
 let bootstrapLoaded=false, bootstrapPromise=null;
 let quoteHistoryLoaded=false, quoteHistoryPromise=null;
-let customersLoaded=false, productsLoaded=false, customersPromise=null, customerRefreshPromise=null, productsPromise=null;
-let FAVORITE_CUSTOMERS=[];
+let customersLoaded=false, productsLoaded=false, customersPromise=null, customersPromiseForce=false, customersQueuedForce=false, customersRequestSeq=0, customerRefreshPromise=null, productsPromise=null;
+let customerFormOptionsLoaded=false, customerFormOptionsPromise=null, customerFormOptionsError='';
+let FAVORITE_CUSTOMERS=[], FAVORITE_CUSTOMER_ROWS=[], favoriteCustomersPromise=null;
 let FAVORITE_PRODUCTS=[], PINNED_PRODUCTS=[], productPreferencesLoaded=false, productPreferencesPromise=null;
 const openQuotationDetailPromises={};
 const LIST_RENDER_LIMIT=Number(window.DEFAULT_PAGE_SIZE||50), QUOTE_PICKER_LIMIT=30, SEARCH_DEBOUNCE_MS=300;
@@ -344,11 +345,63 @@ function getCustomerAreaScopeLabel(){
   if(canViewAllCustomerAreasUi())return'ทุกเขต';
   return getUserArea(USER)||'ยังไม่ระบุเขต';
 }
+function normalizeCustomerFormOptions(data){
+  const source=data&&typeof data==='object'?data:{};
+  const salesAreas=(Array.isArray(source.salesAreas)?source.salesAreas:(Array.isArray(source.areas)?source.areas:[])).map(area=>String(area||'').trim()).filter(Boolean);
+  const salesUsers=(Array.isArray(source.salesUsers)?source.salesUsers:(Array.isArray(source.assignableSalesUsers)?source.assignableSalesUsers:[])).map(user=>({
+    userId:String(user&&user.userId||'').trim(),
+    username:String(user&&user.username||'').trim(),
+    displayName:String(user&&(user.displayName||user.fullName||user.username)||'').trim(),
+    fullName:String(user&&user.fullName||'').trim(),
+    area:String(user&&(user.area||user.branch)||'').trim(),
+    branch:String(user&&(user.branch||user.area)||'').trim(),
+    role:String(user&&user.role||'').trim()
+  })).filter(user=>user.userId);
+  return Object.assign({},source,{salesAreas,areas:salesAreas,salesUsers,assignableSalesUsers:salesUsers});
+}
+function getCustomerFormOptionsData(){
+  return normalizeCustomerFormOptions(DB.customerFormOptions||{});
+}
+function setCustomerFormOptionsData(data){
+  DB.customerFormOptions=normalizeCustomerFormOptions(data);
+  customerFormOptionsLoaded=true;
+  customerFormOptionsError='';
+  return DB.customerFormOptions;
+}
+function customerFormOptionsErrorMessage(response){
+  const code=String(response&&response.code||'').toUpperCase();
+  if(code==='TIMEOUT')return'โหลดรายชื่อ Sales ผู้ดูแลไม่ทันเวลา กรุณาลองใหม่';
+  if(code==='NETWORK_ERROR')return'ไม่สามารถเชื่อมต่อเพื่อโหลดรายชื่อ Sales ผู้ดูแลได้';
+  if(code==='FORBIDDEN'||code==='AREA_SCOPE_VIOLATION')return'คุณไม่มีสิทธิ์โหลดรายชื่อ Sales ผู้ดูแลในเขตนี้';
+  if(code==='EMPTY_RESPONSE'||code==='INVALID_JSON')return'ระบบส่งข้อมูลรายชื่อ Sales ผู้ดูแลไม่สมบูรณ์';
+  return response&&response.message?response.message:'โหลดรายชื่อ Sales ผู้ดูแลไม่สำเร็จ';
+}
+async function loadCustomerFormOptions(options){
+  const force=!!(options&&options.force);
+  const salesArea=String(options&&options.salesArea||'').trim();
+  if(customerFormOptionsLoaded&&!force&&!salesArea)return {ok:true,data:getCustomerFormOptionsData(),cached:true};
+  if(customerFormOptionsPromise)return customerFormOptionsPromise;
+  customerFormOptionsPromise=callApi('getCustomerFormOptions',salesArea?{salesArea:salesArea}:{force:force}).then(response=>{
+    if(response&&response.ok&&response.data){
+      const data=setCustomerFormOptionsData(response.data);
+      return {ok:true,data:data};
+    }
+    customerFormOptionsError=customerFormOptionsErrorMessage(response);
+    return Object.assign({ok:false,message:customerFormOptionsError},response||{});
+  }).catch(error=>{
+    customerFormOptionsError=error&&error.message?error.message:'โหลดรายชื่อ Sales ผู้ดูแลไม่สำเร็จ';
+    return {ok:false,message:customerFormOptionsError};
+  }).finally(()=>{customerFormOptionsPromise=null;});
+  return customerFormOptionsPromise;
+}
 function customerAreaOptionsHtml(selectedArea){
   const selected=String(selectedArea||'').trim();
   const seen={};
-  const areas=[selected,getUserArea(USER)].concat(getVisibleCustomerAreas()).filter(Boolean).filter(area=>{
+  const optionData=getCustomerFormOptionsData();
+  const optionAreas=optionData.salesAreas.length?optionData.salesAreas:getVisibleCustomerAreas();
+  const areas=[selected,getUserArea(USER)].concat(optionAreas).filter(Boolean).filter(area=>{
     const key=String(area).toLowerCase();
+    if(key==='system'&&String(selected).toLowerCase()!=='system')return false;
     if(!key||seen[key])return false;
     seen[key]=true;
     return true;
@@ -356,20 +409,32 @@ function customerAreaOptionsHtml(selectedArea){
   if(!areas.length)areas.push('UNASSIGNED');
   return areas.map(area=>`<option value="${escapeHtml(area)}" ${area===selected?'selected':''}>${escapeHtml(area)}</option>`).join('');
 }
-function customerSalesUserOptionsHtml(selectedUserId){
+function getCustomerFormSalesUsersForArea(area){
+  const selectedArea=String(area||'').trim();
+  const users=getCustomerFormOptionsData().salesUsers;
+  if(!selectedArea)return users;
+  return users.filter(user=>String(user.area||user.branch||'').toLowerCase()===selectedArea.toLowerCase());
+}
+function customerSalesUserLabel(user){
+  const label=String(user&&user.displayName||user&&user.fullName||user&&user.username||user&&user.userId||'').trim();
+  const area=String(user&&(user.area||user.branch)||'').trim();
+  return area?`${label} (${area})`:label;
+}
+function customerSalesUserOptionsHtml(selectedUserId,selectedArea,currentLabel){
   const selected=String(selectedUserId||'').trim();
-  const users=Array.isArray(DB.users)?DB.users:[];
+  const users=getCustomerFormSalesUsersForArea(selectedArea);
   const options=['<option value="">ไม่ระบุผู้ดูแลรายบุคคล</option>'];
-  users.filter(user=>['SALES','MANAGER'].includes(normalizeRole(user.role))).forEach(user=>{
+  users.forEach(user=>{
     const id=String(user.userId||'').trim();
-    const label=String(user.displayName||user.fullName||user.username||id).trim();
-    if(id)options.push(`<option value="${escapeHtml(id)}" ${id===selected?'selected':''}>${escapeHtml(label)} (${escapeHtml(getUserArea(user)||'-')})</option>`);
+    if(id)options.push(`<option value="${escapeHtml(id)}" data-name="${escapeHtml(user.displayName||user.fullName||user.username||'')}" ${id===selected?'selected':''}>${escapeHtml(customerSalesUserLabel(user))}</option>`);
   });
-  if(selected&&!users.some(user=>String(user.userId||'').trim()===selected))options.push(`<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)}</option>`);
+  if(selected&&!users.some(user=>String(user.userId||'').trim()===selected)){
+    options.push(`<option value="${escapeHtml(selected)}" selected>${escapeHtml(currentLabel||selected)} (เดิม)</option>`);
+  }
   return options.join('');
 }
 function getCustomerSearchFields(){
-  return ['customerId','customerCode','customerName','province','district','salesArea','assignedSalesUsername','customerType','phone','notes','address'];
+  return ['customerId','customerCode','customerName','province','district','salesArea','assignedSalesUsername','assignedSalesNameSnapshot','customerType','phone','notes','address'];
 }
 function customerBrandBadgesHtml(customer){
   const badges=[];
@@ -399,7 +464,8 @@ function normalizeCustomer(customer){
     salesArea:normalizeCustomerSalesAreaForUi(c),
     area:normalizeCustomerSalesAreaForUi(c),
     assignedSalesUserId:String(c.assignedSalesUserId||c.salesUserId||c.ownerUserId||'').trim(),
-    assignedSalesUsername:String(c.assignedSalesUsername||c.assignedSalesName||c.salesUsername||c.ownerUsername||'').trim(),
+    assignedSalesUsername:String(c.assignedSalesUsername||c.salesUsername||c.ownerUsername||c.assignedSalesNameSnapshot||c.assignedSalesName||'').trim(),
+    assignedSalesNameSnapshot:String(c.assignedSalesNameSnapshot||c.assignedSalesName||c.assignedSalesUsername||c.salesUsername||c.ownerUsername||'').trim(),
     sellsWeber:brandFlags.sellsWeber,
     sellsGyproc:brandFlags.sellsGyproc,
     brandReviewRequired:!brandFlags.sellsWeber&&!brandFlags.sellsGyproc,
@@ -847,6 +913,7 @@ function getProductDiscount(customerId, product){
 function setCustomersData(items){
   DB.customers=Array.isArray(items)?items.map(normalizeCustomer):[];
   customersLoaded=true;
+  if(FAVORITE_CUSTOMER_ROWS.length)FAVORITE_CUSTOMERS=joinFavoriteCustomerRows(FAVORITE_CUSTOMER_ROWS);
   if(typeof setCache==='function')setCache(getCustomersFrontendCacheKey(),DB.customers,15);
 }
 function getCustomersFrontendCacheKey(){
@@ -891,7 +958,13 @@ async function loadCustomers(options){
   const force=!!(options&&options.force);
   const background=!!(options&&options.background);
   if(customersLoaded&&!force)return {ok:true,data:DB.customers,cached:true};
-  if(customersPromise)return customersPromise;
+  if(customersPromise){
+    if(force&&!customersPromiseForce){
+      customersQueuedForce=true;
+      return customersPromise.then(()=>customersQueuedForce?(customersQueuedForce=false,loadCustomers({force:true,background:background})):{ok:true,data:DB.customers,cached:true});
+    }
+    return customersPromise;
+  }
   if(!force&&typeof getCache==='function'){
     const cached=getCache(getCustomersFrontendCacheKey());
     if(Array.isArray(cached)){
@@ -900,10 +973,12 @@ async function loadCustomers(options){
       return {ok:true,data:DB.customers,cached:true};
     }
   }
+  customersPromiseForce=force;
+  const requestSeq=++customersRequestSeq;
   customersPromise=(async()=>{
     try{
       if(!background)toast('กำลังโหลดข้อมูล...');
-      const response=await callApi('customers',{});
+      const response=await callApi('customers',force?{force:true}:{});
       if(response&&response.ok){
         if(!Array.isArray(response.data)){
           const invalidResponse={ok:false,message:'Invalid customers response: expected an array'};
@@ -911,9 +986,11 @@ async function loadCustomers(options){
           console.warn('Customer load rejected invalid response');
           return invalidResponse;
         }
-        setCustomersData(response.data);
-        renderCustomerViews();
-        return {ok:true,data:DB.customers};
+        if(requestSeq===customersRequestSeq){
+          setCustomersData(response.data);
+          renderCustomerViews();
+        }
+        return {ok:true,data:DB.customers,stale:requestSeq!==customersRequestSeq};
       }
       const failed=response||{ok:false,message:'โหลดข้อมูลร้านค้าไม่สำเร็จ'};
       if(!background)toast(failed.message||'โหลดข้อมูลร้านค้าไม่สำเร็จ');
@@ -924,6 +1001,7 @@ async function loadCustomers(options){
       return {ok:false,message:String(error&&error.message?error.message:error)};
     }finally{
       customersPromise=null;
+      customersPromiseForce=false;
     }
   })();
   return customersPromise;
@@ -1040,7 +1118,7 @@ function setupQuoteSearchEnhancements(){
     return result;
   };
 }
-function getQuoteCustomerFields(){return ['customerId','customerCode','customerName','province','district','salesArea','assignedSalesUsername','customerType'];}
+function getQuoteCustomerFields(){return ['customerId','customerCode','customerName','province','district','salesArea','assignedSalesUsername','assignedSalesNameSnapshot','customerType'];}
 function getQuoteProductFields(){return ['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText','listPrice'];}
 let quoteProductSearchSequence=0;
 function normalizeProductBusinessUnitForUi(product){
@@ -1786,59 +1864,148 @@ function customerFormHtml(customer){
   const c=normalizeCustomer(customer||{});
   const salesArea=c.salesArea&&c.salesArea!=='UNASSIGNED'?c.salesArea:(getUserArea(USER)||c.salesArea||'');
   const salesAreaDisabled=!canViewAllCustomerAreasUi()?'disabled':'';
-  const hasUserOptions=Array.isArray(DB.users)&&DB.users.length>0;
-  const salesUserControl=hasUserOptions
-    ? `<select id="mAssignedSalesUserId">${customerSalesUserOptionsHtml(c.assignedSalesUserId||'')}</select>`
-    : `<input id="mAssignedSalesUserId" value="${escapeHtml(c.assignedSalesUserId||'')}" placeholder="userId ของ Sales ผู้ดูแล">`;
+  const formOptions=getCustomerFormOptionsData();
+  const optionsReady=customerFormOptionsLoaded&&formOptions.salesUsers.length>=0;
+  const selectedSalesName=c.assignedSalesNameSnapshot||c.assignedSalesUsername||'';
+  const salesOptions=optionsReady
+    ? customerSalesUserOptionsHtml(c.assignedSalesUserId||'',salesArea,selectedSalesName)
+    : `<option value="${escapeHtml(c.assignedSalesUserId||'')}" selected>${escapeHtml(selectedSalesName||c.assignedSalesUserId||'กำลังโหลดรายชื่อ Sales...')}</option>`;
+  const salesUserControl=`<select id="mAssignedSalesUserId" data-original-value="${escapeHtml(c.assignedSalesUserId||'')}" data-dirty="false" ${optionsReady?'':'disabled'} onchange="handleCustomerAssignedSalesChange()">${salesOptions}</select>`;
+  const salesOptionsState=customerFormOptionsError
+    ? `<div class="customer-form-options-state error">โหลดรายชื่อ Sales ผู้ดูแลไม่สำเร็จ <button type="button" class="tiny" onclick="retryCustomerFormOptionsModal()">ลองใหม่</button></div>`
+    : (!optionsReady?'<div class="customer-form-options-state">กำลังโหลดรายชื่อ Sales ผู้ดูแล...</div>':(!getCustomerFormSalesUsersForArea(salesArea).length?'<div class="customer-form-options-state">ไม่พบ Sales ที่ ACTIVE ในเขตนี้</div>':''));
   return `<div class="field"><label>รหัสร้านค้า</label><input id="mCustomerId" value="${escapeHtml(c.customerId||'')}" ${c.customerId?'disabled':''}></div>
+  <input id="mOriginalCustomerId" type="hidden" value="${escapeHtml(c.customerId||'')}">
+  <input id="mOriginalAssignedSalesUserId" type="hidden" value="${escapeHtml(c.assignedSalesUserId||'')}">
+  <input id="mOriginalAssignedSalesUsername" type="hidden" value="${escapeHtml(c.assignedSalesUsername||'')}">
+  <input id="mOriginalAssignedSalesNameSnapshot" type="hidden" value="${escapeHtml(c.assignedSalesNameSnapshot||'')}">
   <div class="field"><label>ชื่อร้าน</label><input id="mName" value="${escapeHtml(c.customerName||'')}"></div>
   <div class="field"><label>จังหวัด</label><input id="mProvince" value="${escapeHtml(c.province||'')}"></div>
   <div class="field"><label>อำเภอ/เขต</label><input id="mDistrict" value="${escapeHtml(c.district||'')}"></div>
-  <div class="field"><label>เขตการดูแล (Sales Area)</label><select id="mSalesArea" ${salesAreaDisabled} required>${customerAreaOptionsHtml(salesArea)}</select></div>
-  <div class="field"><label>Sales ผู้ดูแล</label>${salesUserControl}<input id="mAssignedSalesUsername" value="${escapeHtml(c.assignedSalesUsername||'')}" placeholder="ชื่อแสดงผล (Snapshot)"></div>
+  <div class="field"><label>เขตการดูแล (Sales Area)</label><select id="mSalesArea" ${salesAreaDisabled} required onchange="handleCustomerSalesAreaChange()">${customerAreaOptionsHtml(salesArea)}</select></div>
+  <div class="field customer-assigned-sales-field"><label>Sales ผู้ดูแล</label>${salesUserControl}${salesOptionsState}<input id="mAssignedSalesUsername" value="${escapeHtml(c.assignedSalesUsername||'')}" type="hidden"><input id="mAssignedSalesNameSnapshot" value="${escapeHtml(selectedSalesName)}" readonly placeholder="ชื่อ Sales ผู้ดูแล"></div>
   <div class="field"><label>แบรนด์ที่ร้านค้าจำหน่าย</label><label class="check-row"><input id="mSellsWeber" type="checkbox" ${c.sellsWeber?'checked':''}> Weber</label><label class="check-row"><input id="mSellsGyproc" type="checkbox" ${c.sellsGyproc?'checked':''}> Gyproc</label></div>
   <div class="field"><label>โทร</label><input id="mPhone" type="tel" inputmode="tel" value="${escapeHtml(c.phone==='-'?'':c.phone||'')}"></div>
   <div class="field"><label>ที่อยู่</label><textarea id="mAddress">${escapeHtml(c.address||'')}</textarea></div>
   <div class="field"><label>หมายเหตุ</label><textarea id="mNotes">${escapeHtml(c.notes||'')}</textarea></div>
   <button id="saveCustomerModalButton" class="primary" onclick="saveCustomerModal('${escapeHtml(c.customerId||'')}')">บันทึก</button>`;
 }
+function readCustomerModalDraft(){
+  const assignedSelect=$('mAssignedSalesUserId');
+  return {
+    customerId:String($('mOriginalCustomerId')?.value||$('mCustomerId')?.value||'').trim(),
+    customerName:String($('mName')?.value||'').trim(),
+    province:$('mProvince')?.value||'',
+    district:$('mDistrict')?.value||'',
+    salesArea:String($('mSalesArea')?.value||getUserArea(USER)||'').trim(),
+    assignedSalesUserId:assignedSelect?String(assignedSelect.value||'').trim():String($('mOriginalAssignedSalesUserId')?.value||'').trim(),
+    assignedSalesUsername:String($('mAssignedSalesUsername')?.value||$('mOriginalAssignedSalesUsername')?.value||'').trim(),
+    assignedSalesNameSnapshot:String($('mAssignedSalesNameSnapshot')?.value||$('mOriginalAssignedSalesNameSnapshot')?.value||'').trim(),
+    sellsWeber:!!$('mSellsWeber')?.checked,
+    sellsGyproc:!!$('mSellsGyproc')?.checked,
+    phone:$('mPhone')?.value||'',
+    address:$('mAddress')?.value||'',
+    notes:$('mNotes')?.value||''
+  };
+}
+function handleCustomerAssignedSalesChange(){
+  const select=$('mAssignedSalesUserId');
+  if(!select)return;
+  select.dataset.dirty='true';
+  const option=select.selectedOptions&&select.selectedOptions[0];
+  const name=option&&select.value?String(option.dataset.name||option.textContent||'').replace(/\s*\([^)]*\)\s*$/,'').trim():'';
+  if($('mAssignedSalesUsername'))$('mAssignedSalesUsername').value=name;
+  if($('mAssignedSalesNameSnapshot'))$('mAssignedSalesNameSnapshot').value=name;
+}
+function handleCustomerSalesAreaChange(){
+  const draft=readCustomerModalDraft();
+  draft.assignedSalesUserId='';
+  draft.assignedSalesUsername='';
+  draft.assignedSalesNameSnapshot='';
+  $('modalBody').innerHTML=customerFormHtml(draft);
+  activateCustomerModalLayout();
+  if($('mAssignedSalesUserId'))$('mAssignedSalesUserId').dataset.dirty='true';
+}
+function rerenderCustomerModalForm(customer){
+  const modal=$('modal');
+  if(!modal||!modal.classList.contains('show')||!modal.classList.contains('customer-modal'))return;
+  const draft=customer||readCustomerModalDraft();
+  $('modalBody').innerHTML=customerFormHtml(draft);
+  activateCustomerModalLayout();
+}
+async function hydrateCustomerModalOptions(customer){
+  const initialDraft=customer||readCustomerModalDraft();
+  const response=await loadCustomerFormOptions({});
+  const draft=$('modal')?.classList.contains('show')?readCustomerModalDraft():initialDraft;
+  if(response&&response.ok){
+    rerenderCustomerModalForm(draft);
+    return response;
+  }
+  customerFormOptionsError=customerFormOptionsErrorMessage(response);
+  rerenderCustomerModalForm(draft);
+  setCustomerModalMessage(customerFormOptionsError,'error');
+  return response;
+}
+function retryCustomerFormOptionsModal(){
+  const draft=readCustomerModalDraft();
+  customerFormOptionsError='';
+  rerenderCustomerModalForm(draft);
+  return loadCustomerFormOptions({force:true}).then(response=>{
+    if(response&&response.ok){
+      rerenderCustomerModalForm(draft);
+      setCustomerModalMessage('');
+    }else{
+      customerFormOptionsError=customerFormOptionsErrorMessage(response);
+      rerenderCustomerModalForm(draft);
+      setCustomerModalMessage(customerFormOptionsError,'error');
+    }
+    return response;
+  });
+}
 function openModal(type){let title={customer:'เพิ่มร้านค้า',product:'เพิ่มสินค้า',promo:'เพิ่มโปรโมชั่น'}[type]; document.getElementById('modalTitle').textContent=title; let html=''; if(type==='customer')html=customerFormHtml(); if(type==='product')html=`<div class="field"><label>ชื่อสินค้า</label><input id="mName"></div><div class="field"><label>แบรนด์</label><select id="mBrand"><option>Weber</option><option>Gyproc</option></select></div><div class="field"><label>หน่วย</label><input id="mUnit"></div><div class="field"><label>ราคา</label><input id="mPrice" type="number"></div><button class="primary" onclick="saveModal('product')">บันทึก</button>`; if(type==='promo')html=`<div class="field"><label>แบรนด์</label><select id="mBrand"><option>Weber</option><option>Gyproc</option></select></div><div class="field"><label>สินค้า</label><input id="mName"></div><div class="field"><label>รายละเอียด</label><textarea id="mDesc"></textarea></div><div class="field"><label>ส่วนลด/โปร</label><input id="mDiscount"></div><button class="primary" onclick="saveModal('promo')">บันทึก</button>`; document.getElementById('modalBody').innerHTML=html; document.getElementById('modal').classList.add('show')}
 function canEditCustomers(){return !!(DB.permissions&&DB.permissions.canManageCustomers)||['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0}
 function openCustomerEditModal(customerId){if(!canEditCustomers()){toast('คุณไม่มีสิทธิ์แก้ไขข้อมูลร้านค้า');return;}const customer=findCustomerById(customerId);if(!customer){toast('ไม่พบข้อมูลร้านค้า');return;}$('modalTitle').textContent='แก้ไขข้อมูลร้านค้า';$('modalBody').innerHTML=customerFormHtml(customer);$('modal').classList.add('show')}
 async function saveCustomerModal(existingId){
   const button=$('saveCustomerModalButton');
-  const customerId=String(existingId||$('mCustomerId')?.value||'').trim();
+  const draft=readCustomerModalDraft();
+  const customerId=String(existingId||draft.customerId||$('mCustomerId')?.value||'').trim();
   const phone=normalizePhone($('mPhone')?.value||'');
-  const customerName=String($('mName')?.value||'').trim();
-  const salesArea=String($('mSalesArea')?.value||getUserArea(USER)||'').trim();
-  const sellsWeber=!!$('mSellsWeber')?.checked;
-  const sellsGyproc=!!$('mSellsGyproc')?.checked;
+  const customerName=String(draft.customerName||'').trim();
+  const salesArea=String(draft.salesArea||getUserArea(USER)||'').trim();
+  const sellsWeber=!!draft.sellsWeber;
+  const sellsGyproc=!!draft.sellsGyproc;
   if(!customerId||!customerName){toast('กรุณากรอกรหัสและชื่อร้านค้า');return;}
   if(!salesArea){toast('กรุณาเลือกเขตการดูแล');return;}
+  if(String(salesArea).toLowerCase()==='system'){toast('กรุณาเลือกเขตการดูแลจริง ไม่ใช่ System');return;}
   if(!canViewAllCustomerAreasUi()&&String(salesArea).toLowerCase()!==String(getUserArea(USER)||'').toLowerCase()){toast('ไม่สามารถบันทึกร้านค้านอกเขตการดูแลของคุณได้');return;}
   if(!sellsWeber&&!sellsGyproc){toast('กรุณาเลือกแบรนด์ที่ร้านค้าจำหน่ายอย่างน้อย 1 รายการ');return;}
   if(phone&&!isValidPhone(phone)){toast('กรุณากรอกเบอร์โทรศัพท์ให้ถูกต้อง');return;}
   const assignedSelect=$('mAssignedSalesUserId');
   const assignedOption=assignedSelect&&assignedSelect.selectedOptions&&assignedSelect.selectedOptions[0];
+  const assignedDirty=!existingId||!!(assignedSelect&&assignedSelect.dataset.dirty==='true');
   const payload={
     customerId:customerId,
     customerName:customerName,
-    province:$('mProvince')?.value||'',
-    district:$('mDistrict')?.value||'',
+    province:draft.province||'',
+    district:draft.district||'',
     salesArea:salesArea,
-    assignedSalesUserId:assignedSelect?.value||'',
-    assignedSalesUsername:(assignedOption&&assignedSelect.value?assignedOption.textContent.replace(/\s*\([^)]*\)\s*$/,''):'')||$('mAssignedSalesUsername')?.value||'',
     sellsWeber:sellsWeber,
     sellsGyproc:sellsGyproc,
     phone:phone,
-    address:$('mAddress')?.value||'',
-    notes:$('mNotes')?.value||''
+    address:draft.address||'',
+    notes:draft.notes||''
   };
+  if(assignedDirty){
+    const selectedName=(assignedOption&&assignedSelect.value?String(assignedOption.dataset.name||assignedOption.textContent||'').replace(/\s*\([^)]*\)\s*$/,'').trim():'')||draft.assignedSalesNameSnapshot||draft.assignedSalesUsername||'';
+    payload.assignedSalesUserId=assignedSelect?.value||'';
+    payload.assignedSalesUsername=selectedName;
+    payload.assignedSalesNameSnapshot=selectedName;
+  }
   try{
     if(button)button.disabled=true;
     const response=await callApi(existingId?'updateCustomer':'saveCustomer',payload);
     toast(response.message||(response.ok?'บันทึกแล้ว':'บันทึกไม่สำเร็จ'));
-    if(!response.ok)return;
+    if(!response.ok){setCustomerModalMessage(response.message||'บันทึกไม่สำเร็จ','error');return;}
     closeModal();
     clearCustomersFrontendCache();
     invalidateBootstrapCustomerCacheIfNeeded();
@@ -1850,6 +2017,183 @@ async function saveCustomerModal(existingId){
   }
 }
 function closeModal(){document.getElementById('modal').classList.remove('show')}
+let customerModalScrollState=null;
+let customerModalEscapeBound=false;
+function lockCustomerModalPageScroll(){
+  if(customerModalScrollState)return;
+  customerModalScrollState={x:window.scrollX||0,y:window.scrollY||0,bodyTop:document.body.style.top||'',bodyPosition:document.body.style.position||'',bodyWidth:document.body.style.width||''};
+  document.body.classList.add('customer-modal-scroll-locked');
+  document.body.style.position='fixed';
+  document.body.style.top=`-${customerModalScrollState.y}px`;
+  document.body.style.width='100%';
+}
+function unlockCustomerModalPageScroll(){
+  if(!customerModalScrollState)return;
+  const state=customerModalScrollState;
+  customerModalScrollState=null;
+  document.body.classList.remove('customer-modal-scroll-locked');
+  document.body.style.position=state.bodyPosition;
+  document.body.style.top=state.bodyTop;
+  document.body.style.width=state.bodyWidth;
+  window.scrollTo(state.x,state.y);
+}
+function ensureCustomerModalEscapeHandler(){
+  if(customerModalEscapeBound)return;
+  customerModalEscapeBound=true;
+  document.addEventListener('keydown',event=>{
+    if(event.key==='Escape'&&$('modal')?.classList.contains('customer-modal')&&$('modal')?.classList.contains('show')){
+      closeModal();
+    }
+  });
+}
+function bindCustomerModalFocusScroll(){
+  const body=$('modalBody');
+  if(!body||body.dataset.customerFocusBound)return;
+  body.dataset.customerFocusBound='true';
+  body.addEventListener('focusin',event=>{
+    if(!$('modal')?.classList.contains('customer-modal'))return;
+    const target=event.target;
+    if(!target||!target.matches||!target.matches('input,select,textarea'))return;
+    window.setTimeout(()=>{
+      try{target.scrollIntoView({block:'center',inline:'nearest',behavior:'smooth'});}catch(error){target.scrollIntoView(false);}
+    },120);
+  });
+}
+function enhanceCustomerModalStructure(){
+  const modalBody=$('modalBody');
+  if(!modalBody||modalBody.querySelector('.customer-modal-form-body'))return;
+  const saveButton=$('saveCustomerModalButton');
+  const formBody=document.createElement('div');
+  formBody.className='customer-modal-form-body';
+  const message=document.createElement('div');
+  message.id='customerModalMessage';
+  message.className='customer-modal-message';
+  message.setAttribute('aria-live','polite');
+  message.hidden=true;
+  formBody.appendChild(message);
+  Array.from(modalBody.childNodes).forEach(node=>{
+    if(node!==saveButton)formBody.appendChild(node);
+  });
+  const brandField=$('mSellsWeber')?.closest('.field');
+  if(brandField){
+    brandField.classList.add('customer-brand-field');
+    const checks=document.createElement('div');
+    checks.className='customer-brand-checks';
+    Array.from(brandField.querySelectorAll('.check-row')).forEach(row=>checks.appendChild(row));
+    brandField.appendChild(checks);
+  }
+  const footer=document.createElement('div');
+  footer.className='customer-modal-footer';
+  const cancel=document.createElement('button');
+  cancel.type='button';
+  cancel.className='ghost';
+  cancel.textContent='ยกเลิก';
+  cancel.onclick=closeModal;
+  footer.appendChild(cancel);
+  if(saveButton){
+    saveButton.type='button';
+    footer.appendChild(saveButton);
+  }
+  modalBody.replaceChildren(formBody,footer);
+}
+function setCustomerModalMessage(message,type){
+  const el=$('customerModalMessage');
+  if(!el)return;
+  const text=String(message||'').trim();
+  el.textContent=text;
+  el.hidden=!text;
+  el.className='customer-modal-message '+(type==='error'?'is-error':'is-info');
+  if(text){
+    try{el.scrollIntoView({block:'nearest',inline:'nearest'});}catch(error){}
+  }
+}
+function activateCustomerModalLayout(){
+  const modal=$('modal');
+  if(!modal)return;
+  modal.classList.add('customer-modal');
+  const card=modal.querySelector('.modal-card');
+  if(card){
+    card.setAttribute('role','dialog');
+    card.setAttribute('aria-modal','true');
+    card.setAttribute('aria-labelledby','modalTitle');
+  }
+  enhanceCustomerModalStructure();
+  lockCustomerModalPageScroll();
+  bindCustomerModalFocusScroll();
+  ensureCustomerModalEscapeHandler();
+}
+function deactivateCustomerModalLayout(){
+  const modal=$('modal');
+  if(modal)modal.classList.remove('customer-modal');
+  unlockCustomerModalPageScroll();
+}
+function validateCustomerModalBeforeSave(existingId){
+  const customerId=String(existingId||$('mCustomerId')?.value||'').trim();
+  const customerName=String($('mName')?.value||'').trim();
+  const salesArea=String($('mSalesArea')?.value||getUserArea(USER)||'').trim();
+  const sellsWeber=!!$('mSellsWeber')?.checked;
+  const sellsGyproc=!!$('mSellsGyproc')?.checked;
+  const phone=normalizePhone($('mPhone')?.value||'');
+  if(!customerId||!customerName)return 'กรุณากรอกรหัสและชื่อร้านค้า';
+  if(!salesArea)return 'กรุณาเลือกเขตการดูแล';
+  if(String(salesArea).toLowerCase()==='system')return 'กรุณาเลือกเขตการดูแลจริง ไม่ใช่ System';
+  if(!canViewAllCustomerAreasUi()&&String(salesArea).toLowerCase()!==String(getUserArea(USER)||'').toLowerCase())return 'ไม่สามารถบันทึกร้านค้านอกเขตการดูแลของคุณได้';
+  if(customerFormOptionsError&&$('mAssignedSalesUserId')?.dataset.dirty==='true')return 'ยังโหลดรายชื่อ Sales ผู้ดูแลไม่สำเร็จ กรุณาลองใหม่ก่อนบันทึก';
+  if(!sellsWeber&&!sellsGyproc)return 'กรุณาเลือกแบรนด์ที่ร้านค้าจำหน่ายอย่างน้อย 1 รายการ';
+  if(phone&&!isValidPhone(phone))return 'กรุณากรอกเบอร์โทรศัพท์ให้ถูกต้อง';
+  return '';
+}
+const baseOpenModalForCustomerLayout=openModal;
+openModal=function(type){
+  baseOpenModalForCustomerLayout(type);
+  if(type==='customer'){
+    activateCustomerModalLayout();
+    hydrateCustomerModalOptions(readCustomerModalDraft());
+  }else deactivateCustomerModalLayout();
+};
+const baseOpenCustomerEditModalForCustomerLayout=openCustomerEditModal;
+openCustomerEditModal=function(customerId){
+  baseOpenCustomerEditModalForCustomerLayout(customerId);
+  if($('modal')?.classList.contains('show')){
+    activateCustomerModalLayout();
+    hydrateCustomerModalOptions(readCustomerModalDraft());
+  }
+};
+const baseCloseModalForCustomerLayout=closeModal;
+closeModal=function(){
+  baseCloseModalForCustomerLayout();
+  deactivateCustomerModalLayout();
+};
+const baseSaveCustomerModalForCustomerLayout=saveCustomerModal;
+saveCustomerModal=async function(existingId){
+  setCustomerModalMessage('');
+  const validationMessage=validateCustomerModalBeforeSave(existingId);
+  if(validationMessage){
+    setCustomerModalMessage(validationMessage,'error');
+    toast(validationMessage);
+    return;
+  }
+  const button=$('saveCustomerModalButton');
+  if(button){
+    button.dataset.originalText=button.dataset.originalText||button.textContent||'บันทึก';
+    button.disabled=true;
+    button.setAttribute('aria-busy','true');
+    button.textContent='กำลังบันทึก...';
+  }
+  try{
+    return await baseSaveCustomerModalForCustomerLayout(existingId);
+  }catch(error){
+    const message=error&&error.message?error.message:'บันทึกไม่สำเร็จ';
+    setCustomerModalMessage(message,'error');
+    toast(message);
+  }finally{
+    if(button){
+      button.disabled=false;
+      button.removeAttribute('aria-busy');
+      button.textContent=button.dataset.originalText||'บันทึก';
+    }
+  }
+};
 async function saveModal(type){
   let r;
   if (type === 'customer') return saveCustomerModal('');
@@ -1891,7 +2235,7 @@ function renderCustomerCard(c,isFavorite){
   return `<div class="card ${isFavorite?'favorite-card':''}" ${isFavorite?`draggable="true" data-customer-id="${id}"`:''}>
     <div class="customer-card-head"><h3>${escapeHtml(c.customerName||'-')}</h3><div class="customer-brand-badges">${customerBrandBadgesHtml(c)}</div></div>
     <p>รหัสร้านค้า: ${escapeHtml(c.customerCode||c.customerId||c.id||'-')}</p>
-    <p>เขตการดูแล: ${escapeHtml(c.salesArea||'-')}${c.assignedSalesUsername?` · Sales: ${escapeHtml(c.assignedSalesUsername)}`:''}</p>
+    <p>เขตการดูแล: ${escapeHtml(c.salesArea||'-')}${(c.assignedSalesNameSnapshot||c.assignedSalesUsername)?` · Sales: ${escapeHtml(c.assignedSalesNameSnapshot||c.assignedSalesUsername)}`:''}</p>
     <p>ประเภท: ${escapeHtml(c.customerType||'-')}</p>
     <p>จังหวัด/อำเภอ: ${escapeHtml(c.province||'-')}${c.district?` / ${escapeHtml(c.district)}`:''}</p>
     <p>โทร: ${renderPhoneLink(c.phone)||'-'}</p>
@@ -1924,7 +2268,41 @@ function renderCustomers(){
   if(!customersLoaded&&!DB.customers.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;}
   grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(c=>renderCustomerCard(c,isFavoriteCustomer(c.customerId))).join('');
 }
-async function loadFavoriteCustomers(){const response=await callApi('getFavoriteCustomers',{});if(response&&response.ok)FAVORITE_CUSTOMERS=Array.isArray(response.data)?response.data:[];renderCustomers();return response}
+function getCustomersByIdMap(){
+  const map=new Map();
+  (Array.isArray(DB.customers)?DB.customers:[]).forEach(customer=>{
+    const id=String(customer.customerId||customer.customerCode||customer.id||'').trim();
+    if(id)map.set(id,customer);
+  });
+  return map;
+}
+function joinFavoriteCustomerRows(rows){
+  const map=getCustomersByIdMap();
+  return (Array.isArray(rows)?rows:[]).map(row=>{
+    const id=String(row&&row.customerId||'').trim();
+    const customer=map.get(id);
+    if(!customer)return null;
+    return Object.assign({},customer,{favoriteId:String(row.favoriteId||'').trim(),sortOrder:Number(row.sortOrder||0)});
+  }).filter(Boolean);
+}
+async function loadFavoriteCustomers(){
+  if(favoriteCustomersPromise)return favoriteCustomersPromise;
+  favoriteCustomersPromise=callApi('getFavoriteCustomers',{idsOnly:true}).then(response=>{
+    if(response&&response.ok){
+      FAVORITE_CUSTOMER_ROWS=Array.isArray(response.data)?response.data:[];
+      FAVORITE_CUSTOMERS=joinFavoriteCustomerRows(FAVORITE_CUSTOMER_ROWS);
+    }
+    renderCustomers();
+    return response;
+  }).catch(error=>{
+    console.warn('Favorite customers load failed');
+    renderCustomers();
+    return {ok:false,message:String(error&&error.message?error.message:error)};
+  }).finally(()=>{
+    favoriteCustomersPromise=null;
+  });
+  return favoriteCustomersPromise;
+}
 async function toggleFavoriteCustomer(customerId){const favorite=isFavoriteCustomer(customerId);if(!favorite&&FAVORITE_CUSTOMERS.length>=5){toast('สามารถปักร้านค้าโปรดได้สูงสุด 5 ร้าน');return;}const response=await callApi(favorite?'removeFavoriteCustomer':'addFavoriteCustomer',{customerId:customerId});toast(response.message||(response.ok?'บันทึกแล้ว':'บันทึกไม่สำเร็จ'));if(response.ok)await loadFavoriteCustomers()}
 async function persistFavoriteOrder(){const grid=$('favoriteCustomerGrid');if(!grid)return;const customerIds=Array.from(grid.querySelectorAll('[data-customer-id]')).map(el=>el.dataset.customerId);const response=await callApi('reorderFavoriteCustomers',{customerIds:customerIds});if(!response.ok){toast(response.message||'จัดลำดับไม่สำเร็จ');await loadFavoriteCustomers();return;}const map=new Map(FAVORITE_CUSTOMERS.map(c=>[String(c.customerId),c]));FAVORITE_CUSTOMERS=customerIds.map(id=>map.get(id)).filter(Boolean)}
 function bindFavoriteDragAndDrop(){const grid=$('favoriteCustomerGrid');if(!grid||grid.dataset.bound)return;grid.dataset.bound='true';let dragged=null;grid.addEventListener('dragstart',event=>{dragged=event.target.closest('.favorite-card');if(!dragged)return;dragged.classList.add('is-dragging');event.dataTransfer.effectAllowed='move'});grid.addEventListener('dragover',event=>{event.preventDefault();const target=event.target.closest('.favorite-card');if(dragged&&target&&target!==dragged)grid.insertBefore(dragged,target)});grid.addEventListener('dragend',()=>{if(dragged)dragged.classList.remove('is-dragging');dragged=null;persistFavoriteOrder()});let timer=null,touchCard=null;grid.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'||event.target.closest('button,a'))return;touchCard=event.target.closest('.favorite-card');if(touchCard)timer=setTimeout(()=>{touchCard.classList.add('is-dragging');touchCard.setPointerCapture(event.pointerId)},350)});grid.addEventListener('pointermove',event=>{if(!touchCard||!touchCard.classList.contains('is-dragging'))return;event.preventDefault();const target=document.elementFromPoint(event.clientX,event.clientY)?.closest('.favorite-card');if(target&&target!==touchCard)grid.insertBefore(touchCard,target)});const finish=()=>{clearTimeout(timer);if(touchCard&&touchCard.classList.contains('is-dragging')){touchCard.classList.remove('is-dragging');persistFavoriteOrder()}touchCard=null};grid.addEventListener('pointerup',finish);grid.addEventListener('pointercancel',finish)}
@@ -2042,7 +2420,7 @@ renderAll=function(){baseRenderAllForAuth();renderUsers();applyRolePermissions()
 const baseGoForAuth=go;
 go=function(page,btn){if(!canAccessPage(page)){toast('ไม่มีสิทธิ์เข้าใช้งานหน้านี้');return;}baseGoForAuth(page,btn);applyRolePermissions();};
 const baseEnsurePageDataForAuth=ensurePageData;
-ensurePageData=function(page){if(page==='users'){return loadUsers();}if(page==='customers'){return Promise.all([baseEnsurePageDataForAuth(page),loadFavoriteCustomers()]);}if(page==='quote'){return Promise.all([baseEnsurePageDataForAuth(page),loadProductPreferences()]);}return baseEnsurePageDataForAuth(page);};
+ensurePageData=function(page){if(page==='users'){return loadUsers();}if(page==='customers'){return baseEnsurePageDataForAuth(page).then(()=>loadFavoriteCustomers());}if(page==='quote'){return Promise.all([baseEnsurePageDataForAuth(page),loadProductPreferences()]);}return baseEnsurePageDataForAuth(page);};
 async function loadUsers(){
   if(['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0)return {ok:false,message:'Insufficient permission'};
   const response=await callApi('loadUsers',{});
