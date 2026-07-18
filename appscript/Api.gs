@@ -2,9 +2,14 @@ function api(action, payload) {
   try {
     const normalizedAction = String(action || '').trim();
     const publicActions = ['login', 'demoLogin', 'register', 'getPublicSystemSettings'];
+    const authStartedAt = Date.now();
     const auth = publicActions.indexOf(normalizedAction) >= 0 ? null : requireApiUser(payload);
+    const authMs = Date.now() - authStartedAt;
     const user = auth && auth.ok ? auth.data : null;
     const permissions = user ? getUserPermissions(user) : {};
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      payload._authMs = authMs;
+    }
     if (auth && !auth.ok && normalizedAction !== 'bootstrap') {
       return auth;
     }
@@ -106,6 +111,9 @@ function api(action, payload) {
         payload.currentUser = user;
         return authorizeAction(updateCustomer, [payload && payload.customerId, payload]);
       case 'getFavoriteCustomers':
+        if (!payload || typeof payload !== 'object') payload = {};
+        payload.currentUser = user;
+        payload._authMs = authMs;
         return authorizeAction(getFavoriteCustomers, [payload]);
       case 'addFavoriteCustomer':
         return authorizeAction(addFavoriteCustomer, [payload]);

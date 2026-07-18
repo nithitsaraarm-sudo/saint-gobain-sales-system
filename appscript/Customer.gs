@@ -1,25 +1,135 @@
 const CUSTOMER_UNASSIGNED_AREA = 'UNASSIGNED';
 const CUSTOMER_FORM_OPTIONS_CACHE_TTL_SECONDS = 180;
 
+function getCustomerApiRequestId_(payload) {
+  const data = payload && typeof payload === 'object' ? payload : {};
+  const value = String(data.requestId || data.clientRequestId || '').trim();
+  return value ? value.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80) : '';
+}
+
+function getRawCustomerRecordId_(source) {
+  const item = source && typeof source === 'object' ? source : {};
+  return String(item.customerId || item.customerCode || item.id || '').trim();
+}
+
+function buildCustomerIdLookup_(customerIds) {
+  if (!Array.isArray(customerIds) || !customerIds.length) {
+    return null;
+  }
+  const lookup = {};
+  customerIds.forEach(function (id) {
+    const normalized = normalizeString(id);
+    if (normalized) {
+      lookup[normalized] = true;
+    }
+  });
+  return Object.keys(lookup).length ? lookup : null;
+}
+
+function normalizeScopedActiveCustomerRows_(rows, user, options) {
+  const startedAt = Date.now();
+  const list = Array.isArray(rows) ? rows : [];
+  const opts = options && typeof options === 'object' ? options : {};
+  const customerIdLookup = buildCustomerIdLookup_(opts.customerIds);
+  const normalizedRows = [];
+  var candidateRows = 0;
+  list.forEach(function (row, index) {
+    if (customerIdLookup) {
+      const rawId = normalizeString(getRawCustomerRecordId_(row));
+      if (!rawId || !customerIdLookup[rawId]) {
+        return;
+      }
+    }
+    candidateRows += 1;
+    const normalized = normalizeCustomerObject(row, index + 2);
+    if (normalized) {
+      normalizedRows.push(normalized);
+    }
+  });
+  const transformMs = Date.now() - startedAt;
+  const scopeStartedAt = Date.now();
+  const customers = normalizedRows.filter(function (customer) {
+    return isActiveCustomer(customer) && canAccessCustomerRecord_(user, customer, { silent: true }).ok;
+  });
+  return {
+    customers: customers,
+    totalRows: list.length,
+    candidateRows: candidateRows,
+    normalizedRows: normalizedRows.length,
+    visibleRows: customers.length,
+    transformMs: transformMs,
+    scopeFilterMs: Date.now() - scopeStartedAt
+  };
+}
+
+function loadScopedActiveCustomers_(payloadOrUser, options) {
+  const opts = options && typeof options === 'object' ? options : {};
+  if (opts.force && typeof clearSheetDataCache === 'function') {
+    clearSheetDataCache(CUSTOMERS_SHEET);
+  }
+  const readStartedAt = Date.now();
+  const result = getSheetData(CUSTOMERS_SHEET);
+  const customersReadMs = Date.now() - readStartedAt;
+  if (!result.ok) {
+    return result;
+  }
+  const scoped = normalizeScopedActiveCustomerRows_(result.data, getCustomerScopeUser_(payloadOrUser), opts);
+  return success(Object.assign({}, scoped, {
+    customersReadMs: customersReadMs,
+    spreadsheetOpenMs: result.spreadsheetOpenMs,
+    cache: result.cacheHit ? 'hit' : 'miss'
+  }));
+}
+
 function getCustomers(payload) {
+  const startedAt = Date.now();
   const timer = startPerformanceTimer('customers');
+  const requestId = getCustomerApiRequestId_(payload);
   try {
     const data = payload && typeof payload === 'object' ? payload : {};
-    if (data.force && typeof clearSheetDataCache === 'function') {
-      clearSheetDataCache(CUSTOMERS_SHEET);
-    }
-    const result = getSheetData(CUSTOMERS_SHEET);
+    const result = loadScopedActiveCustomers_(data, { force: data.force });
     if (!result.ok) {
       logWarning('getCustomers', 'Unable to read Customers sheet');
       endPerformanceTimer(timer, 'ok=false');
+      logCustomerPerformance_({
+        requestId: requestId,
+        action: 'customers',
+        actor: getCustomerScopeUser_(data),
+        authMs: data._authMs,
+        cache: data.force ? 'force' : '',
+        customersReadMs: result.customersReadMs,
+        totalMs: Date.now() - startedAt,
+        errorCode: result.code || result.message || 'READ_FAILED'
+      });
       return success([]);
     }
-    const activeCustomers = normalizeActiveCustomerRowsForScope_(result.data, getCustomerScopeUser_(data));
+    const metrics = result.data || {};
+    const activeCustomers = metrics.customers || [];
     endPerformanceTimer(timer, 'count=' + activeCustomers.length);
+    logCustomerPerformance_({
+      requestId: requestId,
+      action: 'customers',
+      actor: getCustomerScopeUser_(data),
+      authMs: data._authMs,
+      spreadsheetOpenMs: metrics.spreadsheetOpenMs,
+      cache: data.force ? 'force' : metrics.cache,
+      customersReadMs: metrics.customersReadMs,
+      transformMs: metrics.transformMs,
+      scopeFilterMs: metrics.scopeFilterMs,
+      totalRows: metrics.totalRows,
+      visibleRows: activeCustomers.length,
+      totalMs: Date.now() - startedAt
+    });
     return success(activeCustomers);
   } catch (error) {
     endPerformanceTimer(timer, 'error=true');
     logError('getCustomers', error);
+    logCustomerPerformance_({
+      requestId: requestId,
+      action: 'customers',
+      totalMs: Date.now() - startedAt,
+      errorCode: error && error.message ? error.message : 'UNKNOWN_ERROR'
+    });
     return fail(error && error.message ? error.message : 'Failed to load customers');
   }
 }
@@ -342,8 +452,13 @@ function getAssignableSalesUsers(payload) {
   const startedAt = Date.now();
   const data = payload && typeof payload === 'object' ? payload : {};
   const requestId = getCustomerFormOptionsRequestId_(data);
+  var authMs = Number(data._authMs || 0);
   try {
-    const auth = requireApiUser(data);
+    const authStartedAt = Date.now();
+    const auth = data.currentUser ? success(data.currentUser) : requireApiUser(data);
+    if (!data.currentUser) {
+      authMs = Date.now() - authStartedAt;
+    }
     if (!auth.ok) {
       logCustomerFormOptionsDiagnostic_({
         requestId: requestId,
@@ -351,13 +466,22 @@ function getAssignableSalesUsers(payload) {
         errorCode: auth.code || 'AUTH_FAILED',
         durationMs: Date.now() - startedAt
       });
+      logCustomerPerformance_({
+        requestId: requestId,
+        action: 'getAssignableSalesUsers',
+        authMs: authMs,
+        totalMs: Date.now() - startedAt,
+        errorCode: auth.code || 'AUTH_FAILED'
+      });
       return auth;
     }
     const areaCheck = getRequestedCustomerFormOptionsArea_(data, auth.data);
     if (!areaCheck.ok) {
       return areaCheck;
     }
+    const usersStartedAt = Date.now();
     const usersResult = listUserAccounts();
+    const usersReadMs = Number(usersResult.usersReadMs || (Date.now() - usersStartedAt));
     if (!usersResult.ok) {
       return usersResult;
     }
@@ -371,6 +495,18 @@ function getAssignableSalesUsers(payload) {
       salesUserCount: users.length,
       durationMs: Date.now() - startedAt
     });
+    logCustomerPerformance_({
+      requestId: requestId,
+      action: 'getAssignableSalesUsers',
+      actor: auth.data,
+      authMs: authMs,
+      spreadsheetOpenMs: usersResult.spreadsheetOpenMs,
+      usersReadMs: usersReadMs,
+      cache: usersResult.cacheHit ? 'users:hit' : 'users:miss',
+      returnedRows: users.length,
+      totalRows: Array.isArray(usersResult.data) ? usersResult.data.length : 0,
+      totalMs: Date.now() - startedAt
+    });
     return success(users);
   } catch (error) {
     logError('getAssignableSalesUsers', error);
@@ -380,6 +516,13 @@ function getAssignableSalesUsers(payload) {
       errorCode: error && error.message ? error.message : 'UNKNOWN_ERROR',
       durationMs: Date.now() - startedAt
     });
+    logCustomerPerformance_({
+      requestId: requestId,
+      action: 'getAssignableSalesUsers',
+      authMs: authMs,
+      totalMs: Date.now() - startedAt,
+      errorCode: error && error.message ? error.message : 'UNKNOWN_ERROR'
+    });
     return fail(error && error.message ? error.message : 'Failed to load assignable sales users');
   }
 }
@@ -388,14 +531,27 @@ function getCustomerFormOptions(payload) {
   const startedAt = Date.now();
   const data = payload && typeof payload === 'object' ? payload : {};
   const requestId = getCustomerFormOptionsRequestId_(data);
+  var authMs = Number(data._authMs || 0);
+  var usersReadMs = 0;
   try {
-    const auth = requireApiUser(data);
+    const authStartedAt = Date.now();
+    const auth = data.currentUser ? success(data.currentUser) : requireApiUser(data);
+    if (!data.currentUser) {
+      authMs = Date.now() - authStartedAt;
+    }
     if (!auth.ok) {
       logCustomerFormOptionsDiagnostic_({
         requestId: requestId,
         action: 'getCustomerFormOptions',
         errorCode: auth.code || 'AUTH_FAILED',
         durationMs: Date.now() - startedAt
+      });
+      logCustomerPerformance_({
+        requestId: requestId,
+        action: 'getCustomerFormOptions',
+        authMs: authMs,
+        totalMs: Date.now() - startedAt,
+        errorCode: auth.code || 'AUTH_FAILED'
       });
       return auth;
     }
@@ -419,24 +575,33 @@ function getCustomerFormOptions(payload) {
           salesUserCount: Array.isArray(cached.salesUsers) ? cached.salesUsers.length : 0,
           durationMs: Date.now() - startedAt
         });
+        logCustomerPerformance_({
+          requestId: requestId,
+          action: 'getCustomerFormOptions',
+          actor: actor,
+          authMs: authMs,
+          customersReadMs: 0,
+          usersReadMs: 0,
+          cache: 'hit',
+          totalRows: Number(cached.customerRowCount || 0),
+          visibleRows: Number(cached.visibleCustomerRowCount || 0),
+          returnedRows: Array.isArray(cached.salesUsers) ? cached.salesUsers.length : 0,
+          totalMs: Date.now() - startedAt
+        });
         return success(cached);
       }
     }
 
-    const customersResult = getSheetData(CUSTOMERS_SHEET);
-    if (!customersResult.ok) {
-      return customersResult;
-    }
+    const usersStartedAt = Date.now();
     const usersResult = listUserAccounts();
+    usersReadMs = Number(usersResult.usersReadMs || (Date.now() - usersStartedAt));
     if (!usersResult.ok) {
       return usersResult;
     }
-    const customerRows = Array.isArray(customersResult.data) ? customersResult.data : [];
     const userRows = Array.isArray(usersResult.data) ? usersResult.data : [];
-    const scopedCustomers = normalizeActiveCustomerRowsForScope_(customerRows, actor);
     const salesUsers = getAssignableSalesUsersForActor_(actor, userRows, requestedArea);
-    const salesAreas = buildCustomerFormSalesAreas_(actor, scopedCustomers, salesUsers, requestedArea);
-    const brandCounts = countCustomerBrands_(scopedCustomers);
+    const salesAreas = buildCustomerFormSalesAreas_(actor, [], salesUsers, requestedArea);
+    const brandCounts = { weber: 0, gyproc: 0, both: 0, review: 0 };
     const result = {
       salesAreas: salesAreas,
       areas: salesAreas,
@@ -453,7 +618,8 @@ function getCustomerFormOptions(payload) {
         actorArea: getCustomerUserArea_(actor),
         requestedArea: requestedArea
       },
-      customerRowCount: customerRows.length,
+      customerRowCount: 0,
+      visibleCustomerRowCount: 0,
       userRowCount: userRows.length
     };
     setServerCache(cacheKey, result, CUSTOMER_FORM_OPTIONS_CACHE_TTL_SECONDS);
@@ -463,10 +629,26 @@ function getCustomerFormOptions(payload) {
       actor: actor,
       salesArea: requestedArea || getCustomerUserArea_(actor),
       cache: 'miss',
-      rowCount: customerRows.length,
+      rowCount: 0,
       userRowCount: userRows.length,
       salesUserCount: salesUsers.length,
       durationMs: Date.now() - startedAt
+    });
+    logCustomerPerformance_({
+      requestId: requestId,
+      action: 'getCustomerFormOptions',
+      actor: actor,
+      authMs: authMs,
+      customersReadMs: 0,
+      spreadsheetOpenMs: usersResult.spreadsheetOpenMs,
+      usersReadMs: usersReadMs,
+      transformMs: 0,
+      scopeFilterMs: 0,
+      cache: usersResult.cacheHit ? 'miss users:hit' : 'miss users:miss',
+      totalRows: 0,
+      visibleRows: 0,
+      returnedRows: salesUsers.length,
+      totalMs: Date.now() - startedAt
     });
     return success(result);
   } catch (error) {
@@ -477,14 +659,20 @@ function getCustomerFormOptions(payload) {
       errorCode: error && error.message ? error.message : 'UNKNOWN_ERROR',
       durationMs: Date.now() - startedAt
     });
+    logCustomerPerformance_({
+      requestId: requestId,
+      action: 'getCustomerFormOptions',
+      authMs: authMs,
+      usersReadMs: usersReadMs,
+      totalMs: Date.now() - startedAt,
+      errorCode: error && error.message ? error.message : 'UNKNOWN_ERROR'
+    });
     return fail(error && error.message ? error.message : 'Failed to load customer form options');
   }
 }
 
 function getCustomerFormOptionsRequestId_(payload) {
-  const data = payload && typeof payload === 'object' ? payload : {};
-  const value = String(data.requestId || data.clientRequestId || '').trim();
-  return value ? value.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80) : '';
+  return getCustomerApiRequestId_(payload);
 }
 
 function sanitizeCustomerFormOptionsCachePart_(value) {
@@ -624,6 +812,39 @@ function logCustomerFormOptionsDiagnostic_(detail) {
       ['errorCode', data.errorCode]
     ];
     Logger.log('[CUSTOMER_FORM_OPTIONS] ' + pairs.map(function (pair) {
+      return pair[0] + '=' + sanitizeCustomerDiagnosticValue_(pair[1]);
+    }).join(';'));
+  } catch (error) {
+    // Diagnostics must never break the business flow.
+  }
+}
+
+function logCustomerPerformance_(detail) {
+  try {
+    const data = detail && typeof detail === 'object' ? detail : {};
+    const actor = data.actor && typeof data.actor === 'object' ? data.actor : {};
+    const pairs = [
+      ['requestId', data.requestId],
+      ['action', data.action || 'customerApi'],
+      ['userId', actor.userId || actor.username],
+      ['role', actor.role],
+      ['authMs', data.authMs],
+      ['spreadsheetOpenMs', data.spreadsheetOpenMs],
+      ['customersReadMs', data.customersReadMs],
+      ['usersReadMs', data.usersReadMs],
+      ['favoritesReadMs', data.favoritesReadMs],
+      ['scopeFilterMs', data.scopeFilterMs],
+      ['transformMs', data.transformMs],
+      ['cache', data.cache],
+      ['totalRows', data.totalRows],
+      ['candidateRows', data.candidateRows],
+      ['visibleRows', data.visibleRows],
+      ['favoriteRows', data.favoriteRows],
+      ['returnedRows', data.returnedRows],
+      ['totalMs', data.totalMs],
+      ['errorCode', data.errorCode]
+    ];
+    Logger.log('[CUSTOMER_PERF] ' + pairs.map(function (pair) {
       return pair[0] + '=' + sanitizeCustomerDiagnosticValue_(pair[1]);
     }).join(';'));
   } catch (error) {
@@ -1123,15 +1344,7 @@ function normalizeCustomerRows_(rows) {
 }
 
 function normalizeActiveCustomerRowsForScope_(rows, user) {
-  const list = Array.isArray(rows) ? rows : [];
-  const customers = [];
-  list.forEach(function (row, index) {
-    const normalized = normalizeCustomerObject(row, index + 2);
-    if (normalized && isActiveCustomer(normalized) && canAccessCustomerRecord_(user, normalized, { silent: true }).ok) {
-      customers.push(normalized);
-    }
-  });
-  return customers;
+  return normalizeScopedActiveCustomerRows_(rows, user).customers;
 }
 
 function logMalformedCustomerRow_(customerId, rowNumber, reason) {

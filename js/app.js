@@ -9,7 +9,7 @@ let bootstrapLoaded=false, bootstrapPromise=null;
 let quoteHistoryLoaded=false, quoteHistoryPromise=null;
 let customersLoaded=false, productsLoaded=false, customersPromise=null, customersPromiseForce=false, customersQueuedForce=false, customersRequestSeq=0, customerRefreshPromise=null, productsPromise=null;
 let customerFormOptionsLoaded=false, customerFormOptionsPromise=null, customerFormOptionsError='';
-let FAVORITE_CUSTOMERS=[], FAVORITE_CUSTOMER_ROWS=[], favoriteCustomersPromise=null;
+let FAVORITE_CUSTOMERS=[], FAVORITE_CUSTOMER_ROWS=[], favoriteCustomersPromise=null, favoriteCustomersLoadSeq=0;
 let FAVORITE_PRODUCTS=[], PINNED_PRODUCTS=[], productPreferencesLoaded=false, productPreferencesPromise=null;
 const openQuotationDetailPromises={};
 const LIST_RENDER_LIMIT=Number(window.DEFAULT_PAGE_SIZE||50), QUOTE_PICKER_LIMIT=30, SEARCH_DEBOUNCE_MS=300;
@@ -2285,21 +2285,44 @@ function joinFavoriteCustomerRows(rows){
     return Object.assign({},customer,{favoriteId:String(row.favoriteId||'').trim(),sortOrder:Number(row.sortOrder||0)});
   }).filter(Boolean);
 }
-async function loadFavoriteCustomers(){
+function isCustomersPageActive(){
+  const page=$('page-customers');
+  return !!(page&&page.classList.contains('active'));
+}
+function scheduleFavoriteCustomersLoad(){
+  const seq=++favoriteCustomersLoadSeq;
+  const run=()=>{
+    if(seq!==favoriteCustomersLoadSeq||!isCustomersPageActive())return;
+    loadFavoriteCustomers({background:true,seq:seq});
+  };
+  if(typeof window.requestIdleCallback==='function'){
+    window.requestIdleCallback(run,{timeout:1500});
+  }else{
+    window.setTimeout(run,250);
+  }
+}
+async function loadFavoriteCustomers(options){
+  const opts=options||{};
+  const background=!!opts.background;
+  const seq=opts.seq||favoriteCustomersLoadSeq;
   if(favoriteCustomersPromise)return favoriteCustomersPromise;
   favoriteCustomersPromise=callApi('getFavoriteCustomers',{idsOnly:true}).then(response=>{
+    const canRender=!background||(seq===favoriteCustomersLoadSeq&&isCustomersPageActive());
+    if(background&&!canRender)return response;
     if(response&&response.ok){
       FAVORITE_CUSTOMER_ROWS=Array.isArray(response.data)?response.data:[];
       FAVORITE_CUSTOMERS=joinFavoriteCustomerRows(FAVORITE_CUSTOMER_ROWS);
     }
-    renderCustomers();
+    if(canRender)renderCustomers();
     return response;
   }).catch(error=>{
     console.warn('Favorite customers load failed');
-    renderCustomers();
+    if(!background||(seq===favoriteCustomersLoadSeq&&isCustomersPageActive()))renderCustomers();
     return {ok:false,message:String(error&&error.message?error.message:error)};
   }).finally(()=>{
+    const shouldReschedule=background&&seq!==favoriteCustomersLoadSeq&&isCustomersPageActive();
     favoriteCustomersPromise=null;
+    if(shouldReschedule)scheduleFavoriteCustomersLoad();
   });
   return favoriteCustomersPromise;
 }
@@ -2420,7 +2443,7 @@ renderAll=function(){baseRenderAllForAuth();renderUsers();applyRolePermissions()
 const baseGoForAuth=go;
 go=function(page,btn){if(!canAccessPage(page)){toast('ไม่มีสิทธิ์เข้าใช้งานหน้านี้');return;}baseGoForAuth(page,btn);applyRolePermissions();};
 const baseEnsurePageDataForAuth=ensurePageData;
-ensurePageData=function(page){if(page==='users'){return loadUsers();}if(page==='customers'){return baseEnsurePageDataForAuth(page).then(()=>loadFavoriteCustomers());}if(page==='quote'){return Promise.all([baseEnsurePageDataForAuth(page),loadProductPreferences()]);}return baseEnsurePageDataForAuth(page);};
+ensurePageData=function(page){if(page==='users'){return loadUsers();}if(page==='customers'){return baseEnsurePageDataForAuth(page).then(response=>{scheduleFavoriteCustomersLoad();return response;});}if(page==='quote'){return Promise.all([baseEnsurePageDataForAuth(page),loadProductPreferences()]);}return baseEnsurePageDataForAuth(page);};
 async function loadUsers(){
   if(['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0)return {ok:false,message:'Insufficient permission'};
   const response=await callApi('loadUsers',{});

@@ -145,6 +145,9 @@ function getSheetDataCacheKey(sheetName) {
   if (name === String(SHEET_NAMES.PRODUCTS || '') || name === String(typeof PRODUCT_SHEET !== 'undefined' ? PRODUCT_SHEET : '')) {
     return 'sheetData:products';
   }
+  if (typeof getUsersSheetName === 'function' && name === String(getUsersSheetName() || '')) {
+    return 'sheetData:users';
+  }
   return '';
 }
 
@@ -199,32 +202,56 @@ function ensureSheet(sheetName, headers) {
 }
 
 function getSheetData(sheetName) {
+  const startedAt = Date.now();
+  var spreadsheetOpenMs = 0;
   try {
     const cacheKey = getSheetDataCacheKey(sheetName);
     if (cacheKey) {
       const cached = getServerCache(cacheKey);
       if (cached) {
-        return success(cached);
+        const cachedResult = success(cached);
+        cachedResult.cacheHit = true;
+        cachedResult.spreadsheetOpenMs = 0;
+        cachedResult.totalMs = Date.now() - startedAt;
+        return cachedResult;
       }
     }
+    const openStartedAt = Date.now();
     const sheet = getSheet(sheetName);
+    spreadsheetOpenMs = Date.now() - openStartedAt;
     if (!sheet) {
-      return success([]);
+      const emptyResult = success([]);
+      emptyResult.cacheHit = false;
+      emptyResult.spreadsheetOpenMs = spreadsheetOpenMs;
+      emptyResult.totalMs = Date.now() - startedAt;
+      return emptyResult;
     }
     const lastRow = sheet.getLastRow();
     const lastColumn = sheet.getLastColumn();
     if (lastRow < 1 || lastColumn < 1) {
-      return success([]);
+      const emptySheetResult = success([]);
+      emptySheetResult.cacheHit = false;
+      emptySheetResult.spreadsheetOpenMs = spreadsheetOpenMs;
+      emptySheetResult.totalMs = Date.now() - startedAt;
+      return emptySheetResult;
     }
     const values = sheet.getRange(1, 1, lastRow, lastColumn).getDisplayValues();
     if (!values || values.length === 0) {
-      return success([]);
+      const noValuesResult = success([]);
+      noValuesResult.cacheHit = false;
+      noValuesResult.spreadsheetOpenMs = spreadsheetOpenMs;
+      noValuesResult.totalMs = Date.now() - startedAt;
+      return noValuesResult;
     }
     const rows = sheetToObjects(values);
     if (cacheKey) {
       setServerCache(cacheKey, rows, 300);
     }
-    return success(rows);
+    const response = success(rows);
+    response.cacheHit = false;
+    response.spreadsheetOpenMs = spreadsheetOpenMs;
+    response.totalMs = Date.now() - startedAt;
+    return response;
   } catch (error) {
     logError('getSheetData', error);
     return fail(error && error.message ? error.message : 'Failed to read sheet data');
