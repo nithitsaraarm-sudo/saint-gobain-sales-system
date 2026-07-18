@@ -55,12 +55,15 @@ function api(action, payload) {
       case 'getCustomerFilters':
       case 'getAreas':
       case 'getAssignableSalesUsers':
+      case 'getCustomerFormOptions':
         if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES, USER_ROLES.VIEWER])) return forbidden('Insufficient permission');
         if (!payload || typeof payload !== 'object') payload = {};
         payload.currentUser = user;
         return normalizedAction === 'getCustomerFilters'
           ? authorizeAction(getCustomerFilters, [payload])
-          : (normalizedAction === 'getAreas' ? authorizeAction(getAreas, [payload]) : authorizeAction(getAssignableSalesUsers, [payload]));
+          : (normalizedAction === 'getAreas'
+            ? authorizeAction(getAreas, [payload])
+            : (normalizedAction === 'getCustomerFormOptions' ? authorizeAction(getCustomerFormOptions, [payload]) : authorizeAction(getAssignableSalesUsers, [payload])));
       case 'products':
       case 'getProducts':
         if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES])) return forbidden('Insufficient permission');

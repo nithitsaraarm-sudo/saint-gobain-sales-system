@@ -1,4 +1,5 @@
 const CUSTOMER_UNASSIGNED_AREA = 'UNASSIGNED';
+const CUSTOMER_FORM_OPTIONS_CACHE_TTL_SECONDS = 180;
 
 function getCustomers(payload) {
   const timer = startPerformanceTimer('customers');
@@ -76,6 +77,7 @@ function searchCustomers(keyword, payload) {
         String(item.district || ''),
         String(item.salesArea || ''),
         String(item.assignedSalesUsername || ''),
+        String(item.assignedSalesNameSnapshot || ''),
         String(item.customerType || ''),
         String(item.notes || ''),
         String(item.address || '')
@@ -134,6 +136,7 @@ function saveCustomer(payload) {
       salesArea: salesArea,
       assignedSalesUserId: resolvedAssigned.assignedSalesUserId,
       assignedSalesUsername: resolvedAssigned.assignedSalesUsername,
+      assignedSalesNameSnapshot: resolvedAssigned.assignedSalesNameSnapshot || resolvedAssigned.assignedSalesUsername,
       sellsWeber: brandCheck.data.sellsWeber ? 'TRUE' : 'FALSE',
       sellsGyproc: brandCheck.data.sellsGyproc ? 'TRUE' : 'FALSE',
       active: 'TRUE',
@@ -188,10 +191,11 @@ function updateCustomer(customerId, payload) {
       return brandCheck;
     }
     const submittedAssigned = normalizeCustomerAssignedSales_(payload);
-    const nextAssignedUserId = (payload.assignedSalesUserId !== undefined || payload.assignedSalesUsername !== undefined)
+    const assignedWasSubmitted = payload.assignedSalesUserId !== undefined || payload.assignedSalesUsername !== undefined || payload.assignedSalesNameSnapshot !== undefined;
+    const nextAssignedUserId = assignedWasSubmitted
       ? submittedAssigned.assignedSalesUserId
       : String(existingCustomer.assignedSalesUserId || '').trim();
-    const nextAssignedUsername = (payload.assignedSalesUserId !== undefined || payload.assignedSalesUsername !== undefined)
+    const nextAssignedUsername = assignedWasSubmitted
       ? submittedAssigned.assignedSalesUsername
       : String(existingCustomer.assignedSalesUsername || '').trim();
     const assignedCheck = validateAssignedSalesForCustomer_(nextAssignedUserId, salesArea, nextAssignedUsername);
@@ -214,10 +218,11 @@ function updateCustomer(customerId, payload) {
     if (payload.salesArea !== undefined || payload.area !== undefined || payload.branch !== undefined || !existingCustomer.salesArea) {
       updateObject.salesArea = salesArea;
     }
-    if (payload.assignedSalesUserId !== undefined || payload.assignedSalesUsername !== undefined) {
+    if (assignedWasSubmitted) {
       const assigned = assignedCheck.data || submittedAssigned;
       updateObject.assignedSalesUserId = assigned.assignedSalesUserId;
       updateObject.assignedSalesUsername = assigned.assignedSalesUsername;
+      updateObject.assignedSalesNameSnapshot = assigned.assignedSalesNameSnapshot || assigned.assignedSalesUsername;
     }
     if (payload.sellsWeber !== undefined || payload.sellsGyproc !== undefined || payload.customerType !== undefined || payload.brand !== undefined || payload.bu !== undefined || payload.businessUnit !== undefined) {
       updateObject.sellsWeber = brandCheck.data.sellsWeber ? 'TRUE' : 'FALSE';
@@ -317,35 +322,14 @@ function getCustomersByProvince(province, payload) {
 }
 
 function getCustomerFilters(payload) {
-  try {
-    const auth = requireApiUser(payload);
-    if (!auth.ok) {
-      return auth;
-    }
-    const customersResult = getCustomers({ currentUser: auth.data });
-    if (!customersResult.ok) {
-      return customersResult;
-    }
-    const areas = {};
-    const brands = { weber: 0, gyproc: 0, both: 0, review: 0 };
-    (Array.isArray(customersResult.data) ? customersResult.data : []).forEach(function (customer) {
-      const area = String(customer.salesArea || CUSTOMER_UNASSIGNED_AREA).trim() || CUSTOMER_UNASSIGNED_AREA;
-      areas[area] = true;
-      if (customer.sellsWeber && customer.sellsGyproc) brands.both += 1;
-      else if (customer.sellsWeber) brands.weber += 1;
-      else if (customer.sellsGyproc) brands.gyproc += 1;
-      else brands.review += 1;
-    });
-    const assignableUsersResult = getAssignableSalesUsers(payload);
-    return success({
-      areas: Object.keys(areas).sort(),
-      brands: brands,
-      assignableSalesUsers: assignableUsersResult.ok ? assignableUsersResult.data : []
-    });
-  } catch (error) {
-    logError('getCustomerFilters', error);
-    return fail(error && error.message ? error.message : 'Failed to load customer filters');
-  }
+  const options = getCustomerFormOptions(payload);
+  if (!options.ok) return options;
+  const data = options.data || {};
+  return success({
+    areas: data.salesAreas || data.areas || [],
+    brands: data.brandCounts || data.brands || { weber: 0, gyproc: 0, both: 0, review: 0 },
+    assignableSalesUsers: data.salesUsers || data.assignableSalesUsers || []
+  });
 }
 
 function getAreas(payload) {
@@ -355,38 +339,295 @@ function getAreas(payload) {
 }
 
 function getAssignableSalesUsers(payload) {
+  const startedAt = Date.now();
+  const data = payload && typeof payload === 'object' ? payload : {};
+  const requestId = getCustomerFormOptionsRequestId_(data);
   try {
-    const auth = requireApiUser(payload);
+    const auth = requireApiUser(data);
     if (!auth.ok) {
+      logCustomerFormOptionsDiagnostic_({
+        requestId: requestId,
+        action: 'getAssignableSalesUsers',
+        errorCode: auth.code || 'AUTH_FAILED',
+        durationMs: Date.now() - startedAt
+      });
       return auth;
+    }
+    const areaCheck = getRequestedCustomerFormOptionsArea_(data, auth.data);
+    if (!areaCheck.ok) {
+      return areaCheck;
     }
     const usersResult = listUserAccounts();
     if (!usersResult.ok) {
       return usersResult;
     }
-    const actor = auth.data || {};
-    const actorArea = getCustomerUserArea_(actor);
-    const systemWide = isSystemWideCustomerUser_(actor);
-    const users = (Array.isArray(usersResult.data) ? usersResult.data : []).map(normalizeUserAccount).filter(function (user) {
-      if (!hasRole(user, [USER_ROLES.SALES])) return false;
-      if (user.status && user.status !== USER_STATUSES.ACTIVE) return false;
-      if (systemWide) return true;
-      return actorArea && normalizeString(user.area || user.branch) === normalizeString(actorArea);
-    }).map(function (user) {
-      return {
-        userId: String(user.userId || '').trim(),
-        username: String(user.username || '').trim(),
-        displayName: String(user.displayName || user.fullName || user.username || '').trim(),
-        fullName: String(user.fullName || '').trim(),
-        area: String(user.area || user.branch || '').trim(),
-        branch: String(user.branch || user.area || '').trim(),
-        role: String(user.role || '').trim()
-      };
+    const users = getAssignableSalesUsersForActor_(auth.data, usersResult.data, areaCheck.data);
+    logCustomerFormOptionsDiagnostic_({
+      requestId: requestId,
+      action: 'getAssignableSalesUsers',
+      actor: auth.data,
+      salesArea: areaCheck.data || getCustomerUserArea_(auth.data),
+      userRowCount: Array.isArray(usersResult.data) ? usersResult.data.length : 0,
+      salesUserCount: users.length,
+      durationMs: Date.now() - startedAt
     });
     return success(users);
   } catch (error) {
     logError('getAssignableSalesUsers', error);
+    logCustomerFormOptionsDiagnostic_({
+      requestId: requestId,
+      action: 'getAssignableSalesUsers',
+      errorCode: error && error.message ? error.message : 'UNKNOWN_ERROR',
+      durationMs: Date.now() - startedAt
+    });
     return fail(error && error.message ? error.message : 'Failed to load assignable sales users');
+  }
+}
+
+function getCustomerFormOptions(payload) {
+  const startedAt = Date.now();
+  const data = payload && typeof payload === 'object' ? payload : {};
+  const requestId = getCustomerFormOptionsRequestId_(data);
+  try {
+    const auth = requireApiUser(data);
+    if (!auth.ok) {
+      logCustomerFormOptionsDiagnostic_({
+        requestId: requestId,
+        action: 'getCustomerFormOptions',
+        errorCode: auth.code || 'AUTH_FAILED',
+        durationMs: Date.now() - startedAt
+      });
+      return auth;
+    }
+    const actor = auth.data || {};
+    const areaCheck = getRequestedCustomerFormOptionsArea_(data, actor);
+    if (!areaCheck.ok) {
+      return areaCheck;
+    }
+    const requestedArea = String(areaCheck.data || '').trim();
+    const cacheKey = getCustomerFormOptionsCacheKey_(actor, requestedArea);
+    if (!data.force) {
+      const cached = getServerCache(cacheKey);
+      if (cached) {
+        logCustomerFormOptionsDiagnostic_({
+          requestId: requestId,
+          action: 'getCustomerFormOptions',
+          actor: actor,
+          salesArea: requestedArea || getCustomerUserArea_(actor),
+          cache: 'hit',
+          rowCount: Number(cached.customerRowCount || 0),
+          salesUserCount: Array.isArray(cached.salesUsers) ? cached.salesUsers.length : 0,
+          durationMs: Date.now() - startedAt
+        });
+        return success(cached);
+      }
+    }
+
+    const customersResult = getSheetData(CUSTOMERS_SHEET);
+    if (!customersResult.ok) {
+      return customersResult;
+    }
+    const usersResult = listUserAccounts();
+    if (!usersResult.ok) {
+      return usersResult;
+    }
+    const customerRows = Array.isArray(customersResult.data) ? customersResult.data : [];
+    const userRows = Array.isArray(usersResult.data) ? usersResult.data : [];
+    const scopedCustomers = normalizeActiveCustomerRowsForScope_(customerRows, actor);
+    const salesUsers = getAssignableSalesUsersForActor_(actor, userRows, requestedArea);
+    const salesAreas = buildCustomerFormSalesAreas_(actor, scopedCustomers, salesUsers, requestedArea);
+    const brandCounts = countCustomerBrands_(scopedCustomers);
+    const result = {
+      salesAreas: salesAreas,
+      areas: salesAreas,
+      salesUsers: salesUsers,
+      assignableSalesUsers: salesUsers,
+      brandOptions: [
+        { value: 'WEBER', label: 'Weber' },
+        { value: 'GYPROC', label: 'Gyproc' }
+      ],
+      brandCounts: brandCounts,
+      brands: brandCounts,
+      permissions: {
+        canViewAllAreas: isSystemWideCustomerUser_(actor),
+        actorArea: getCustomerUserArea_(actor),
+        requestedArea: requestedArea
+      },
+      customerRowCount: customerRows.length,
+      userRowCount: userRows.length
+    };
+    setServerCache(cacheKey, result, CUSTOMER_FORM_OPTIONS_CACHE_TTL_SECONDS);
+    logCustomerFormOptionsDiagnostic_({
+      requestId: requestId,
+      action: 'getCustomerFormOptions',
+      actor: actor,
+      salesArea: requestedArea || getCustomerUserArea_(actor),
+      cache: 'miss',
+      rowCount: customerRows.length,
+      userRowCount: userRows.length,
+      salesUserCount: salesUsers.length,
+      durationMs: Date.now() - startedAt
+    });
+    return success(result);
+  } catch (error) {
+    logError('getCustomerFormOptions', error);
+    logCustomerFormOptionsDiagnostic_({
+      requestId: requestId,
+      action: 'getCustomerFormOptions',
+      errorCode: error && error.message ? error.message : 'UNKNOWN_ERROR',
+      durationMs: Date.now() - startedAt
+    });
+    return fail(error && error.message ? error.message : 'Failed to load customer form options');
+  }
+}
+
+function getCustomerFormOptionsRequestId_(payload) {
+  const data = payload && typeof payload === 'object' ? payload : {};
+  const value = String(data.requestId || data.clientRequestId || '').trim();
+  return value ? value.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80) : '';
+}
+
+function sanitizeCustomerFormOptionsCachePart_(value) {
+  const text = String(value || '').trim() || 'none';
+  return text.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80);
+}
+
+function getCustomerFormOptionsCacheVersion_() {
+  try {
+    return PropertiesService.getScriptProperties().getProperty('CUSTOMER_FORM_OPTIONS_CACHE_VERSION') || '1';
+  } catch (error) {
+    return '1';
+  }
+}
+
+function bumpCustomerFormOptionsCacheVersion_() {
+  try {
+    PropertiesService.getScriptProperties().setProperty('CUSTOMER_FORM_OPTIONS_CACHE_VERSION', String(new Date().getTime()));
+  } catch (error) {
+    logWarning('bumpCustomerFormOptionsCacheVersion_', error && error.message ? error.message : String(error || 'cache version update failed'));
+  }
+}
+
+function getCustomerFormOptionsCacheKey_(actor, requestedArea) {
+  const user = actor && typeof actor === 'object' ? actor : {};
+  return [
+    'customerFormOptions',
+    getCustomerFormOptionsCacheVersion_(),
+    sanitizeCustomerFormOptionsCachePart_(user.userId || user.username || 'anonymous'),
+    sanitizeCustomerFormOptionsCachePart_(user.role || ''),
+    sanitizeCustomerFormOptionsCachePart_(getCustomerUserArea_(user)),
+    sanitizeCustomerFormOptionsCachePart_(requestedArea || '')
+  ].join(':');
+}
+
+function getRequestedCustomerFormOptionsArea_(payload, actor) {
+  const data = payload && typeof payload === 'object' ? payload : {};
+  const requestedArea = String(data.salesArea || data.area || '').trim();
+  if (!requestedArea) {
+    return success('');
+  }
+  const areaCheck = validateCustomerSalesAreaForActor_(actor, requestedArea);
+  if (!areaCheck.ok) {
+    return areaCheck;
+  }
+  return success(requestedArea);
+}
+
+function getAssignableSalesUsersForActor_(actor, users, requestedArea) {
+  const list = Array.isArray(users) ? users : [];
+  const actorArea = getCustomerUserArea_(actor);
+  const systemWide = isSystemWideCustomerUser_(actor);
+  const targetArea = String(requestedArea || '').trim();
+  return list.map(normalizeUserAccount).filter(function (user) {
+    if (!hasRole(user, [USER_ROLES.SALES])) return false;
+    if (user.status && user.status !== USER_STATUSES.ACTIVE) return false;
+    const userArea = String(user.area || user.branch || '').trim();
+    if (targetArea) {
+      return normalizeString(userArea) === normalizeString(targetArea);
+    }
+    if (systemWide) return true;
+    return actorArea && normalizeString(userArea) === normalizeString(actorArea);
+  }).map(function (user) {
+    return {
+      userId: String(user.userId || '').trim(),
+      username: String(user.username || '').trim(),
+      displayName: String(user.displayName || user.fullName || user.username || '').trim(),
+      fullName: String(user.fullName || '').trim(),
+      area: String(user.area || user.branch || '').trim(),
+      branch: String(user.branch || user.area || '').trim(),
+      role: String(user.role || '').trim()
+    };
+  });
+}
+
+function shouldUseCustomerFormArea_(area) {
+  const value = String(area || '').trim();
+  if (!value) return false;
+  return normalizeString(value) !== normalizeString('System');
+}
+
+function buildCustomerFormSalesAreas_(actor, scopedCustomers, salesUsers, requestedArea) {
+  const seen = {};
+  function add(area) {
+    const value = String(area || '').trim();
+    const key = normalizeString(value);
+    if (!shouldUseCustomerFormArea_(value) || seen[key]) return;
+    seen[key] = value;
+  }
+  if (!isSystemWideCustomerUser_(actor)) {
+    add(getCustomerUserArea_(actor));
+  }
+  add(requestedArea);
+  (Array.isArray(scopedCustomers) ? scopedCustomers : []).forEach(function (customer) {
+    add(customer && customer.salesArea);
+  });
+  (Array.isArray(salesUsers) ? salesUsers : []).forEach(function (user) {
+    add(user && (user.area || user.branch));
+  });
+  return Object.keys(seen).map(function (key) {
+    return seen[key];
+  }).sort(function (a, b) {
+    return String(a).localeCompare(String(b));
+  });
+}
+
+function countCustomerBrands_(customers) {
+  const brands = { weber: 0, gyproc: 0, both: 0, review: 0 };
+  (Array.isArray(customers) ? customers : []).forEach(function (customer) {
+    if (customer.sellsWeber && customer.sellsGyproc) brands.both += 1;
+    else if (customer.sellsWeber) brands.weber += 1;
+    else if (customer.sellsGyproc) brands.gyproc += 1;
+    else brands.review += 1;
+  });
+  return brands;
+}
+
+function sanitizeCustomerDiagnosticValue_(value) {
+  return String(value === null || value === undefined ? '' : value).replace(/[;\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+
+function logCustomerFormOptionsDiagnostic_(detail) {
+  try {
+    const data = detail && typeof detail === 'object' ? detail : {};
+    const actor = data.actor && typeof data.actor === 'object' ? data.actor : {};
+    const pairs = [
+      ['requestId', data.requestId],
+      ['action', data.action || 'getCustomerFormOptions'],
+      ['userId', actor.userId || actor.username],
+      ['role', actor.role],
+      ['salesArea', data.salesArea],
+      ['cache', data.cache],
+      ['rowCount', data.rowCount],
+      ['userRowCount', data.userRowCount],
+      ['salesUserCount', data.salesUserCount],
+      ['elapsedMs', data.durationMs],
+      ['errorCode', data.errorCode]
+    ];
+    Logger.log('[CUSTOMER_FORM_OPTIONS] ' + pairs.map(function (pair) {
+      return pair[0] + '=' + sanitizeCustomerDiagnosticValue_(pair[1]);
+    }).join(';'));
+  } catch (error) {
+    // Diagnostics must never break the business flow.
   }
 }
 
@@ -495,6 +736,9 @@ function validateCustomerSalesAreaForActor_(actor, salesArea) {
   const targetArea = String(salesArea || '').trim();
   if (!targetArea) {
     return validationError('salesArea is required');
+  }
+  if (normalizeString(targetArea) === normalizeString('System')) {
+    return validationError('salesArea must be a sales area, not System');
   }
   if (!actor) {
     return success(true);
@@ -641,9 +885,11 @@ function getCustomerBusinessTypeFromFlags_(sellsWeber, sellsGyproc) {
 
 function normalizeCustomerAssignedSales_(source) {
   const item = source && typeof source === 'object' ? source : {};
+  const snapshot = String(item.assignedSalesNameSnapshot || item.assignedSalesName || item.assignedSalesUsername || item.salesUsername || item.ownerUsername || '').trim();
   return {
     assignedSalesUserId: String(item.assignedSalesUserId || item.salesUserId || item.ownerUserId || '').trim(),
-    assignedSalesUsername: String(item.assignedSalesUsername || item.assignedSalesName || item.salesUsername || item.ownerUsername || '').trim()
+    assignedSalesUsername: String(item.assignedSalesUsername || item.salesUsername || item.ownerUsername || snapshot).trim(),
+    assignedSalesNameSnapshot: snapshot
   };
 }
 
@@ -699,7 +945,8 @@ function validateAssignedSalesForCustomer_(assignedSalesUserId, salesArea, assig
   }
   return success({
     assignedSalesUserId: assignedId,
-    assignedSalesUsername: String(user.username || '').trim()
+    assignedSalesUsername: String(user.username || '').trim(),
+    assignedSalesNameSnapshot: String(user.displayName || user.fullName || user.username || '').trim()
   });
 }
 
@@ -917,6 +1164,9 @@ function clearCustomerCaches_() {
   if (typeof clearSheetDataCache === 'function') {
     clearSheetDataCache(CUSTOMERS_SHEET);
   }
+  if (typeof bumpCustomerFormOptionsCacheVersion_ === 'function') {
+    bumpCustomerFormOptionsCacheVersion_();
+  }
 }
 
 function normalizeCustomerObject(row, rowNumber) {
@@ -971,6 +1221,7 @@ function normalizeCustomerObject(row, rowNumber) {
       area: salesArea,
       assignedSalesUserId: assigned.assignedSalesUserId,
       assignedSalesUsername: assigned.assignedSalesUsername,
+      assignedSalesNameSnapshot: assigned.assignedSalesNameSnapshot || assigned.assignedSalesUsername,
       sellsWeber: brandFlags.sellsWeber,
       sellsGyproc: brandFlags.sellsGyproc,
       brandReviewRequired: brandFlags.brandReviewRequired,

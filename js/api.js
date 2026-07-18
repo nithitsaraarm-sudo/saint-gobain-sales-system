@@ -1,4 +1,4 @@
-window.APP_VERSION = window.APP_VERSION || '0.5.3';
+window.APP_VERSION = window.APP_VERSION || '0.5.5';
 const APP_ENV = String(window.APP_ENV || 'production').trim().toLowerCase();
 const API_MOCK_MODE = APP_ENV === 'development';
 const GAS_WEB_APP_URL =
@@ -24,6 +24,10 @@ const READ_ACTIONS = [
   'getCustomers',
   'customer',
   'searchCustomers',
+  'getCustomerFilters',
+  'getAreas',
+  'getAssignableSalesUsers',
+  'getCustomerFormOptions',
   'products',
   'getProducts',
   'searchQuoteProducts',
@@ -140,12 +144,21 @@ function getRequestKey(action, payload) {
   if (payload && typeof payload === 'object' && payload.profileImageData) {
     return String(action || '').trim() + ':profileImage:' + String(payload.profileImageData || '').length;
   }
-  return String(action || '').trim() + JSON.stringify(payload || {});
+  const keyPayload = payload && typeof payload === 'object' && !Array.isArray(payload) ? Object.assign({}, payload) : payload;
+  if (keyPayload && typeof keyPayload === 'object' && !Array.isArray(keyPayload)) {
+    delete keyPayload.requestId;
+    delete keyPayload.clientRequestId;
+  }
+  return String(action || '').trim() + JSON.stringify(keyPayload || {});
 }
 
 function isApiTimingEnabled(action) {
-  const timedActions = ['bootstrap', 'products', 'getProducts', 'customers', 'getCustomers', 'getQuotationHistory', 'loadQuotation', 'discount', 'quotation', 'saveQuotation', 'updateQuotation'];
-  if (timedActions.indexOf(String(action || '').trim()) < 0) {
+  const timedActions = ['bootstrap', 'products', 'getProducts', 'customers', 'getCustomers', 'getCustomerFormOptions', 'getAssignableSalesUsers', 'getCustomerFilters', 'getAreas', 'getQuotationHistory', 'loadQuotation', 'discount', 'quotation', 'saveQuotation', 'updateQuotation'];
+  const normalizedAction = String(action || '').trim();
+  if (['getCustomerFormOptions', 'getAssignableSalesUsers', 'getCustomerFilters', 'getAreas'].indexOf(normalizedAction) >= 0) {
+    return true;
+  }
+  if (timedActions.indexOf(normalizedAction) < 0) {
     return false;
   }
   try {
@@ -157,13 +170,40 @@ function isApiTimingEnabled(action) {
   }
 }
 
-function withApiTiming(action, requestKey, requestPromise) {
-  if (!isApiTimingEnabled(action) || typeof console === 'undefined' || typeof console.time !== 'function') {
+function createApiRequestId(action) {
+  return String(action || 'api').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 30) + '-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 100000).toString(36);
+}
+
+function withApiTiming(action, requestKey, requestPromise, requestId) {
+  if (!isApiTimingEnabled(action) || typeof console === 'undefined') {
     return requestPromise;
   }
   const label = 'api:' + action + ':' + requestKey;
-  console.time(label);
-  return requestPromise.finally(function () {
+  const startedAt = Date.now();
+  if (typeof console.time === 'function') console.time(label);
+  if (typeof console.info === 'function') console.info('[API] start', { action: action, requestId: requestId, startTime: startedAt });
+  return requestPromise.then(function (response) {
+    if (typeof console.info === 'function') {
+      console.info('[API] end', {
+        action: action,
+        requestId: requestId,
+        elapsedMs: Date.now() - startedAt,
+        ok: !!(response && response.ok),
+        code: response && response.code || ''
+      });
+    }
+    return response;
+  }, function (error) {
+    if (typeof console.warn === 'function') {
+      console.warn('[API] error', {
+        action: action,
+        requestId: requestId,
+        elapsedMs: Date.now() - startedAt,
+        errorType: error && error.name || 'ERROR'
+      });
+    }
+    throw error;
+  }).finally(function () {
     if (typeof console !== 'undefined' && typeof console.timeEnd === 'function') {
       console.timeEnd(label);
     }
@@ -265,6 +305,8 @@ function callApi(action, payload) {
       if (token) body.sessionToken = token;
     } catch (error) {}
   }
+  if (!body.requestId) body.requestId = createApiRequestId(normalizedAction);
+  const requestId = body.requestId;
   const requestKey = getRequestKey(normalizedAction, body);
 
   if (API_MOCK_MODE) {
@@ -297,7 +339,7 @@ function callApi(action, payload) {
       return bootstrapApiPromise;
     }
     logApiDebug(normalizedAction, 'network');
-    bootstrapApiPromise = withApiTiming(normalizedAction, requestKey, runApiRequest(normalizedAction, body)).then(function (response) {
+    bootstrapApiPromise = withApiTiming(normalizedAction, requestKey, runApiRequest(normalizedAction, body), requestId).then(function (response) {
       if (response && response.ok) {
         bootstrapApiCache = response;
         setCache(CACHE_KEYS.bootstrap, response.data || {}, 15);
@@ -350,7 +392,7 @@ function callApi(action, payload) {
   }
 
   logApiDebug(normalizedAction, 'network');
-  pendingApiRequests[requestKey] = withApiTiming(normalizedAction, requestKey, runApiRequest(normalizedAction, body)).then(function (response) {
+  pendingApiRequests[requestKey] = withApiTiming(normalizedAction, requestKey, runApiRequest(normalizedAction, body), requestId).then(function (response) {
     if (normalizedAction === 'loadQuotation' && response && response.ok && response.data) {
       setCachedQuotation(getQuoteIdFromPayload(body), response.data);
     }
@@ -378,7 +420,7 @@ function apiJsonpGet(action, payload) {
       settled = true;
       removeScript();
       scheduleCallbackDelete();
-      resolve({ ok: false, message: 'API request timeout' });
+      resolve({ ok: false, code: 'TIMEOUT', message: 'API request timeout' });
     }, API_TIMEOUT_MS);
 
     function removeScript() {
@@ -412,11 +454,11 @@ function apiJsonpGet(action, payload) {
       if (timedOut) {
         return;
       }
-      finish(response || { ok: false, message: 'Empty API response' });
+      finish(response || { ok: false, code: 'EMPTY_RESPONSE', message: 'Empty API response' });
     };
 
     script.onerror = function () {
-      finish({ ok: false, message: 'API request failed' });
+      finish({ ok: false, code: 'NETWORK_ERROR', message: 'API request failed' });
     };
 
     script.src = GAS_WEB_APP_URL
@@ -518,6 +560,14 @@ function mockApi(action, payload) {
     case 'getSystemIdentitySettings':
       return { ok: true, data: mockPublicSettings(), message: 'Mock system identity loaded' };
     case 'customers':
+      return { ok: true, data: [] };
+    case 'getCustomerFormOptions':
+      return { ok: true, data: { salesAreas: ['Bangkok'], areas: ['Bangkok'], salesUsers: [], assignableSalesUsers: [], brandOptions: [{ value: 'WEBER', label: 'Weber' }, { value: 'GYPROC', label: 'Gyproc' }], permissions: { canViewAllAreas: true, actorArea: 'Bangkok' } } };
+    case 'getCustomerFilters':
+      return { ok: true, data: { areas: ['Bangkok'], brands: { weber: 0, gyproc: 0, both: 0, review: 0 }, assignableSalesUsers: [] } };
+    case 'getAreas':
+      return { ok: true, data: ['Bangkok'] };
+    case 'getAssignableSalesUsers':
       return { ok: true, data: [] };
     case 'products':
       return { ok: true, data: [] };

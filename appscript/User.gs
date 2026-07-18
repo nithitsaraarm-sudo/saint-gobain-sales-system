@@ -355,6 +355,9 @@ function createUser(payload) {
     };
     const insertResult = appendRow(getUsersSheetName(), row);
     if (!insertResult.ok) return insertResult;
+    if (typeof bumpCustomerFormOptionsCacheVersion_ === 'function') {
+      bumpCustomerFormOptionsCacheVersion_();
+    }
     logActivity(actor.userId || '', 'USER_CREATED', 'created user ' + row.username + ' as ' + row.role + ' area=' + row.area);
     return success(sanitizeUser(row), 'User created');
   } catch (error) {
@@ -438,6 +441,9 @@ function updateUser(payload) {
     }
     const result = updateRowById(getUsersSheetName(), 'userId', userId, updateObject);
     if (!result.ok) return result;
+    if (typeof bumpCustomerFormOptionsCacheVersion_ === 'function') {
+      bumpCustomerFormOptionsCacheVersion_();
+    }
     if ((newStatus !== USER_STATUSES.ACTIVE || passwordChanged) && typeof revokeUserSessions === 'function') {
       revokeUserSessions(userId);
     }
