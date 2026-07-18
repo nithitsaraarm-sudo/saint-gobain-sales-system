@@ -1,28 +1,92 @@
 const MAX_FAVORITE_CUSTOMERS = 5;
 
-function getFavoriteRows_() {
+function getFavoriteRows_(timing) {
+  const startedAt = Date.now();
   const result = getSheetData(getUserFavoriteCustomersSheetName());
-  return result.ok && Array.isArray(result.data) ? result.data : [];
+  const rows = result.ok && Array.isArray(result.data) ? result.data : [];
+  if (timing && typeof timing === 'object') {
+    timing.favoritesReadMs = Date.now() - startedAt;
+    timing.favoriteRows = rows.length;
+  }
+  return rows;
 }
 
 function getFavoriteCustomers(payload) {
+  const startedAt = Date.now();
+  const data = payload && typeof payload === 'object' ? payload : {};
+  const requestId = typeof getCustomerApiRequestId_ === 'function' ? getCustomerApiRequestId_(data) : '';
+  var authMs = Number(data._authMs || 0);
+  var favoritesReadMs = 0;
   try {
-    const auth = requireApiUser(payload);
-    if (!auth.ok) return auth;
+    const authStartedAt = Date.now();
+    const auth = data.currentUser ? success(data.currentUser) : requireApiUser(data);
+    if (!data.currentUser) {
+      authMs = Date.now() - authStartedAt;
+    }
+    if (!auth.ok) {
+      if (typeof logCustomerPerformance_ === 'function') {
+        logCustomerPerformance_({
+          requestId: requestId,
+          action: 'getFavoriteCustomers',
+          authMs: authMs,
+          totalMs: Date.now() - startedAt,
+          errorCode: auth.code || 'AUTH_FAILED'
+        });
+      }
+      return auth;
+    }
     const userId = String(auth.data.userId || '').trim();
-    const favoriteRows = getFavoriteRows_().filter(function (row) {
+    const favoriteTiming = {};
+    const favoriteRows = getFavoriteRows_(favoriteTiming).filter(function (row) {
       return String(row.userId || '').trim() === userId;
     }).sort(function (a, b) {
       return Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
     });
-    const customersResult = getCustomers({ currentUser: auth.data });
-    if (!customersResult.ok) return customersResult;
+    favoritesReadMs = favoriteTiming.favoritesReadMs || 0;
+    if (!favoriteRows.length) {
+      if (typeof logCustomerPerformance_ === 'function') {
+        logCustomerPerformance_({
+          requestId: requestId,
+          action: 'getFavoriteCustomers',
+          actor: auth.data,
+          authMs: authMs,
+          favoritesReadMs: favoritesReadMs,
+          favoriteRows: 0,
+          returnedRows: 0,
+          customersReadMs: 0,
+          transformMs: 0,
+          scopeFilterMs: 0,
+          totalMs: Date.now() - startedAt
+        });
+      }
+      return success([]);
+    }
+    const favoriteCustomerIds = favoriteRows.map(function (row) {
+      return String(row.customerId || '').trim();
+    }).filter(Boolean);
+    const customersResult = loadScopedActiveCustomers_(auth.data, { customerIds: favoriteCustomerIds });
+    if (!customersResult.ok) {
+      if (typeof logCustomerPerformance_ === 'function') {
+        logCustomerPerformance_({
+          requestId: requestId,
+          action: 'getFavoriteCustomers',
+          actor: auth.data,
+          authMs: authMs,
+          favoritesReadMs: favoritesReadMs,
+          totalMs: Date.now() - startedAt,
+          errorCode: customersResult.code || customersResult.message || 'CUSTOMERS_READ_FAILED'
+        });
+      }
+      return customersResult;
+    }
+    const customerMetrics = customersResult.data || {};
     const customerMap = {};
-    customersResult.data.forEach(function (customer) {
+    (Array.isArray(customerMetrics.customers) ? customerMetrics.customers : []).forEach(function (customer) {
       customerMap[String(customer.customerId || '').trim()] = customer;
     });
-    if (payload && payload.idsOnly) {
-      return success(favoriteRows.map(function (row) {
+    var output;
+    if (data && data.idsOnly) {
+      output = favoriteRows.map(function (row) {
         return {
           favoriteId: String(row.favoriteId || '').trim(),
           customerId: String(row.customerId || '').trim(),
@@ -30,9 +94,30 @@ function getFavoriteCustomers(payload) {
         };
       }).filter(function (row) {
         return row.customerId && customerMap[row.customerId];
-      }));
+      });
+      if (typeof logCustomerPerformance_ === 'function') {
+        logCustomerPerformance_({
+          requestId: requestId,
+          action: 'getFavoriteCustomers',
+          actor: auth.data,
+          authMs: authMs,
+          customersReadMs: customerMetrics.customersReadMs,
+          spreadsheetOpenMs: customerMetrics.spreadsheetOpenMs,
+          favoritesReadMs: favoritesReadMs,
+          scopeFilterMs: customerMetrics.scopeFilterMs,
+          transformMs: customerMetrics.transformMs,
+          cache: customerMetrics.cache,
+          totalRows: customerMetrics.totalRows,
+          candidateRows: customerMetrics.candidateRows,
+          visibleRows: customerMetrics.visibleRows,
+          favoriteRows: favoriteRows.length,
+          returnedRows: output.length,
+          totalMs: Date.now() - startedAt
+        });
+      }
+      return success(output);
     }
-    const favorites = favoriteRows.filter(function (row) {
+    output = favoriteRows.filter(function (row) {
       return customerMap[String(row.customerId || '').trim()];
     }).map(function (row) {
       return Object.assign({}, customerMap[String(row.customerId || '').trim()], {
@@ -40,9 +125,39 @@ function getFavoriteCustomers(payload) {
         sortOrder: Number(row.sortOrder || 0)
       });
     });
-    return success(favorites);
+    if (typeof logCustomerPerformance_ === 'function') {
+      logCustomerPerformance_({
+        requestId: requestId,
+        action: 'getFavoriteCustomers',
+        actor: auth.data,
+        authMs: authMs,
+        customersReadMs: customerMetrics.customersReadMs,
+        spreadsheetOpenMs: customerMetrics.spreadsheetOpenMs,
+        favoritesReadMs: favoritesReadMs,
+        scopeFilterMs: customerMetrics.scopeFilterMs,
+        transformMs: customerMetrics.transformMs,
+        cache: customerMetrics.cache,
+        totalRows: customerMetrics.totalRows,
+        candidateRows: customerMetrics.candidateRows,
+        visibleRows: customerMetrics.visibleRows,
+        favoriteRows: favoriteRows.length,
+        returnedRows: output.length,
+        totalMs: Date.now() - startedAt
+      });
+    }
+    return success(output);
   } catch (error) {
     logError('getFavoriteCustomers', error);
+    if (typeof logCustomerPerformance_ === 'function') {
+      logCustomerPerformance_({
+        requestId: requestId,
+        action: 'getFavoriteCustomers',
+        authMs: authMs,
+        favoritesReadMs: favoritesReadMs,
+        totalMs: Date.now() - startedAt,
+        errorCode: error && error.message ? error.message : 'UNKNOWN_ERROR'
+      });
+    }
     return fail(error && error.message ? error.message : 'Failed to load favorite customers');
   }
 }

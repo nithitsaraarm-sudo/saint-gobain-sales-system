@@ -151,10 +151,15 @@ function createPasswordSalt() {
 }
 
 function listUserAccounts() {
+  const startedAt = Date.now();
   const result = getSheetData(getUsersSheetName());
   if (!result.ok) return result;
   const users = Array.isArray(result.data) ? result.data.map(normalizeUserAccount) : [];
-  return success(users);
+  const response = success(users);
+  response.cacheHit = result.cacheHit;
+  response.spreadsheetOpenMs = result.spreadsheetOpenMs;
+  response.usersReadMs = Date.now() - startedAt;
+  return response;
 }
 
 function getUserByUsername(usernameOrEmail) {
