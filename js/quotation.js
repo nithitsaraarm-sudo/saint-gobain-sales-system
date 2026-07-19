@@ -8,6 +8,10 @@ const DISCOUNT_PROMISES = {};
 const QUOTATION_LOAD_CACHE = {};
 const QUOTATION_LOAD_PROMISES = {};
 const QUOTATION_LOAD_TTL_MS = 10 * 60 * 1000;
+const QUOTE_BRAND_LOGO_SOURCES = {
+  WEBER: 'images/weber-logo.png?v=0.5.8',
+  GYPROC: 'images/gyproc-logo.png?v=0.5.8'
+};
 let QUOTE_ITEM_SCROLL_SEQUENCE = 0;
 let QUOTE_ITEM_HIGHLIGHT_TIMER = null;
 let QUOTE_ITEM_PENDING_SCROLL_LINE_ID = '';
@@ -28,6 +32,56 @@ function getQuoteTypeLabel(value) {
 
 function getQuoteTypeClass(value) {
   return normalizeQuoteType(value) === 'GYPROC' ? 'gyproc' : 'weber';
+}
+
+function getQuoteBrandLogoSource(value) {
+  const type = normalizeQuoteType(value);
+  const configuredLogos = window.QUOTE_BRAND_LOGOS && typeof window.QUOTE_BRAND_LOGOS === 'object'
+    ? window.QUOTE_BRAND_LOGOS
+    : {};
+  return String(configuredLogos[type] || configuredLogos[type.toLowerCase()] || QUOTE_BRAND_LOGO_SOURCES[type] || '').trim();
+}
+
+function handleQuoteBrandLogoLoad(image) {
+  const logoWrap = image && image.closest ? image.closest('.quote-brand-logo-wrap,.quote-print-brand') : null;
+  if (logoWrap) {
+    logoWrap.classList.add('is-loaded');
+    logoWrap.classList.remove('is-fallback');
+  }
+}
+
+function handleQuoteBrandLogoError(image) {
+  const logoWrap = image && image.closest ? image.closest('.quote-brand-logo-wrap,.quote-print-brand') : null;
+  if (logoWrap) {
+    logoWrap.classList.add('is-fallback');
+    logoWrap.classList.remove('is-loaded');
+  }
+}
+
+function renderQuoteBrandSwitchContent(quoteType) {
+  const selected = isQuoteBusinessUnitSelected();
+  const label = selected ? getQuoteTypeLabel(quoteType) : 'เลือก BU';
+  const escapedLabel = escapeQuotationPrintHtml(label);
+  const caretHtml = '<span class="quote-type-caret" aria-hidden="true">▼</span>';
+  if (!selected) {
+    return `<span class="quote-brand-text">${escapedLabel}</span>${caretHtml}`;
+  }
+  const logoSrc = getQuoteBrandLogoSource(quoteType);
+  if (!logoSrc) {
+    return `<span class="quote-brand-text">${escapedLabel}</span>${caretHtml}`;
+  }
+  return `<span class="quote-brand-logo-wrap"><span class="quote-brand-fallback">${escapedLabel}</span><img class="quote-brand-logo" src="${escapeQuotationPrintHtml(logoSrc)}" alt="${escapedLabel}" loading="eager" decoding="async" onload="handleQuoteBrandLogoLoad(this)" onerror="handleQuoteBrandLogoError(this)"></span>${caretHtml}`;
+}
+
+function renderQuotationPrintBrandHtml(quoteType, fallbackLabel) {
+  const type = normalizeQuoteType(quoteType);
+  const label = fallbackLabel || getQuoteTypeLabel(type);
+  const escapedLabel = escapeQuotationPrintHtml(label);
+  const logoSrc = getQuoteBrandLogoSource(type);
+  if (!logoSrc) {
+    return `<p class="quote-type-subtitle">${escapedLabel} ▼</p>`;
+  }
+  return `<div class="quote-print-brand" aria-label="${escapedLabel}"><span class="quote-print-brand-fallback">${escapedLabel} ▼</span><img class="quote-print-brand-logo" src="${escapeQuotationPrintHtml(logoSrc)}" alt="${escapedLabel}" loading="eager" decoding="async" onload="handleQuoteBrandLogoLoad(this)" onerror="handleQuoteBrandLogoError(this)"></div>`;
 }
 
 function createQuotationSaveRequestId() {
@@ -331,6 +385,107 @@ function normalizeProductReferenceForCompare(value) {
   return normalizeProductReference(value).toLowerCase();
 }
 
+function cloneQuoteProductRecord(product) {
+  return Object.assign({}, product && typeof product === 'object' ? product : {});
+}
+
+function normalizeQuoteProductIdentityPart(value) {
+  return String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function normalizeQuoteProductIdentityPrice(value) {
+  const text = String(value ?? '').replace(/,/g, '').trim();
+  if (!text) return 'empty';
+  const numeric = Number(text);
+  if (!Number.isFinite(numeric)) return normalizeQuoteProductIdentityPart(value);
+  return String(Math.round(numeric * 1000000) / 1000000);
+}
+
+function getQuoteProductIdentityFirstValue(product, fields) {
+  const item = product && typeof product === 'object' ? product : {};
+  for (var i = 0; i < fields.length; i++) {
+    const value = item[fields[i]];
+    if (value !== undefined && value !== null && String(value).trim() !== '') return value;
+  }
+  return '';
+}
+
+function createFallbackQuoteProductIdentityKey(product) {
+  const item = product && typeof product === 'object' ? product : {};
+  return [
+    normalizeQuoteProductIdentityPart(getQuoteProductIdentityFirstValue(item, ['brand', 'businessUnit', 'productBusinessUnit', 'quoteType', 'bu'])),
+    normalizeQuoteProductIdentityPart(getQuoteProductIdentityFirstValue(item, ['productCode', 'sku', 'productId', 'id', 'itemCode'])),
+    normalizeQuoteProductIdentityPart(getQuoteProductIdentityFirstValue(item, ['productName', 'itemName', 'name'])),
+    normalizeQuoteProductIdentityPart(getQuoteProductIdentityFirstValue(item, ['originalSelectedUnit', 'masterUnit', 'unit', 'uom', 'unitName', 'salesUnit', 'quotedUnit'])),
+    normalizeQuoteProductIdentityPrice(getQuoteProductIdentityFirstValue(item, ['originalSelectedPrice', 'rawListPrice', 'rawPrice', 'masterListPrice', 'listPrice', 'price', 'unitListPrice', 'quotedListPrice'])),
+    normalizeQuoteProductIdentityPart(getQuoteProductIdentityFirstValue(item, ['priceType', 'priceListType'])),
+    normalizeQuoteProductIdentityPart(getQuoteProductIdentityFirstValue(item, ['priceList', 'priceListId', 'priceListName'])),
+    normalizeQuoteProductIdentityPart(getQuoteProductIdentityFirstValue(item, ['promotionId', 'promoId', 'promotionCode'])),
+    normalizeQuoteProductIdentityPart(getQuoteProductIdentityFirstValue(item, ['priceSource', 'priceListSource', 'promotionSource', 'promoText'])),
+    normalizeQuoteProductIdentityPart(getQuoteProductIdentityFirstValue(item, ['discountGroup', 'groupCode', 'group', 'category']))
+  ].join('|');
+}
+
+function getQuoteProductIdentityKey(product) {
+  const item = product && typeof product === 'object' ? product : {};
+  const explicitKey = normalizeProductReference(item.sourceProductIdentityKey || item.productIdentityKey);
+  if (explicitKey) return explicitKey;
+  const isQuoteLineSnapshot = Boolean(item.lineId || item.originalSelectedPrice !== undefined || item.sourceProductRecordKey || item.masterListPrice !== undefined);
+  if (!isQuoteLineSnapshot && typeof window !== 'undefined' && typeof window.createProductIdentityKey === 'function') {
+    return window.createProductIdentityKey(item);
+  }
+  return createFallbackQuoteProductIdentityKey(item);
+}
+
+function getQuoteProductRecordKeyFromReference(reference) {
+  if (reference && reference.currentTarget) {
+    const button = reference.currentTarget.closest ? reference.currentTarget.closest('[data-product-record-key],[data-product-id]') : reference.currentTarget;
+    return normalizeProductReference(button && button.dataset && (button.dataset.productRecordKey || button.dataset.sourceProductRecordKey));
+  }
+  if (reference && reference.target && reference.target.closest) {
+    const button = reference.target.closest('[data-product-record-key],[data-product-id]');
+    return normalizeProductReference(button && button.dataset && (button.dataset.productRecordKey || button.dataset.sourceProductRecordKey));
+  }
+  if (reference && typeof reference === 'object') {
+    const datasetKey = reference.dataset ? normalizeProductReference(reference.dataset.productRecordKey || reference.dataset.sourceProductRecordKey) : '';
+    return datasetKey || normalizeProductReference(reference.sourceProductRecordKey || reference.productRecordKey || reference.recordKey);
+  }
+  const text = normalizeProductReference(reference);
+  return text.indexOf('product-record:') === 0 ? text : '';
+}
+
+function resolveQuoteProductRecordSelection(recordKey) {
+  const key = normalizeProductReference(recordKey);
+  if (!key || typeof window === 'undefined' || typeof window.resolveProductRecordSelection !== 'function') return null;
+  const product = window.resolveProductRecordSelection(key);
+  return product ? cloneQuoteProductRecord(product) : null;
+}
+
+function buildResolvedProductRecord(product, matchedField, reference, recordKey) {
+  const item = cloneQuoteProductRecord(product);
+  const productIdentityKey = getQuoteProductIdentityKey(item);
+  if (recordKey) item.sourceProductRecordKey = recordKey;
+  if (productIdentityKey) item.sourceProductIdentityKey = productIdentityKey;
+  return {
+    ok: true,
+    product: item,
+    productId: getProductPrimaryKey(item),
+    matchedField: matchedField || '',
+    reference: reference || '',
+    recordKey: recordKey || '',
+    productIdentityKey: productIdentityKey
+  };
+}
+
+function isDirectProductObjectReference(reference) {
+  if (!reference || typeof reference !== 'object' || reference.currentTarget || reference.target || reference.dataset) return false;
+  const item = reference;
+  return ['productName', 'name', 'itemName', 'description', 'listPrice', 'price', 'rawListPrice', 'unit', 'uom', 'brand', 'businessUnit', 'productBusinessUnit', 'groupCode', 'discountGroup'].some(function (field) {
+    const value = item[field];
+    return value !== undefined && value !== null && String(value).trim() !== '';
+  });
+}
+
 function getProductPrimaryKey(product) {
   const item = product && typeof product === 'object' ? product : {};
   for (var i = 0; i < PRODUCT_REFERENCE_FIELDS.length; i++) {
@@ -347,14 +502,29 @@ function collectProductReferences(reference) {
     if (text && values.indexOf(text) < 0) values.push(text);
   };
   if (reference && reference.currentTarget) {
-    const button = reference.currentTarget.closest ? reference.currentTarget.closest('[data-product-id]') : reference.currentTarget;
-    add(button && button.dataset ? button.dataset.productId : '');
+    const button = reference.currentTarget.closest ? reference.currentTarget.closest('[data-product-record-key],[data-product-id]') : reference.currentTarget;
+    if (button && button.dataset) {
+      add(button.dataset.productRecordKey);
+      add(button.dataset.sourceProductRecordKey);
+      add(button.dataset.productId);
+    }
   } else if (reference && reference.target && reference.target.closest) {
-    const button = reference.target.closest('[data-product-id]');
-    add(button && button.dataset ? button.dataset.productId : '');
+    const button = reference.target.closest('[data-product-record-key],[data-product-id]');
+    if (button && button.dataset) {
+      add(button.dataset.productRecordKey);
+      add(button.dataset.sourceProductRecordKey);
+      add(button.dataset.productId);
+    }
   } else if (reference && typeof reference === 'object') {
+    add(reference.sourceProductRecordKey);
+    add(reference.productRecordKey);
+    add(reference.recordKey);
     PRODUCT_REFERENCE_FIELDS.forEach(field => add(reference[field]));
-    if (reference.dataset) add(reference.dataset.productId);
+    if (reference.dataset) {
+      add(reference.dataset.productRecordKey);
+      add(reference.dataset.sourceProductRecordKey);
+      add(reference.dataset.productId);
+    }
   } else {
     add(reference);
   }
@@ -367,6 +537,16 @@ function isProductActiveForQuote(product) {
 }
 
 function resolveProductByReference(reference) {
+  const recordKey = getQuoteProductRecordKeyFromReference(reference);
+  if (recordKey) {
+    const registeredProduct = resolveQuoteProductRecordSelection(recordKey);
+    if (registeredProduct) {
+      return buildResolvedProductRecord(registeredProduct, 'recordKey', recordKey, recordKey);
+    }
+  }
+  if (isDirectProductObjectReference(reference)) {
+    return buildResolvedProductRecord(reference, 'object', getProductPrimaryKey(reference), recordKey);
+  }
   const products = Array.isArray(DB && DB.products) ? DB.products : [];
   if (!products.length) {
     return { ok: false, code: 'PRODUCT_DATA_NOT_READY', references: collectProductReferences(reference) };
@@ -381,7 +561,7 @@ function resolveProductByReference(reference) {
       const normalizedRef = normalizeProductReferenceForCompare(references[refIndex]);
       const product = products.find(item => normalizeProductReferenceForCompare(item && item[field]) === normalizedRef);
       if (product) {
-        return { ok: true, product: product, productId: getProductPrimaryKey(product), matchedField: field, reference: references[refIndex] };
+        return buildResolvedProductRecord(product, field, references[refIndex], '');
       }
     }
   }
@@ -394,6 +574,12 @@ function normalizeQuoteProductKey(value) {
 
 function getQuoteProductKey(productOrLine) {
   const item = productOrLine && typeof productOrLine === 'object' ? productOrLine : {};
+  if (productOrLine && typeof productOrLine === 'object') {
+    const identityKey = getQuoteProductIdentityKey(item);
+    if (identityKey && identityKey.replace(/\|/g, '').trim()) {
+      return normalizeQuoteProductKey(identityKey);
+    }
+  }
   return normalizeQuoteProductKey(getProductPrimaryKey(item) || item.productId || item.productCode || item.sku || productOrLine);
 }
 
@@ -757,6 +943,12 @@ function logQuoteProductAddEvent(eventName, detail) {
       productId: detail && detail.productId || '',
       productCode: detail && detail.productCode || detail && detail.productId || '',
       productBusinessUnit: detail && detail.productBusinessUnit || '',
+      productRecordKey: detail && detail.productRecordKey || '',
+      productIdentityKey: detail && detail.productIdentityKey || '',
+      selectedPrice: detail && detail.selectedPrice !== undefined ? detail.selectedPrice : '',
+      selectedUnit: detail && detail.selectedUnit || '',
+      matchedField: detail && detail.matchedField || '',
+      duplicateDecision: detail && detail.duplicateDecision || '',
       isFreeItem: Boolean(detail && detail.isFreeItem),
       result: detail && detail.result || ''
     });
@@ -765,30 +957,35 @@ function logQuoteProductAddEvent(eventName, detail) {
 
 async function addProductToQuoteByReference(reference, source, qty) {
   const event = reference && (reference.currentTarget || reference.target) ? reference : null;
-  const button = event && event.target && event.target.closest ? event.target.closest('[data-product-id]') : null;
+  const button = event && event.target && event.target.closest ? event.target.closest('[data-product-record-key],[data-product-id]') : null;
   if (event && typeof event.preventDefault === 'function') event.preventDefault();
   if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
   const productSource = normalizeProductReference((source || (button && button.dataset && button.dataset.productSource) || 'SEARCH')).toUpperCase();
-  const productReference = button && button.dataset ? button.dataset.productId : reference;
+  const productReference = button && button.dataset ? {
+    productRecordKey: button.dataset.productRecordKey,
+    sourceProductRecordKey: button.dataset.productRecordKey,
+    productId: button.dataset.productId
+  } : reference;
+  const recordKey = button && button.dataset ? normalizeProductReference(button.dataset.productRecordKey) : getQuoteProductRecordKeyFromReference(productReference);
   const references = collectProductReferences(productReference);
-  const lockKey = productSource + ':' + (references[0] || '');
+  const lockKey = productSource + ':' + (recordKey || references[0] || '');
   if (lockKey !== ':' && PRODUCT_ADD_IN_PROGRESS_KEYS.has(lockKey)) {
     return { ok: false, code: 'PRODUCT_ADD_IN_PROGRESS' };
   }
   if (lockKey !== ':') PRODUCT_ADD_IN_PROGRESS_KEYS.add(lockKey);
   if (button) button.disabled = true;
-  logQuoteProductAddEvent(productSource + '_PRODUCT_ADD_REQUESTED', { source: productSource, reference: references[0] || '', result: 'requested' });
+  logQuoteProductAddEvent(productSource + '_PRODUCT_ADD_REQUESTED', { source: productSource, reference: references[0] || '', productRecordKey: recordKey, result: 'requested' });
   try {
     const result = await requestAddProductToQuote(productReference, productSource, qty || 1);
     if (document.getElementById('page-quote') && !document.getElementById('page-quote').classList.contains('active') && typeof go === 'function') {
       go('quote');
     }
-    logQuoteProductAddEvent('PRODUCT_ADD_FLOW_COMPLETED', Object.assign({ source: productSource, reference: references[0] || '' }, result || {}, { result: result && result.ok === false ? 'failed' : 'ok' }));
+    logQuoteProductAddEvent('PRODUCT_ADD_FLOW_COMPLETED', Object.assign({ source: productSource, reference: references[0] || '', productRecordKey: recordKey }, result || {}, { result: result && result.ok === false ? 'failed' : 'ok' }));
     return result || { ok: true };
   } catch (error) {
     const failed = { ok: false, code: 'PRODUCT_ADD_FAILED', message: error && error.message ? error.message : String(error || '') };
     toastProductAddError(failed);
-    logQuoteProductAddEvent('PRODUCT_ADD_FAILED', { source: productSource, reference: references[0] || '', result: failed.code });
+    logQuoteProductAddEvent('PRODUCT_ADD_FAILED', { source: productSource, reference: references[0] || '', productRecordKey: recordKey, result: failed.code });
     return failed;
   } finally {
     if (button) button.disabled = false;
@@ -862,6 +1059,16 @@ function syncQuoteLineSnapshot(item) {
   item.masterUnit = masterUnit;
   item.quotedUnit = quotedUnit;
   item.unit = quotedUnit;
+  if (item.originalSelectedPrice === undefined || item.originalSelectedPrice === null || String(item.originalSelectedPrice).trim() === '') {
+    item.originalSelectedPrice = masterListPrice;
+  }
+  if (item.originalSelectedUnit === undefined || item.originalSelectedUnit === null || String(item.originalSelectedUnit).trim() === '') {
+    item.originalSelectedUnit = masterUnit;
+  }
+  if (!normalizeProductReference(item.sourceProductIdentityKey)) {
+    const identitySource = Object.assign({}, item, { sourceProductIdentityKey: '' });
+    item.sourceProductIdentityKey = getQuoteProductIdentityKey(identitySource);
+  }
   item.priceOverridden = Boolean(item.priceOverridden) || (masterListPrice > 0 && quotedListPrice > 0 && roundValue(masterListPrice) !== roundValue(quotedListPrice)) || (masterListPrice <= 0 && quotedListPrice > 0);
   item.unitOverridden = Boolean(item.unitOverridden) || (masterUnit && quotedUnit && normalizeProductReferenceForCompare(masterUnit) !== normalizeProductReferenceForCompare(quotedUnit));
   return item;
@@ -955,6 +1162,8 @@ function createCartLine(product, qty, discountPercent, options) {
   const quotedListPrice = opts.quotedListPrice !== undefined ? roundValue(toPriceNumber(opts.quotedListPrice)) : masterListPrice;
   const masterUnit = getQuoteMasterUnit(product);
   const quotedUnit = sanitizeQuoteUnit(opts.quotedUnit || masterUnit);
+  const sourceProductRecordKey = normalizeProductReference(opts.sourceProductRecordKey || product.sourceProductRecordKey || product.productRecordKey || product.recordKey);
+  const sourceProductIdentityKey = normalizeProductReference(opts.sourceProductIdentityKey || getQuoteProductIdentityKey(product));
   return recalcLineItem({
     lineId: createLineId(),
     productId: getProductId(product),
@@ -967,6 +1176,14 @@ function createCartLine(product, qty, discountPercent, options) {
     masterUnit: masterUnit,
     quotedUnit: quotedUnit,
     qty: Number(qty || 1),
+    sourceProductRecordKey: sourceProductRecordKey,
+    sourceProductIdentityKey: sourceProductIdentityKey,
+    originalSelectedPrice: masterListPrice,
+    originalSelectedUnit: masterUnit,
+    priceType: String(product.priceType || product.priceListType || '').trim(),
+    priceList: String(product.priceList || product.priceListId || product.priceListName || '').trim(),
+    promotionId: String(product.promotionId || product.promoId || product.promotionCode || '').trim(),
+    priceSource: String(product.priceSource || product.priceListSource || product.promotionSource || product.promoText || '').trim(),
     masterListPrice: masterListPrice,
     quotedListPrice: quotedListPrice,
     listPrice: quotedListPrice,
@@ -1085,10 +1302,14 @@ async function appendPaidQuoteLine(product, qty, source, options) {
     productId: line.productId,
     productCode: line.productCode,
     productBusinessUnit: line.productBusinessUnit,
+    productRecordKey: line.sourceProductRecordKey,
+    productIdentityKey: line.sourceProductIdentityKey,
+    selectedPrice: line.originalSelectedPrice,
+    selectedUnit: line.masterUnit,
     isFreeItem: false,
     result: 'created'
   });
-  return { ok: true, code: 'QUOTE_PAID_PRODUCT_ADDED', productId: line.productId, productCode: line.productCode, lineId: line.lineId, isFreeItem: false, updatedExisting: false };
+  return { ok: true, code: 'QUOTE_PAID_PRODUCT_ADDED', productId: line.productId, productCode: line.productCode, lineId: line.lineId, productRecordKey: line.sourceProductRecordKey, productIdentityKey: line.sourceProductIdentityKey, isFreeItem: false, updatedExisting: false };
 }
 
 function appendFreeQuoteLine(product, qty, source) {
@@ -1104,10 +1325,14 @@ function appendFreeQuoteLine(product, qty, source) {
     productId: line.productId,
     productCode: line.productCode,
     productBusinessUnit: line.productBusinessUnit,
+    productRecordKey: line.sourceProductRecordKey,
+    productIdentityKey: line.sourceProductIdentityKey,
+    selectedPrice: line.originalSelectedPrice,
+    selectedUnit: line.masterUnit,
     isFreeItem: true,
     result: 'created'
   });
-  return { ok: true, code: 'QUOTE_FREE_PRODUCT_ADDED', productId: line.productId, productCode: line.productCode, lineId: line.lineId, isFreeItem: true, updatedExisting: false };
+  return { ok: true, code: 'QUOTE_FREE_PRODUCT_ADDED', productId: line.productId, productCode: line.productCode, lineId: line.lineId, productRecordKey: line.sourceProductRecordKey, productIdentityKey: line.sourceProductIdentityKey, isFreeItem: true, updatedExisting: false };
 }
 
 async function requestAddProductToQuote(productReference, source, qty) {
@@ -1124,20 +1349,22 @@ async function requestAddProductToQuote(productReference, source, qty) {
   const resolved = resolveProductByReference(productReference);
   if (!resolved.ok) {
     toastProductAddError(resolved);
-    logQuoteProductAddEvent('PRODUCT_REFERENCE_NOT_FOUND', { source: productSource, reference: collectProductReferences(productReference)[0] || '', result: resolved.code });
+    logQuoteProductAddEvent('PRODUCT_REFERENCE_NOT_FOUND', { source: productSource, reference: collectProductReferences(productReference)[0] || '', productRecordKey: getQuoteProductRecordKeyFromReference(productReference), result: resolved.code });
     return resolved;
   }
   const product = resolved.product;
+  const productIdentityKey = resolved.productIdentityKey || getQuoteProductIdentityKey(product);
+  const productRecordKey = resolved.recordKey || getQuoteProductRecordKeyFromReference(productReference);
   if (!isProductActiveForQuote(product)) {
     const inactive = { ok: false, code: 'PRODUCT_INACTIVE', product: product, productId: resolved.productId };
     toastProductAddError(inactive);
-    logQuoteProductAddEvent('PRODUCT_ADD_FAILED', { source: productSource, reference: resolved.reference, productId: resolved.productId, productBusinessUnit: getProductBusinessUnitClient(product), result: inactive.code });
+    logQuoteProductAddEvent('PRODUCT_ADD_FAILED', { source: productSource, reference: resolved.reference, productId: resolved.productId, productRecordKey: productRecordKey, productIdentityKey: productIdentityKey, productBusinessUnit: getProductBusinessUnitClient(product), selectedPrice: getQuoteMasterListPrice(product), selectedUnit: getQuoteMasterUnit(product), matchedField: resolved.matchedField, result: inactive.code });
     return inactive;
   }
   if (!(await ensureQuoteReadyForProductAdd())) {
     return { ok: false, code: 'PRODUCT_ADD_FAILED' };
   }
-  logQuoteProductAddEvent('PRODUCT_REFERENCE_RESOLVED', { source: productSource, reference: resolved.reference, productId: resolved.productId, productBusinessUnit: getProductBusinessUnitClient(product), result: 'resolved' });
+  logQuoteProductAddEvent('PRODUCT_REFERENCE_RESOLVED', { source: productSource, reference: resolved.reference, productId: resolved.productId, productCode: product.productCode || product.sku || product.productId || '', productRecordKey: productRecordKey, productIdentityKey: productIdentityKey, productBusinessUnit: getProductBusinessUnitClient(product), selectedPrice: getQuoteMasterListPrice(product), selectedUnit: getQuoteMasterUnit(product), matchedField: resolved.matchedField, result: 'resolved' });
   ensureCartLineIdentityAndOrder();
   const state = getQuoteProductLineState(product);
   if (!state.paidLine && !state.freeLine) {
@@ -1151,25 +1378,25 @@ async function requestAddProductToQuote(productReference, source, qty) {
     return appendPaidQuoteLine(product, 1, productSource, priceOptions);
   }
   if (state.paidLine && !state.freeLine) {
-    logQuoteProductAddEvent('QUOTE_DUPLICATE_PRODUCT_DETECTED', { source: productSource, productId: resolved.productId, isFreeItem: false, lineId: state.paidLine.lineId, result: 'paid_exists' });
+    logQuoteProductAddEvent('QUOTE_DUPLICATE_PRODUCT_DETECTED', { source: productSource, productId: resolved.productId, productRecordKey: productRecordKey, productIdentityKey: productIdentityKey, selectedPrice: getQuoteMasterListPrice(product), selectedUnit: getQuoteMasterUnit(product), duplicateDecision: 'paid_exists', isFreeItem: false, lineId: state.paidLine.lineId, result: 'paid_exists' });
     const decision = await showAddFreeItemConfirmation(product);
     if (decision !== 'FREE') {
-      logQuoteProductAddEvent('QUOTE_DUPLICATE_PRODUCT_ADD_CANCELLED', { source: productSource, productId: resolved.productId, isFreeItem: true, result: 'cancelled' });
-      return { ok: false, code: 'DUPLICATE_PAID_PRODUCT_LINE', productId: resolved.productId, lineId: state.paidLine.lineId, cancelled: true };
+      logQuoteProductAddEvent('QUOTE_DUPLICATE_PRODUCT_ADD_CANCELLED', { source: productSource, productId: resolved.productId, productRecordKey: productRecordKey, productIdentityKey: productIdentityKey, duplicateDecision: 'free_item_cancelled', isFreeItem: true, result: 'cancelled' });
+      return { ok: false, code: 'DUPLICATE_PAID_PRODUCT_LINE', productId: resolved.productId, productRecordKey: productRecordKey, productIdentityKey: productIdentityKey, lineId: state.paidLine.lineId, cancelled: true };
     }
     if (hasFreeLine(product)) {
       toast(QUOTE_PRODUCT_ADD_MESSAGES.DUPLICATE_FREE_PRODUCT_LINE);
-      return { ok: false, code: 'DUPLICATE_FREE_PRODUCT_LINE', productId: resolved.productId };
+      return { ok: false, code: 'DUPLICATE_FREE_PRODUCT_LINE', productId: resolved.productId, productRecordKey: productRecordKey, productIdentityKey: productIdentityKey };
     }
     return appendFreeQuoteLine(product, 1, productSource);
   }
-  logQuoteProductAddEvent('QUOTE_DUPLICATE_PRODUCT_DETECTED', { source: productSource, productId: resolved.productId, isFreeItem: true, lineId: state.freeLine && state.freeLine.lineId, result: 'both_exist' });
+  logQuoteProductAddEvent('QUOTE_DUPLICATE_PRODUCT_DETECTED', { source: productSource, productId: resolved.productId, productRecordKey: productRecordKey, productIdentityKey: productIdentityKey, selectedPrice: getQuoteMasterListPrice(product), selectedUnit: getQuoteMasterUnit(product), duplicateDecision: 'both_exist', isFreeItem: true, lineId: state.freeLine && state.freeLine.lineId, result: 'both_exist' });
   const choice = await showProductAlreadyHasBothModal(product);
   if (choice === 'GO_TO_CART') {
     scheduleScrollToAddedItem((state.paidLine || state.freeLine).lineId);
   }
   toast(QUOTE_PRODUCT_ADD_MESSAGES.DUPLICATE_BOTH_PRODUCT_LINES);
-  return { ok: false, code: 'DUPLICATE_BOTH_PRODUCT_LINES', productId: resolved.productId, lineId: (state.paidLine || state.freeLine).lineId };
+  return { ok: false, code: 'DUPLICATE_BOTH_PRODUCT_LINES', productId: resolved.productId, productRecordKey: productRecordKey, productIdentityKey: productIdentityKey, lineId: (state.paidLine || state.freeLine).lineId };
 }
 
 async function saveQuote() {
@@ -1802,8 +2029,8 @@ function renderQuoteMeta() {
   const quoteNo = CURRENT_QUOTE.quoteNo || CURRENT_QUOTE.quoteId || 'ยังไม่บันทึก';
   const status = CURRENT_QUOTE.status || 'DRAFT';
   const quoteType = normalizeQuoteType(CURRENT_QUOTE.quoteType || CURRENT_QUOTE.businessUnit || CURRENT_QUOTE_TYPE);
-  const typeText = isQuoteBusinessUnitSelected() ? getQuoteTypeLabel(quoteType) + ' ▼' : 'เลือก BU ▼';
-  meta.innerHTML = `<button type="button" class="quote-type-switch ${getQuoteTypeClass(quoteType)}" onclick="openQuoteTypeModal()">${typeText}</button><span>เลขที่ใบเสนอราคา: <b>${quoteNo}</b></span><span>สถานะ: <b>${status}</b></span>`;
+  const typeContent = renderQuoteBrandSwitchContent(quoteType);
+  meta.innerHTML = `<button type="button" class="quote-type-switch ${getQuoteTypeClass(quoteType)}" onclick="openQuoteTypeModal()" aria-label="เลือกแบรนด์ ${escapeQuotationPrintHtml(getQuoteTypeLabel(quoteType))}">${typeContent}</button><span>เลขที่ใบเสนอราคา: <b>${quoteNo}</b></span><span>สถานะ: <b>${status}</b></span>`;
 }
 
 function buildQuotationPayload(status) {
@@ -1838,6 +2065,10 @@ function buildQuotationPayload(status) {
         priceOverridden: Boolean(item.priceOverridden),
         unitOverridden: Boolean(item.unitOverridden),
         overrideReason: item.overrideReason || '',
+        priceType: item.priceType || '',
+        priceList: item.priceList || '',
+        promotionId: item.promotionId || '',
+        priceSource: item.priceSource || '',
         updatedAt: item.updatedAt || '',
         updatedBy: item.updatedBy || '',
         discountPercent: item.discountPercent,
@@ -1980,6 +2211,14 @@ function applyLoadedQuotationResponse(response, fallbackQuoteId) {
       masterUnit: masterUnit,
       quotedUnit: quotedUnit,
       qty: Number(String(line.qty || 0).replace(/,/g, '')),
+      sourceProductRecordKey: String(line.sourceProductRecordKey || line.productRecordKey || '').trim(),
+      sourceProductIdentityKey: String(line.sourceProductIdentityKey || line.productIdentityKey || '').trim(),
+      originalSelectedPrice: roundValue(toPriceNumber(line.originalSelectedPrice !== undefined ? line.originalSelectedPrice : masterListPrice)),
+      originalSelectedUnit: sanitizeQuoteUnit(line.originalSelectedUnit || masterUnit),
+      priceType: String(line.priceType || line.priceListType || '').trim(),
+      priceList: String(line.priceList || line.priceListId || line.priceListName || '').trim(),
+      promotionId: String(line.promotionId || line.promoId || line.promotionCode || '').trim(),
+      priceSource: String(line.priceSource || line.priceListSource || line.promotionSource || '').trim(),
       masterListPrice: masterListPrice,
       quotedListPrice: quotedListPrice,
       listPrice: quotedListPrice,
@@ -2141,7 +2380,7 @@ function buildQuotationPrintHtml(data) {
     <header class="print-doc-header">
       <div class="print-doc-title">
         <h1>ใบเสนอราคา</h1>
-        <p class="quote-type-subtitle">${escapeQuotationPrintHtml(quoteTypeLabel)} ▼</p>
+        ${renderQuotationPrintBrandHtml(quote.quoteType || quote.businessUnit || CURRENT_QUOTE.quoteType || CURRENT_QUOTE_TYPE, quoteTypeLabel)}
         ${businessUnitsHtml}
       </div>
       <div class="print-doc-meta">
@@ -2271,7 +2510,7 @@ function buildQuotationFullHeaderHtml(ctx) {
   return `<header class="print-doc-header">
     <div class="print-doc-title">
       <h1>ใบเสนอราคา</h1>
-      <p class="quote-type-subtitle">${escapeQuotationPrintHtml(ctx.quoteTypeLabel || 'Weber')} ▼</p>
+      ${renderQuotationPrintBrandHtml(ctx.quoteType, ctx.quoteTypeLabel || 'Weber')}
       ${businessUnitsHtml}
     </div>
     <div class="print-doc-meta">
@@ -2463,6 +2702,44 @@ function buildQuotationPrintHtmlPaginated(data) {
   }).join('');
 }
 
+function waitForQuotationPrintImages(documentNode) {
+  const root = documentNode && typeof documentNode.querySelectorAll === 'function' ? documentNode : null;
+  if (!root) {
+    return Promise.resolve();
+  }
+  const images = Array.prototype.slice.call(root.querySelectorAll('img.quote-print-brand-logo'));
+  if (!images.length) {
+    return Promise.resolve();
+  }
+  return Promise.all(images.map(image => new Promise(resolve => {
+    if (image.complete) {
+      if (image.naturalWidth > 0) {
+        handleQuoteBrandLogoLoad(image);
+      } else {
+        handleQuoteBrandLogoError(image);
+      }
+      resolve();
+      return;
+    }
+    const done = function () {
+      image.removeEventListener('load', onLoad);
+      image.removeEventListener('error', onError);
+      resolve();
+    };
+    const onLoad = function () {
+      handleQuoteBrandLogoLoad(image);
+      done();
+    };
+    const onError = function () {
+      handleQuoteBrandLogoError(image);
+      done();
+    };
+    image.addEventListener('load', onLoad, { once: true });
+    image.addEventListener('error', onError, { once: true });
+    setTimeout(done, 1500);
+  }))).then(() => undefined);
+}
+
 async function prepareQuotationPrintPreview(quoteId, showPreview) {
   const id = String(quoteId || '').trim();
   let response = null;
@@ -2485,6 +2762,7 @@ async function prepareQuotationPrintPreview(quoteId, showPreview) {
   toast('กำลังจัดหน้าเอกสาร...');
   documentNode.innerHTML = buildQuotationPrintHtmlPaginated(printData || {});
   documentNode.dataset.quoteNo = getQuotationPrintId(printData || {});
+  await waitForQuotationPrintImages(documentNode);
   preview.classList.toggle('hidden', !showPreview);
   preview.classList.toggle('is-open', Boolean(showPreview));
   document.body.classList.toggle('print-preview-open', Boolean(showPreview));
@@ -2557,6 +2835,7 @@ async function captureQuotationSheet(documentNode) {
   documentNode.style.setProperty('height', '297mm', 'important');
   documentNode.style.setProperty('min-height', '297mm', 'important');
   try {
+    await waitForQuotationPrintImages(documentNode);
     return await html2canvas(documentNode, {
       scale: 3,
       backgroundColor: '#ffffff',

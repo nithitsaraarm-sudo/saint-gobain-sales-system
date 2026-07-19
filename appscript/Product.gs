@@ -407,6 +407,7 @@ function normalizeProductObject(row) {
   const itemDesc = String(source.itemDesc || '').trim();
   const groupCode = String(source.groupCode || '').trim();
   const listPrice = parseProductListPrice(source.listPrice);
+  const rawListPrice = source.rawListPrice !== undefined ? source.rawListPrice : (source.listPrice !== undefined ? source.listPrice : source.price);
 
   return Object.assign({}, source, {
     id: productId,
@@ -421,6 +422,7 @@ function normalizeProductObject(row) {
     group: groupCode,
     category: groupCode,
     unit: String(source.unit || '').trim(),
+    rawListPrice: String(rawListPrice === null || rawListPrice === undefined ? '' : rawListPrice).trim(),
     listPrice: listPrice,
     productBusinessUnit: getProductBusinessUnit(source),
     businessUnit: getProductBusinessUnit(source),
@@ -429,6 +431,199 @@ function normalizeProductObject(row) {
     notes: String(source.notes || '').trim(),
     promoText: String(source.promoText || '').trim()
   });
+}
+
+function normalizeProductIdentityText_(value) {
+  return String(value === null || value === undefined ? '' : value).trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function normalizeProductIdentityPrice_(value) {
+  const text = String(value === null || value === undefined ? '' : value).replace(/,/g, '').trim();
+  if (!text) return 'empty';
+  const numeric = Number(text);
+  if (isNaN(numeric)) return normalizeProductIdentityText_(value);
+  return String(Math.round(numeric * 1000000) / 1000000);
+}
+
+function getProductIdentityValue_(product, fields) {
+  const item = product && typeof product === 'object' ? product : {};
+  for (var i = 0; i < fields.length; i++) {
+    const value = item[fields[i]];
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      return value;
+    }
+  }
+  return '';
+}
+
+function createProductIdentityKey(product) {
+  const item = product && typeof product === 'object' ? product : {};
+  return [
+    normalizeProductIdentityText_(getProductIdentityValue_(item, ['brand', 'businessUnit', 'productBusinessUnit', 'quoteType', 'bu'])),
+    normalizeProductIdentityText_(getProductIdentityValue_(item, ['productCode', 'sku', 'productId', 'id', 'itemCode'])),
+    normalizeProductIdentityText_(getProductIdentityValue_(item, ['productName', 'itemName', 'name'])),
+    normalizeProductIdentityText_(getProductIdentityValue_(item, ['unit', 'uom', 'unitName', 'salesUnit'])),
+    normalizeProductIdentityPrice_(getProductIdentityValue_(item, ['rawListPrice', 'rawPrice', 'listPrice', 'price', 'unitListPrice', 'masterListPrice'])),
+    normalizeProductIdentityText_(getProductIdentityValue_(item, ['priceType', 'priceListType'])),
+    normalizeProductIdentityText_(getProductIdentityValue_(item, ['priceList', 'priceListId', 'priceListName'])),
+    normalizeProductIdentityText_(getProductIdentityValue_(item, ['promotionId', 'promoId', 'promotionCode'])),
+    normalizeProductIdentityText_(getProductIdentityValue_(item, ['priceSource', 'priceListSource', 'promotionSource', 'promoText'])),
+    normalizeProductIdentityText_(getProductIdentityValue_(item, ['discountGroup', 'groupCode', 'group', 'category']))
+  ].join('|');
+}
+
+function getProductCompletenessScore_(product, headers) {
+  const item = product && typeof product === 'object' ? product : {};
+  const list = Array.isArray(headers) && headers.length ? headers : Object.keys(item);
+  return list.reduce(function (score, field) {
+    return score + (item[field] !== undefined && item[field] !== null && String(item[field]).trim() !== '' ? 1 : 0);
+  }, 0);
+}
+
+function dedupeExactProducts(products) {
+  const list = Array.isArray(products) ? products : [];
+  const result = [];
+  const byKey = {};
+  list.forEach(function (product) {
+    const item = product && typeof product === 'object' ? product : {};
+    const key = createProductIdentityKey(item);
+    if (!key.replace(/\|/g, '')) {
+      result.push(item);
+      return;
+    }
+    if (!byKey[key]) {
+      byKey[key] = { index: result.length, product: item };
+      result.push(item);
+      return;
+    }
+    if (getProductCompletenessScore_(item) > getProductCompletenessScore_(byKey[key].product)) {
+      byKey[key].product = item;
+      result[byKey[key].index] = item;
+    }
+  });
+  return result;
+}
+
+function productDuplicateRecordFromRow_(headers, rowValues, rowNumber) {
+  const record = { sourceRow: rowNumber };
+  headers.forEach(function (header, index) {
+    if (header) record[header] = rowValues[index] || '';
+  });
+  return record;
+}
+
+function createProductSimilarityKey_(product) {
+  const item = product && typeof product === 'object' ? product : {};
+  return [
+    normalizeProductIdentityText_(getProductIdentityValue_(item, ['brand', 'businessUnit', 'productBusinessUnit', 'quoteType', 'bu'])),
+    normalizeProductIdentityText_(getProductIdentityValue_(item, ['productCode', 'sku', 'productId', 'id', 'itemCode'])),
+    normalizeProductIdentityText_(getProductIdentityValue_(item, ['productName', 'itemName', 'name']))
+  ].join('|');
+}
+
+function describeProductDuplicateGroup_(key, records, headers) {
+  const sorted = records.slice().sort(function (a, b) {
+    return getProductCompletenessScore_(b, headers) - getProductCompletenessScore_(a, headers) || Number(a.sourceRow || 0) - Number(b.sourceRow || 0);
+  });
+  const keep = sorted[0] || records[0] || {};
+  const keepRow = Number(keep.sourceRow || 0);
+  const rowNumbers = records.map(function (record) { return Number(record.sourceRow || 0); }).filter(function (rowNumber) { return rowNumber > 0; }).sort(function (a, b) { return a - b; });
+  return {
+    duplicateKey: key,
+    productCode: String(getProductIdentityValue_(keep, ['productCode', 'sku', 'productId', 'id', 'itemCode']) || '').trim(),
+    productName: String(getProductIdentityValue_(keep, ['productName', 'itemName', 'name']) || '').trim(),
+    brand: String(getProductIdentityValue_(keep, ['brand', 'businessUnit', 'productBusinessUnit']) || '').trim(),
+    unit: String(getProductIdentityValue_(keep, ['unit', 'uom', 'unitName', 'salesUnit']) || '').trim(),
+    price: normalizeProductIdentityPrice_(getProductIdentityValue_(keep, ['rawListPrice', 'rawPrice', 'listPrice', 'price', 'unitListPrice', 'masterListPrice'])),
+    rowNumbers: rowNumbers,
+    duplicateCount: rowNumbers.length,
+    keepRow: keepRow,
+    proposedDeleteRows: rowNumbers.filter(function (rowNumber) { return rowNumber !== keepRow; })
+  };
+}
+
+function auditProductSheetDuplicates() {
+  try {
+    const sheet = getSheet(PRODUCT_SHEET);
+    if (!sheet) return fail('Unable to access Products sheet');
+    const headers = getHeaders(sheet).map(function (header) { return String(header || '').trim(); }).filter(function (header) { return header; });
+    const defaultHeaders = getHeadersForSheet(PRODUCT_SHEET);
+    const lastRow = sheet.getLastRow();
+    const lastColumn = Math.max(sheet.getLastColumn(), headers.length);
+    const values = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, lastColumn).getDisplayValues() : [];
+    const records = values.map(function (row, index) {
+      return productDuplicateRecordFromRow_(headers, row, index + 2);
+    });
+    const byExactKey = {};
+    const bySimilarityKey = {};
+    records.forEach(function (record) {
+      const exactKey = createProductIdentityKey(record);
+      if (exactKey.replace(/\|/g, '')) {
+        if (!byExactKey[exactKey]) byExactKey[exactKey] = [];
+        byExactKey[exactKey].push(record);
+      }
+      const similarKey = createProductSimilarityKey_(record);
+      if (similarKey.replace(/\|/g, '')) {
+        if (!bySimilarityKey[similarKey]) bySimilarityKey[similarKey] = [];
+        bySimilarityKey[similarKey].push(record);
+      }
+    });
+    const duplicateGroups = Object.keys(byExactKey).filter(function (key) {
+      return byExactKey[key].length > 1;
+    }).map(function (key) {
+      return describeProductDuplicateGroup_(key, byExactKey[key], headers);
+    }).sort(function (a, b) {
+      return a.keepRow - b.keepRow;
+    });
+    const similarButDistinctGroups = Object.keys(bySimilarityKey).map(function (key) {
+      const group = bySimilarityKey[key] || [];
+      const exactKeys = {};
+      group.forEach(function (record) {
+        exactKeys[createProductIdentityKey(record)] = true;
+      });
+      return { key: key, rows: group, distinctExactCount: Object.keys(exactKeys).length };
+    }).filter(function (group) {
+      return group.rows.length > 1 && group.distinctExactCount > 1;
+    }).map(function (group) {
+      const first = group.rows[0] || {};
+      return {
+        similarKey: group.key,
+        productCode: String(getProductIdentityValue_(first, ['productCode', 'sku', 'productId', 'id', 'itemCode']) || '').trim(),
+        productName: String(getProductIdentityValue_(first, ['productName', 'itemName', 'name']) || '').trim(),
+        brand: String(getProductIdentityValue_(first, ['brand', 'businessUnit', 'productBusinessUnit']) || '').trim(),
+        rowNumbers: group.rows.map(function (record) { return Number(record.sourceRow || 0); }).filter(function (rowNumber) { return rowNumber > 0; }).sort(function (a, b) { return a - b; }),
+        distinctExactCount: group.distinctExactCount
+      };
+    });
+    return success({
+      schema: {
+        actualHeaders: headers,
+        defaultHeaders: defaultHeaders,
+        fields: {
+          brand: headers.indexOf('brand') >= 0,
+          productCode: headers.indexOf('productCode') >= 0 || headers.indexOf('sku') >= 0 || headers.indexOf('productId') >= 0,
+          productName: headers.indexOf('productName') >= 0 || headers.indexOf('itemName') >= 0,
+          unit: headers.indexOf('unit') >= 0,
+          price: headers.indexOf('listPrice') >= 0 || headers.indexOf('price') >= 0,
+          priceType: headers.indexOf('priceType') >= 0,
+          priceList: headers.indexOf('priceList') >= 0 || headers.indexOf('priceListId') >= 0 || headers.indexOf('priceListName') >= 0,
+          promotionId: headers.indexOf('promotionId') >= 0 || headers.indexOf('promoId') >= 0,
+          recordId: headers.indexOf('recordId') >= 0 || headers.indexOf('rowId') >= 0 || headers.indexOf('sourceRow') >= 0
+        }
+      },
+      summary: {
+        sourceRowCount: records.length,
+        duplicateGroupCount: duplicateGroups.length,
+        exactDuplicateRowCount: duplicateGroups.reduce(function (sum, group) { return sum + Math.max(0, group.duplicateCount - 1); }, 0),
+        similarButDistinctGroupCount: similarButDistinctGroups.length
+      },
+      duplicateGroups: duplicateGroups,
+      similarButDistinctGroups: similarButDistinctGroups
+    }, 'Product duplicate audit completed');
+  } catch (error) {
+    logError('auditProductSheetDuplicates', error);
+    return fail(error && error.message ? error.message : 'Product duplicate audit failed');
+  }
 }
 
 function parseProductListPrice(value) {

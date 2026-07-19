@@ -4,6 +4,9 @@ window.appState=window.appState||{};
 window.appState.publicSettings=normalizeSystemIdentitySettings(window.appState.publicSettings||SYSTEM_IDENTITY_FALLBACK);
 let DB=normalizeDb(), USER=null, CART=[], selectedCustomerId='';
 let PRODUCT_CALC_PRODUCT=null;
+let PRODUCT_CALC_STATE={selectedProduct:null,originalUnitPrice:0,editedUnitPrice:0,discountPercent:0,quantity:1,recordKey:'',sourceListIndex:null};
+let PRODUCT_CALC_RECORDS=new Map(), PRODUCT_CALC_RENDER_SEQUENCE=0, PRODUCT_CALC_RECORD_SEQUENCE=0;
+let PRODUCT_SELECTION_RECORDS=new Map(), PRODUCT_SELECTION_RECORD_SEQUENCE=0;
 let PROFILE_IMAGE_DATA='';
 let bootstrapLoaded=false, bootstrapPromise=null;
 let quoteHistoryLoaded=false, quoteHistoryPromise=null;
@@ -247,7 +250,7 @@ function normalizeDb(data){
     publicSettings:identity,
     counts:source.counts&&typeof source.counts==='object'?source.counts:(existing.counts&&typeof existing.counts==='object'?existing.counts:{}),
     customers:Array.isArray(source.customers)?source.customers.map(normalizeCustomer):(Array.isArray(existing.customers)?existing.customers:[]),
-    products:Array.isArray(source.products)?source.products.map(normalizeProduct):(Array.isArray(existing.products)?existing.products:[]),
+    products:Array.isArray(source.products)?dedupeExactProducts(source.products.map(normalizeProduct),'normalizeDb.products'):(Array.isArray(existing.products)?existing.products:[]),
     promotions:Array.isArray(source.promotions)?source.promotions:[],
     quotes:Array.isArray(source.quotes)?source.quotes:[],
     quoteLines:Array.isArray(source.quoteLines)?source.quoteLines:(Array.isArray(existing.quoteLines)?existing.quoteLines:[])
@@ -256,7 +259,7 @@ function normalizeDb(data){
 
 function normalizeProduct(product){
   const p=product&&typeof product==='object'?product:{};
-  const id=String(p.productId||p.id||p.sku||'').trim();
+  const id=String(p.productId||p.id||p.sku||p.productCode||p.itemCode||'').trim();
   const groupCode=String(p.groupCode||'').trim();
   const productName=String(p.productName||p.itemName||'').trim();
   const description=String(p.description||p.itemDesc||'').trim();
@@ -277,12 +280,155 @@ function normalizeProduct(product){
     groupCode,
     group:groupCode,
     unit:String(p.unit||'').trim(),
+    rawListPrice:String(p.rawListPrice??p.listPrice??p.price??'').trim(),
     listPrice:parseClientNumber(p.listPrice),
     imageUrl:String(p.imageUrl||'').trim(),
     active:String(p.active||p.status||'').trim(),
     notes:String(p.notes||'').trim(),
     promoText:String(p.promoText||'').trim()
   };
+}
+
+function normalizeProductIdentityPart(value){
+  return String(value??'').trim().replace(/\s+/g,' ').toLowerCase();
+}
+function normalizeProductIdentityPrice(value){
+  const text=String(value??'').replace(/,/g,'').trim();
+  if(!text)return 'empty';
+  const numeric=Number(text);
+  if(!Number.isFinite(numeric))return normalizeProductIdentityPart(value);
+  return String(Math.round(numeric*1000000)/1000000);
+}
+function getProductIdentityFirstValue(product,fields){
+  const item=product&&typeof product==='object'?product:{};
+  for(let i=0;i<fields.length;i++){
+    const value=item[fields[i]];
+    if(value!==undefined&&value!==null&&String(value).trim()!=='')return value;
+  }
+  return '';
+}
+function createProductIdentityKey(product){
+  const item=product&&typeof product==='object'?product:{};
+  const parts=[
+    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['brand','businessUnit','productBusinessUnit','quoteType','bu'])),
+    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['productCode','sku','productId','id','itemCode'])),
+    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['productName','itemName','name'])),
+    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['unit','uom','unitName','salesUnit'])),
+    normalizeProductIdentityPrice(getProductIdentityFirstValue(item,['rawListPrice','rawPrice','listPrice','price','unitListPrice','masterListPrice'])),
+    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['priceType','priceListType'])),
+    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['priceList','priceListId','priceListName'])),
+    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['promotionId','promoId','promotionCode'])),
+    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['priceSource','priceListSource','promotionSource','promoText'])),
+    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['discountGroup','groupCode','group','category']))
+  ];
+  return parts.join('|');
+}
+function getProductCompletenessScore(product){
+  const item=product&&typeof product==='object'?product:{};
+  const fields=['productId','sku','productCode','productName','description','brand','businessUnit','productBusinessUnit','discountGroup','groupCode','unit','rawListPrice','listPrice','priceType','priceList','promotionId','priceSource','promoText','imageUrl','notes','active'];
+  return fields.reduce((score,field)=>score+(item[field]!==undefined&&item[field]!==null&&String(item[field]).trim()!==''?1:0),0);
+}
+function shouldReplaceDedupedProduct(current,candidate){
+  return getProductCompletenessScore(candidate)>getProductCompletenessScore(current);
+}
+function getProductDedupeDebugEnabled(){
+  try{
+    return window.PRODUCT_DEDUPE_DEBUG===true||String(localStorage.getItem('sg_product_dedupe_debug')||'').trim().toLowerCase()==='true';
+  }catch(error){
+    return window.PRODUCT_DEDUPE_DEBUG===true;
+  }
+}
+function logProductDedupeResult(result,source){
+  const info=result&&result.info?result.info:{sourceCount:0,deduplicatedCount:0,removedDuplicateCount:0};
+  if(info.removedDuplicateCount>0||getProductDedupeDebugEnabled()){
+    console.info('[PRODUCT_DEDUPE]',{
+      source:source||'products',
+      sourceCount:info.sourceCount,
+      deduplicatedCount:info.deduplicatedCount,
+      removedDuplicateCount:info.removedDuplicateCount
+    });
+  }
+}
+function dedupeExactProductsWithReport(products,source){
+  const list=Array.isArray(products)?products:[];
+  const result=[];
+  const byKey=new Map();
+  const duplicateGroups=new Map();
+  list.forEach((product,index)=>{
+    const item=product&&typeof product==='object'?product:{};
+    const key=createProductIdentityKey(item);
+    if(!key.replace(/\|/g,'')){
+      result.push(item);
+      return;
+    }
+    if(!byKey.has(key)){
+      byKey.set(key,{index:result.length,product:item,sourceIndexes:[index]});
+      result.push(item);
+      return;
+    }
+    const entry=byKey.get(key);
+    entry.sourceIndexes.push(index);
+    if(!duplicateGroups.has(key))duplicateGroups.set(key,entry.sourceIndexes);
+    if(shouldReplaceDedupedProduct(entry.product,item)){
+      entry.product=item;
+      result[entry.index]=item;
+    }
+  });
+  const info={
+    sourceCount:list.length,
+    deduplicatedCount:result.length,
+    removedDuplicateCount:Math.max(0,list.length-result.length),
+    duplicateGroupCount:Array.from(duplicateGroups.values()).filter(group=>group.length>1).length
+  };
+  const report={products:result,info:info,duplicateGroups:Array.from(duplicateGroups.entries()).map(entry=>({key:entry[0],sourceIndexes:entry[1].slice()}))};
+  logProductDedupeResult(report,source);
+  return report;
+}
+function dedupeExactProducts(products,source){
+  return dedupeExactProductsWithReport(products,source).products;
+}
+function cloneProductRecordForSelection(product){
+  return Object.assign({},product&&typeof product==='object'?product:{});
+}
+function getProductSelectionStableReference(product){
+  const item=product&&typeof product==='object'?product:{};
+  return String(item.priceListItemId||item.recordId||item.rowId||item.sourceRow||item.sheetRow||item.rowNumber||item.productRowId||'').trim();
+}
+function getStableProductRecordKey(product,context){
+  const item=product&&typeof product==='object'?product:{};
+  const contextPart=normalizeProductIdentityPart(context||'product');
+  const stableReference=getProductSelectionStableReference(item);
+  if(stableReference){
+    return 'product-record:'+contextPart+':stable:'+normalizeProductIdentityPart(stableReference);
+  }
+  const identityKey=createProductIdentityKey(item);
+  if(identityKey.replace(/\|/g,'').trim()){
+    return 'product-record:'+contextPart+':identity:'+identityKey;
+  }
+  PRODUCT_SELECTION_RECORD_SEQUENCE+=1;
+  return 'product-record:'+contextPart+':runtime:'+PRODUCT_SELECTION_RECORD_SEQUENCE;
+}
+function trimProductSelectionRegistry(){
+  const maxRecords=500;
+  while(PRODUCT_SELECTION_RECORDS.size>maxRecords){
+    const firstKey=PRODUCT_SELECTION_RECORDS.keys().next().value;
+    if(!firstKey)break;
+    PRODUCT_SELECTION_RECORDS.delete(firstKey);
+  }
+}
+function registerProductRecordSelection(product,context){
+  const snapshot=cloneProductRecordForSelection(product);
+  const recordKey=getStableProductRecordKey(snapshot,context);
+  snapshot.sourceProductRecordKey=recordKey;
+  snapshot.sourceProductIdentityKey=createProductIdentityKey(snapshot);
+  PRODUCT_SELECTION_RECORDS.set(recordKey,snapshot);
+  trimProductSelectionRegistry();
+  return recordKey;
+}
+function resolveProductRecordSelection(recordKey){
+  const key=String(recordKey||'').trim();
+  if(!key||!PRODUCT_SELECTION_RECORDS.has(key))return null;
+  return cloneProductRecordForSelection(PRODUCT_SELECTION_RECORDS.get(key));
 }
 
 function parseCustomerBooleanForUi(value){
@@ -777,25 +923,97 @@ function productSearchText(p){return [p.productId,p.sku,p.productName,p.descript
 function htmlAttr(value){
   return String(value??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
+function cloneProductForCalculator(product){
+  return Object.assign({},product&&typeof product==='object'?product:{});
+}
+function getProductCalculatorDebugEnabled(){
+  try{
+    return window.PRODUCT_CALCULATOR_DEBUG===true||String(localStorage.getItem('sg_product_calculator_debug')||'').trim().toLowerCase()==='true';
+  }catch(error){
+    return window.PRODUCT_CALCULATOR_DEBUG===true;
+  }
+}
+function debugProductCalculator(eventName,details){
+  if(!getProductCalculatorDebugEnabled()||typeof console==='undefined'||typeof console.debug!=='function')return;
+  console.debug('[PRODUCT_CALCULATOR]',eventName,details||{});
+}
+function getProductCalculatorReference(product){
+  const item=product&&typeof product==='object'?product:{};
+  return String(item.priceListItemId||item.recordId||item.rowId||item.sourceRow||item.productId||item.sku||item.productCode||item.id||'').trim();
+}
+function resetProductCalculatorRecordRegistry(){
+  PRODUCT_CALC_RENDER_SEQUENCE+=1;
+  PRODUCT_CALC_RECORD_SEQUENCE=0;
+  PRODUCT_CALC_RECORDS=new Map();
+}
+function registerProductCalculatorRecord(product,sourceListIndex){
+  const snapshot=cloneProductForCalculator(product);
+  const recordKey='product-calc-'+PRODUCT_CALC_RENDER_SEQUENCE+'-'+(++PRODUCT_CALC_RECORD_SEQUENCE);
+  PRODUCT_CALC_RECORDS.set(recordKey,{product:snapshot,sourceListIndex:sourceListIndex});
+  return recordKey;
+}
+function resolveProductCalculatorRecord(value){
+  if(value&&typeof value==='object'&&!Array.isArray(value)){
+    return {product:cloneProductForCalculator(value),recordKey:getProductCalculatorReference(value),source:'object'};
+  }
+  const key=String(value||'').trim();
+  if(key&&PRODUCT_CALC_RECORDS.has(key)){
+    const entry=PRODUCT_CALC_RECORDS.get(key)||{};
+    return {product:cloneProductForCalculator(entry.product),recordKey:key,source:'card-record',sourceListIndex:entry.sourceListIndex};
+  }
+  const product=findProductForCalculator(key);
+  return product?{product:cloneProductForCalculator(product),recordKey:key,source:'legacy-reference'}:null;
+}
+function parseProductCalculatorNumber(value,options){
+  const opts=options||{};
+  const raw=String(value===null||value===undefined?'':value).replace(/,/g,'').trim();
+  if(!raw){
+    return opts.required?{ok:false,value:0,reason:'blank'}:{ok:true,value:Number(opts.defaultValue||0),reason:''};
+  }
+  const number=Number(raw);
+  if(!Number.isFinite(number)){
+    return {ok:false,value:0,reason:'invalid'};
+  }
+  return {ok:true,value:number,reason:''};
+}
+function getProductCalculatorPrice(product){
+  const item=product&&typeof product==='object'?product:{};
+  const parsed=parseProductCalculatorNumber(item.listPrice!==undefined?item.listPrice:(item.price!==undefined?item.price:item.unitListPrice),{required:false,defaultValue:0});
+  return parsed.ok?parsed.value:0;
+}
 function findProductForCalculator(productId){
   const id=String(productId||'').trim().toLowerCase();
   return (Array.isArray(DB.products)?DB.products:[]).find(p=>String(p.productId||p.sku||p.id||'').trim().toLowerCase()===id)||null;
 }
-function openProductCalculator(productId){
-  const product=findProductForCalculator(productId);
-  if(!product){
+function openProductCalculator(productRecord){
+  const resolved=resolveProductCalculatorRecord(productRecord);
+  if(!resolved||!resolved.product){
     toast('ไม่พบสินค้า');
+    debugProductCalculator('open_failed',{recordKey:String(productRecord||'').trim()});
     return;
   }
-  PRODUCT_CALC_PRODUCT=product;
+  const product=cloneProductForCalculator(resolved.product);
+  const originalUnitPrice=getProductCalculatorPrice(product);
+  PRODUCT_CALC_STATE={selectedProduct:product,originalUnitPrice:originalUnitPrice,editedUnitPrice:originalUnitPrice,discountPercent:0,quantity:1,recordKey:resolved.recordKey||'',sourceListIndex:resolved.sourceListIndex??null};
+  PRODUCT_CALC_PRODUCT=PRODUCT_CALC_STATE.selectedProduct;
   const modal=$('productPriceModal');
   if(!modal)return;
   const priceInput=$('productCalcListPrice');
   const discountInput=$('productCalcDiscount');
   const qtyInput=$('productCalcQty');
-  if(priceInput)priceInput.value=parseClientNumber(product.listPrice).toFixed(2);
+  if(priceInput)priceInput.value=originalUnitPrice.toFixed(2);
   if(discountInput)discountInput.value='0';
   if(qtyInput)qtyInput.value='1';
+  debugProductCalculator('open',{
+    recordKey:PRODUCT_CALC_STATE.recordKey,
+    productCode:product.productCode||product.sku||product.productId||product.id||'',
+    productName:product.productName||product.name||'',
+    cardPrice:originalUnitPrice,
+    calculatorInitializedPrice:originalUnitPrice,
+    brand:product.brand||product.businessUnit||product.productBusinessUnit||'',
+    unit:product.unit||'',
+    sourceListIndex:PRODUCT_CALC_STATE.sourceListIndex
+  });
   renderProductCalculator();
   modal.classList.remove('hidden');
   modal.classList.add('show');
@@ -808,53 +1026,88 @@ function closeProductCalculator(){
   }
 }
 function resetProductCalculator(){
-  if(!PRODUCT_CALC_PRODUCT)return;
+  if(!PRODUCT_CALC_STATE||!PRODUCT_CALC_STATE.selectedProduct)return;
   const priceInput=$('productCalcListPrice');
   const discountInput=$('productCalcDiscount');
   const qtyInput=$('productCalcQty');
-  if(priceInput)priceInput.value=parseClientNumber(PRODUCT_CALC_PRODUCT.listPrice).toFixed(2);
+  if(priceInput)priceInput.value=Number(PRODUCT_CALC_STATE.originalUnitPrice||0).toFixed(2);
   if(discountInput)discountInput.value='0';
   if(qtyInput)qtyInput.value='1';
+  PRODUCT_CALC_STATE.editedUnitPrice=PRODUCT_CALC_STATE.originalUnitPrice||0;
+  PRODUCT_CALC_STATE.discountPercent=0;
+  PRODUCT_CALC_STATE.quantity=1;
+  debugProductCalculator('reset',{
+    recordKey:PRODUCT_CALC_STATE.recordKey,
+    originalUnitPrice:PRODUCT_CALC_STATE.originalUnitPrice
+  });
   renderProductCalculator();
 }
 function renderProductCalculator(){
-  const product=PRODUCT_CALC_PRODUCT||{};
+  const product=PRODUCT_CALC_STATE&&PRODUCT_CALC_STATE.selectedProduct||PRODUCT_CALC_PRODUCT||{};
   const capture=$('productPriceCapture');
   if(!capture)return;
-  const listPrice=parseClientNumber($('productCalcListPrice')?.value||product.listPrice);
-  const discountPercent=parseClientNumber($('productCalcDiscount')?.value);
-  const qty=Math.max(0,parseClientNumber($('productCalcQty')?.value||1));
-  const netPrice=listPrice*(1-discountPercent/100);
-  const subtotal=netPrice*qty;
-  const vat=subtotal*0.07;
-  const grandTotal=subtotal+vat;
+  const priceParsed=parseProductCalculatorNumber($('productCalcListPrice')?.value,{required:true});
+  const discountParsed=parseProductCalculatorNumber($('productCalcDiscount')?.value,{required:false,defaultValue:0});
+  const qtyParsed=parseProductCalculatorNumber($('productCalcQty')?.value,{required:false,defaultValue:1});
+  const errors=[];
+  if(!priceParsed.ok)errors.push('กรุณากรอกราคาตั้งเป็นตัวเลข');
+  if(priceParsed.ok&&priceParsed.value<0)errors.push('ราคาตั้งต้องไม่ติดลบ');
+  if(!discountParsed.ok)errors.push('กรุณากรอกส่วนลดเป็นตัวเลข');
+  if(!qtyParsed.ok)errors.push('กรุณากรอกจำนวนเป็นตัวเลข');
+  if(qtyParsed.ok&&qtyParsed.value<0)errors.push('จำนวนต้องไม่ติดลบ');
+  const hasError=errors.length>0;
+  const listPrice=hasError?0:priceParsed.value;
+  const discountPercent=hasError?0:discountParsed.value;
+  const qty=hasError?0:Math.max(0,qtyParsed.value);
+  const netPrice=hasError?0:listPrice*(1-discountPercent/100);
+  const subtotal=hasError?0:netPrice*qty;
+  const vat=hasError?0:subtotal*0.07;
+  const grandTotal=hasError?0:subtotal+vat;
+  if(!hasError&&PRODUCT_CALC_STATE){
+    PRODUCT_CALC_STATE.editedUnitPrice=listPrice;
+    PRODUCT_CALC_STATE.discountPercent=discountPercent;
+    PRODUCT_CALC_STATE.quantity=qty;
+  }else if(hasError){
+    debugProductCalculator('validation_error',{
+      recordKey:PRODUCT_CALC_STATE&&PRODUCT_CALC_STATE.recordKey||'',
+      reason:errors[0]||'invalid_input',
+      productCode:product.productCode||product.sku||product.productId||product.id||'',
+      cardPrice:PRODUCT_CALC_STATE&&PRODUCT_CALC_STATE.originalUnitPrice
+    });
+  }
   const productId=product.productId||product.sku||product.id||'-';
   const imageUrl=String(product.imageUrl||'').trim();
-  capture.innerHTML=`
-    <div class="product-calc-head">
-      <div class="product-calc-img">${imageUrl?`<img src="${htmlAttr(imageUrl)}" alt="">`:'📦'}</div>
-      <div>
-        <span class="pill ${product.brand==='Weber'?'yellow':'blue'}">${product.brand||'-'}</span>
-        <h2>${product.productName||'-'}</h2>
-        <p>รหัสสินค้า: ${productId}</p>
-        <p>หน่วย: ${product.unit||'-'}</p>
-        <p>ราคาตั้ง: ${money(product.listPrice)}</p>
-      </div>
-    </div>
-    <div class="product-calc-input-summary">
-      <span>ราคาตั้งต่อหน่วย: <b>${money(listPrice)}</b></span>
-      <span>ส่วนลด: <b>${discountPercent}%</b></span>
-      <span>จำนวน: <b>${qty}</b></span>
-    </div>
-    <div class="product-calc-results">
+  const originalUnitPrice=PRODUCT_CALC_STATE&&PRODUCT_CALC_STATE.originalUnitPrice!==undefined?PRODUCT_CALC_STATE.originalUnitPrice:getProductCalculatorPrice(product);
+  const priceSource=String(product.priceSource||product.priceListSource||product.promotionSource||product.promoText||'').trim();
+  const resultHtml=hasError
+    ? `<div class="quote-modal-error product-calc-error" role="alert">${escapeHtml(errors[0])}</div>`
+    : `<div class="product-calc-results">
       <div><small>ราคาสุทธิต่อหน่วย</small><b>${money(netPrice)}</b></div>
       <div><small>VAT 7%</small><b>${money(vat)}</b></div>
       <div><small>ยอดก่อน VAT</small><b>${money(subtotal)}</b></div>
       <div class="grand"><small>ยอดลูกค้าชำระ</small><b>${money(grandTotal)}</b></div>
     </div>`;
+  capture.innerHTML=`
+    <div class="product-calc-head">
+      <div class="product-calc-img">${imageUrl?`<img src="${htmlAttr(imageUrl)}" alt="">`:'📦'}</div>
+      <div>
+        <span class="pill ${product.brand==='Weber'?'yellow':'blue'}">${escapeHtml(product.brand||'-')}</span>
+        <h2>${escapeHtml(product.productName||'-')}</h2>
+        <p>รหัสสินค้า: ${escapeHtml(productId)}</p>
+        <p>หน่วย: ${escapeHtml(product.unit||'-')}</p>
+        <p>ราคาตั้งจากการ์ด: ${money(originalUnitPrice)}</p>
+        ${priceSource?`<p>แหล่งราคา: ${escapeHtml(priceSource)}</p>`:''}
+      </div>
+    </div>
+    <div class="product-calc-input-summary">
+      <span>ราคาตั้งต่อหน่วย: <b>${hasError?'-':money(listPrice)}</b></span>
+      <span>ส่วนลด: <b>${hasError?'-':discountPercent+'%'}</b></span>
+      <span>จำนวน: <b>${hasError?'-':qty}</b></span>
+    </div>
+    ${resultHtml}`;
 }
 async function saveProductCalculatorImage(){
-  const product=PRODUCT_CALC_PRODUCT||{};
+  const product=PRODUCT_CALC_STATE&&PRODUCT_CALC_STATE.selectedProduct||PRODUCT_CALC_PRODUCT||{};
   const target=$('productPriceCapture');
   if(!target)return null;
   if(typeof html2canvas!=='function'){
@@ -887,8 +1140,18 @@ async function saveProductCalculatorImage(){
 }
 function addProductCardToQuote(productId,event){
   if(event&&typeof event.stopPropagation==='function')event.stopPropagation();
-  const product=findProductForCalculator(productId);
+  const resolved=resolveProductCalculatorRecord(productId);
+  const product=resolved&&resolved.product?cloneProductForCalculator(resolved.product):null;
   if(product&&typeof addCart==='function'){
+    debugProductCalculator('add_to_quote',{
+      recordKey:resolved.recordKey||'',
+      productCode:product.productCode||product.sku||product.productId||product.id||'',
+      productName:product.productName||product.name||'',
+      cardPrice:getProductCalculatorPrice(product),
+      brand:product.brand||product.businessUnit||product.productBusinessUnit||'',
+      unit:product.unit||'',
+      sourceListIndex:resolved.sourceListIndex??null
+    });
     addCart(product);
   }
 }
@@ -939,7 +1202,7 @@ function invalidateBootstrapCustomerCacheIfNeeded(){
   }
 }
 function setProductsData(items){
-  DB.products=Array.isArray(items)?items.map(normalizeProduct):[];
+  DB.products=dedupeExactProducts(Array.isArray(items)?items.map(normalizeProduct):[],'setProductsData');
   productsLoaded=true;
   if(typeof setCache==='function')setCache('sg_products_cache',DB.products,15);
 }
@@ -2330,7 +2593,7 @@ async function toggleFavoriteCustomer(customerId){const favorite=isFavoriteCusto
 async function persistFavoriteOrder(){const grid=$('favoriteCustomerGrid');if(!grid)return;const customerIds=Array.from(grid.querySelectorAll('[data-customer-id]')).map(el=>el.dataset.customerId);const response=await callApi('reorderFavoriteCustomers',{customerIds:customerIds});if(!response.ok){toast(response.message||'จัดลำดับไม่สำเร็จ');await loadFavoriteCustomers();return;}const map=new Map(FAVORITE_CUSTOMERS.map(c=>[String(c.customerId),c]));FAVORITE_CUSTOMERS=customerIds.map(id=>map.get(id)).filter(Boolean)}
 function bindFavoriteDragAndDrop(){const grid=$('favoriteCustomerGrid');if(!grid||grid.dataset.bound)return;grid.dataset.bound='true';let dragged=null;grid.addEventListener('dragstart',event=>{dragged=event.target.closest('.favorite-card');if(!dragged)return;dragged.classList.add('is-dragging');event.dataTransfer.effectAllowed='move'});grid.addEventListener('dragover',event=>{event.preventDefault();const target=event.target.closest('.favorite-card');if(dragged&&target&&target!==dragged)grid.insertBefore(dragged,target)});grid.addEventListener('dragend',()=>{if(dragged)dragged.classList.remove('is-dragging');dragged=null;persistFavoriteOrder()});let timer=null,touchCard=null;grid.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'||event.target.closest('button,a'))return;touchCard=event.target.closest('.favorite-card');if(touchCard)timer=setTimeout(()=>{touchCard.classList.add('is-dragging');touchCard.setPointerCapture(event.pointerId)},350)});grid.addEventListener('pointermove',event=>{if(!touchCard||!touchCard.classList.contains('is-dragging'))return;event.preventDefault();const target=document.elementFromPoint(event.clientX,event.clientY)?.closest('.favorite-card');if(target&&target!==touchCard)grid.insertBefore(touchCard,target)});const finish=()=>{clearTimeout(timer);if(touchCard&&touchCard.classList.contains('is-dragging')){touchCard.classList.remove('is-dragging');persistFavoriteOrder()}touchCard=null};grid.addEventListener('pointerup',finish);grid.addEventListener('pointercancel',finish)}
 
-function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); if(!productsLoaded&&!DB.products.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>{const id=encodeURIComponent(String(p.productId||p.sku||p.id||''));return `<div class="card product-card-clickable" role="button" tabindex="0" onclick="openProductCalculator(decodeURIComponent('${id}'))" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProductCalculator(decodeURIComponent('${id}'))}"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${p.brand||'-'}</span><h3>${p.productName||'-'}</h3><p>รหัสสินค้า: ${p.sku||p.productId||p.id||'-'}</p><p>${p.unit||'-'}</p><b>${money(p.listPrice)}</b><br><button class="ghost" onclick="addProductCardToQuote(decodeURIComponent('${id}'),event)">เพิ่มลงใบเสนอราคา</button></div>`}).join('')}
+function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); if(!productsLoaded&&!DB.products.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} resetProductCalculatorRecordRegistry(); grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>{const recordKey=registerProductCalculatorRecord(p,DB.products.indexOf(p));const key=htmlAttr(recordKey);return `<div class="card product-card-clickable" role="button" tabindex="0" data-product-record-key="${key}" onclick="openProductCalculator('${key}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProductCalculator('${key}')}"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${escapeHtml(p.brand||'-')}</span><h3>${escapeHtml(p.productName||'-')}</h3><p>รหัสสินค้า: ${escapeHtml(p.sku||p.productId||p.id||'-')}</p><p>${escapeHtml(p.unit||'-')}</p><b>${money(p.listPrice)}</b><br><button class="ghost" onclick="addProductCardToQuote('${key}',event)">เพิ่มลงใบเสนอราคา</button></div>`}).join('')}
 
 function renderQuoteCustomerPicker(forceShow){
   const picker=$('quoteCustomerPicker'),input=$('quoteCustomerSearch');
@@ -2533,22 +2796,24 @@ function canManageQuoteProductPreferences(){return currentRole()!=='VIEWER'&&can
 function decorateQuotePreferenceProduct(product){const item=Object.assign({},product||{});const id=normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(item));const favoriteIds=getFavoriteProductIdSet();const pinnedOrders=getPinnedProductOrderMap();item.isFavoriteProduct=favoriteIds.has(id)||Boolean(item.isFavoriteProduct);item.isPinnedProduct=pinnedOrders.has(id)||Boolean(item.isPinnedProduct);item.pinnedSortOrder=pinnedOrders.get(id)||Number(item.pinnedSortOrder||0)||0;return item}
 function productPreferenceRank(product){const item=decorateQuotePreferenceProduct(product);if(item.isPinnedProduct)return item.pinnedSortOrder||1;return item.isFavoriteProduct?1000:2000}
 function findQuoteProductById(productId){const id=normalizeQuoteProductPreferenceId(productId);return DB.products.find(product=>normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(product))===id)||null}
-function getPreferenceProductList(list){return (Array.isArray(list)?list:[]).map(product=>decorateQuotePreferenceProduct(Object.assign({},findQuoteProductById(getQuoteProductPreferenceId(product))||{},product))).filter(product=>getQuoteProductPreferenceId(product))}
+function getPreferenceProductList(list){return dedupeExactProducts((Array.isArray(list)?list:[]).map(product=>decorateQuotePreferenceProduct(Object.assign({},findQuoteProductById(getQuoteProductPreferenceId(product))||{},product))).filter(product=>getQuoteProductPreferenceId(product)),'productPreferences')}
 function ensureProductPreferenceContainers(){const picker=$('productPicker');if(!picker||($('pinnedProducts')&&$('favoriteProducts')))return;const parent=picker.parentNode;if(!parent)return;if(!$('pinnedProducts')){const pinned=document.createElement('div');pinned.id='pinnedProducts';pinned.className='quote-product-preferences';parent.insertBefore(pinned,picker)}if(!$('favoriteProducts')){const favorite=document.createElement('div');favorite.id='favoriteProducts';favorite.className='quote-product-preferences';parent.insertBefore(favorite,picker)}}
 async function loadProductPreferences(force){if(productPreferencesLoaded&&!force)return {ok:true,data:{favorites:FAVORITE_PRODUCTS,pinned:PINNED_PRODUCTS}};if(productPreferencesPromise&&!force)return productPreferencesPromise;productPreferencesPromise=callApi('getProductPreferences',{}).then(response=>{if(response&&response.ok){const data=response.data||{};FAVORITE_PRODUCTS=getPreferenceProductList(data.favorites);PINNED_PRODUCTS=getPreferenceProductList(data.pinned).sort((a,b)=>(Number(a.pinnedSortOrder||0)||999)-(Number(b.pinnedSortOrder||0)||999));productPreferencesLoaded=true;}renderQuoteProductPreferenceSections();if($('productPicker')&&typeof renderQuoteProductPicker==='function')setTimeout(()=>renderQuoteProductPicker(),0);return response}).finally(()=>{productPreferencesPromise=null});return productPreferencesPromise}
 function renderQuoteProductPreferenceCard(product,options){
   const item=decorateQuotePreferenceProduct(product);
   const rawId=getQuoteProductPreferenceId(item);
   const idAttr=htmlAttr(rawId);
+  const recordKey=registerProductRecordSelection(item,'quote');
+  const recordKeyAttr=htmlAttr(recordKey);
   const jsId=escapeHtml(JSON.stringify(rawId));
   const productUnit=normalizeProductBusinessUnitForUi(item);
   const opts=options||{};
   const source=String(opts.source||(opts.pinned?'PINNED':'FAVORITE')).toUpperCase();
   const sourceAttr=htmlAttr(source);
-  const draggable=opts.pinned&&canManageQuoteProductPreferences()?' draggable="true" data-product-id="'+idAttr+'"':'';
+  const draggable=opts.pinned&&canManageQuoteProductPreferences()?' draggable="true" data-product-id="'+idAttr+'" data-product-record-key="'+recordKeyAttr+'"':'';
   const listPrice=Number(String(item.listPrice||0).replace(/,/g,''));
   const priceHtml=listPrice>0?money(listPrice):'<span class="quote-product-missing-price">ยังไม่มีราคา</span>';
-  const actions=canManageQuoteProductPreferences()?`<div class="quote-product-actions" data-no-drag><button type="button" class="quote-product-pref-button ${item.isFavoriteProduct?'is-active':''}" data-no-drag onclick='toggleFavoriteProduct(${jsId})'>${item.isFavoriteProduct?'♥':'♡'}</button><button type="button" class="quote-product-pref-button ${item.isPinnedProduct?'is-active':''}" data-no-drag onclick='togglePinnedProduct(${jsId})'>${item.isPinnedProduct?'📌':'📍'}</button><button type="button" class="tiny quote-add-product-button" data-no-drag data-product-id="${idAttr}" data-product-source="${sourceAttr}" onclick="addProductToQuoteByReference(event)">+ เพิ่ม</button></div>`:'';
+  const actions=canManageQuoteProductPreferences()?`<div class="quote-product-actions" data-no-drag><button type="button" class="quote-product-pref-button ${item.isFavoriteProduct?'is-active':''}" data-no-drag onclick='toggleFavoriteProduct(${jsId})'>${item.isFavoriteProduct?'♥':'♡'}</button><button type="button" class="quote-product-pref-button ${item.isPinnedProduct?'is-active':''}" data-no-drag onclick='togglePinnedProduct(${jsId})'>${item.isPinnedProduct?'📌':'📍'}</button><button type="button" class="tiny quote-add-product-button" data-no-drag data-product-id="${idAttr}" data-product-record-key="${recordKeyAttr}" data-product-source="${sourceAttr}" onclick="addProductToQuoteByReference(event)">+ เพิ่ม</button></div>`:'';
   return `<div class="row quote-product-pref-card ${opts.pinned?'pinned-product-card':''}"${draggable}><div class="product-img">${productUnit==='WEBER'?'🟨':'🟦'}</div><div class="quote-product-pref-main"><div class="quote-product-title">${quoteProductBusinessUnitBadge(item,getSelectedQuoteBusinessUnitForProducts())}<b>${escapeHtml(item.productName||'-')}</b></div><small>${escapeHtml(item.brand||quoteBusinessUnitLabel(productUnit))} · ${escapeHtml(item.sku||item.productId||item.id||'-')} · ${escapeHtml(item.unit||'-')} · ${priceHtml}</small></div>${actions}</div>`;
 }
 function getProductPreferenceCollapseKey(type){return type==='favorite'?FAVORITE_PRODUCTS_COLLAPSED_KEY:PINNED_PRODUCTS_COLLAPSED_KEY}
@@ -2584,4 +2849,5 @@ filterQuoteProductsByBusinessUnit=function(query,businessUnit){return baseFilter
 const baseRenderQuoteProductPickerForPreferences=renderQuoteProductPicker;
 renderQuoteProductPicker=function(){const requestId=++quoteProductSearchSequence;ensureProductPreferenceContainers();if(!productPreferencesLoaded&&!productPreferencesPromise&&USER)loadProductPreferences();const q=$('productSearch')?.value||'';const picker=$('productPicker');if(!picker)return;if(!isQuoteBusinessUnitReadyForProducts()){picker.innerHTML='<div class="row quote-empty">กรุณาเลือก BU ก่อนแสดงสินค้า</div>';renderQuoteProductPreferenceSections();return;}const businessUnit=getSelectedQuoteBusinessUnitForProducts();const businessUnitLabel=quoteBusinessUnitLabel(businessUnit);if(!productsLoaded&&!DB.products.length){picker.innerHTML=`<div class="row quote-empty">กำลังโหลดสินค้า โดยเรียง ${businessUnitLabel} ก่อน...</div>`;if(document.activeElement===$('productSearch')){loadProducts().then(()=>{if(requestId===quoteProductSearchSequence&&businessUnit===getSelectedQuoteBusinessUnitForProducts())renderQuoteProductPicker();});}renderQuoteProductPreferenceSections();return;}const matchesAll=filterQuoteProductsByBusinessUnit(q,businessUnit);const limited=limitList(matchesAll,QUOTE_PICKER_LIMIT);const notice=limited.limited?`<div class="list-limit">แสดง 30 รายการแรกจากทุก BU โดยเรียง ${businessUnitLabel} และสินค้าปักหมุดก่อน กรุณาค้นหาเพิ่มเติม</div>`:'';picker.innerHTML=limited.items.length?notice+limited.items.map(product=>renderQuoteProductPreferenceCard(product,{source:'SEARCH'})).join(''):`<div class="row quote-empty">ไม่พบสินค้าที่ตรงกับคำค้น</div>`;renderQuoteProductPreferenceSections();};
 window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.addProductCardToQuote=addProductCardToQuote; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
+window.createProductIdentityKey=createProductIdentityKey; window.dedupeExactProducts=dedupeExactProducts; window.dedupeExactProductsWithReport=dedupeExactProductsWithReport; window.cloneProductRecordForSelection=cloneProductRecordForSelection; window.getStableProductRecordKey=getStableProductRecordKey; window.registerProductRecordSelection=registerProductRecordSelection; window.resolveProductRecordSelection=resolveProductRecordSelection;
 window.normalizeSystemIdentitySettings=normalizeSystemIdentitySettings; window.applySystemIdentityToUI=applySystemIdentityToUI; window.renderLoginBranding=renderLoginBranding; window.renderSidebarBranding=renderSidebarBranding; window.refreshPublicSystemSettings=refreshPublicSystemSettings; window.setPublicSystemSettings=setPublicSystemSettings; window.loadSystemIdentitySettingsForSettings=loadSystemIdentitySettingsForSettings; window.saveSystemIdentitySettings=saveSystemIdentitySettings; window.savePersonalGreetingSettings=savePersonalGreetingSettings; window.saveSystemGreetingSettings=saveSystemGreetingSettings; window.canManageSystemIdentitySettings=canManageSystemIdentitySettings; window.applySettingsPermissionUi=applySettingsPermissionUi;
