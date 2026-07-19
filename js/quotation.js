@@ -8,6 +8,10 @@ const DISCOUNT_PROMISES = {};
 const QUOTATION_LOAD_CACHE = {};
 const QUOTATION_LOAD_PROMISES = {};
 const QUOTATION_LOAD_TTL_MS = 10 * 60 * 1000;
+const QUOTE_BRAND_LOGO_SOURCES = {
+  WEBER: 'images/weber-logo.png?v=0.5.8',
+  GYPROC: 'images/gyproc-logo.png?v=0.5.8'
+};
 let QUOTE_ITEM_SCROLL_SEQUENCE = 0;
 let QUOTE_ITEM_HIGHLIGHT_TIMER = null;
 let QUOTE_ITEM_PENDING_SCROLL_LINE_ID = '';
@@ -28,6 +32,56 @@ function getQuoteTypeLabel(value) {
 
 function getQuoteTypeClass(value) {
   return normalizeQuoteType(value) === 'GYPROC' ? 'gyproc' : 'weber';
+}
+
+function getQuoteBrandLogoSource(value) {
+  const type = normalizeQuoteType(value);
+  const configuredLogos = window.QUOTE_BRAND_LOGOS && typeof window.QUOTE_BRAND_LOGOS === 'object'
+    ? window.QUOTE_BRAND_LOGOS
+    : {};
+  return String(configuredLogos[type] || configuredLogos[type.toLowerCase()] || QUOTE_BRAND_LOGO_SOURCES[type] || '').trim();
+}
+
+function handleQuoteBrandLogoLoad(image) {
+  const logoWrap = image && image.closest ? image.closest('.quote-brand-logo-wrap,.quote-print-brand') : null;
+  if (logoWrap) {
+    logoWrap.classList.add('is-loaded');
+    logoWrap.classList.remove('is-fallback');
+  }
+}
+
+function handleQuoteBrandLogoError(image) {
+  const logoWrap = image && image.closest ? image.closest('.quote-brand-logo-wrap,.quote-print-brand') : null;
+  if (logoWrap) {
+    logoWrap.classList.add('is-fallback');
+    logoWrap.classList.remove('is-loaded');
+  }
+}
+
+function renderQuoteBrandSwitchContent(quoteType) {
+  const selected = isQuoteBusinessUnitSelected();
+  const label = selected ? getQuoteTypeLabel(quoteType) : 'เลือก BU';
+  const escapedLabel = escapeQuotationPrintHtml(label);
+  const caretHtml = '<span class="quote-type-caret" aria-hidden="true">▼</span>';
+  if (!selected) {
+    return `<span class="quote-brand-text">${escapedLabel}</span>${caretHtml}`;
+  }
+  const logoSrc = getQuoteBrandLogoSource(quoteType);
+  if (!logoSrc) {
+    return `<span class="quote-brand-text">${escapedLabel}</span>${caretHtml}`;
+  }
+  return `<span class="quote-brand-logo-wrap"><span class="quote-brand-fallback">${escapedLabel}</span><img class="quote-brand-logo" src="${escapeQuotationPrintHtml(logoSrc)}" alt="${escapedLabel}" loading="eager" decoding="async" onload="handleQuoteBrandLogoLoad(this)" onerror="handleQuoteBrandLogoError(this)"></span>${caretHtml}`;
+}
+
+function renderQuotationPrintBrandHtml(quoteType, fallbackLabel) {
+  const type = normalizeQuoteType(quoteType);
+  const label = fallbackLabel || getQuoteTypeLabel(type);
+  const escapedLabel = escapeQuotationPrintHtml(label);
+  const logoSrc = getQuoteBrandLogoSource(type);
+  if (!logoSrc) {
+    return `<p class="quote-type-subtitle">${escapedLabel} ▼</p>`;
+  }
+  return `<div class="quote-print-brand" aria-label="${escapedLabel}"><span class="quote-print-brand-fallback">${escapedLabel} ▼</span><img class="quote-print-brand-logo" src="${escapeQuotationPrintHtml(logoSrc)}" alt="${escapedLabel}" loading="eager" decoding="async" onload="handleQuoteBrandLogoLoad(this)" onerror="handleQuoteBrandLogoError(this)"></div>`;
 }
 
 function createQuotationSaveRequestId() {
@@ -1802,8 +1856,8 @@ function renderQuoteMeta() {
   const quoteNo = CURRENT_QUOTE.quoteNo || CURRENT_QUOTE.quoteId || 'ยังไม่บันทึก';
   const status = CURRENT_QUOTE.status || 'DRAFT';
   const quoteType = normalizeQuoteType(CURRENT_QUOTE.quoteType || CURRENT_QUOTE.businessUnit || CURRENT_QUOTE_TYPE);
-  const typeText = isQuoteBusinessUnitSelected() ? getQuoteTypeLabel(quoteType) + ' ▼' : 'เลือก BU ▼';
-  meta.innerHTML = `<button type="button" class="quote-type-switch ${getQuoteTypeClass(quoteType)}" onclick="openQuoteTypeModal()">${typeText}</button><span>เลขที่ใบเสนอราคา: <b>${quoteNo}</b></span><span>สถานะ: <b>${status}</b></span>`;
+  const typeContent = renderQuoteBrandSwitchContent(quoteType);
+  meta.innerHTML = `<button type="button" class="quote-type-switch ${getQuoteTypeClass(quoteType)}" onclick="openQuoteTypeModal()" aria-label="เลือกแบรนด์ ${escapeQuotationPrintHtml(getQuoteTypeLabel(quoteType))}">${typeContent}</button><span>เลขที่ใบเสนอราคา: <b>${quoteNo}</b></span><span>สถานะ: <b>${status}</b></span>`;
 }
 
 function buildQuotationPayload(status) {
@@ -2141,7 +2195,7 @@ function buildQuotationPrintHtml(data) {
     <header class="print-doc-header">
       <div class="print-doc-title">
         <h1>ใบเสนอราคา</h1>
-        <p class="quote-type-subtitle">${escapeQuotationPrintHtml(quoteTypeLabel)} ▼</p>
+        ${renderQuotationPrintBrandHtml(quote.quoteType || quote.businessUnit || CURRENT_QUOTE.quoteType || CURRENT_QUOTE_TYPE, quoteTypeLabel)}
         ${businessUnitsHtml}
       </div>
       <div class="print-doc-meta">
@@ -2271,7 +2325,7 @@ function buildQuotationFullHeaderHtml(ctx) {
   return `<header class="print-doc-header">
     <div class="print-doc-title">
       <h1>ใบเสนอราคา</h1>
-      <p class="quote-type-subtitle">${escapeQuotationPrintHtml(ctx.quoteTypeLabel || 'Weber')} ▼</p>
+      ${renderQuotationPrintBrandHtml(ctx.quoteType, ctx.quoteTypeLabel || 'Weber')}
       ${businessUnitsHtml}
     </div>
     <div class="print-doc-meta">
@@ -2463,6 +2517,44 @@ function buildQuotationPrintHtmlPaginated(data) {
   }).join('');
 }
 
+function waitForQuotationPrintImages(documentNode) {
+  const root = documentNode && typeof documentNode.querySelectorAll === 'function' ? documentNode : null;
+  if (!root) {
+    return Promise.resolve();
+  }
+  const images = Array.prototype.slice.call(root.querySelectorAll('img.quote-print-brand-logo'));
+  if (!images.length) {
+    return Promise.resolve();
+  }
+  return Promise.all(images.map(image => new Promise(resolve => {
+    if (image.complete) {
+      if (image.naturalWidth > 0) {
+        handleQuoteBrandLogoLoad(image);
+      } else {
+        handleQuoteBrandLogoError(image);
+      }
+      resolve();
+      return;
+    }
+    const done = function () {
+      image.removeEventListener('load', onLoad);
+      image.removeEventListener('error', onError);
+      resolve();
+    };
+    const onLoad = function () {
+      handleQuoteBrandLogoLoad(image);
+      done();
+    };
+    const onError = function () {
+      handleQuoteBrandLogoError(image);
+      done();
+    };
+    image.addEventListener('load', onLoad, { once: true });
+    image.addEventListener('error', onError, { once: true });
+    setTimeout(done, 1500);
+  }))).then(() => undefined);
+}
+
 async function prepareQuotationPrintPreview(quoteId, showPreview) {
   const id = String(quoteId || '').trim();
   let response = null;
@@ -2485,6 +2577,7 @@ async function prepareQuotationPrintPreview(quoteId, showPreview) {
   toast('กำลังจัดหน้าเอกสาร...');
   documentNode.innerHTML = buildQuotationPrintHtmlPaginated(printData || {});
   documentNode.dataset.quoteNo = getQuotationPrintId(printData || {});
+  await waitForQuotationPrintImages(documentNode);
   preview.classList.toggle('hidden', !showPreview);
   preview.classList.toggle('is-open', Boolean(showPreview));
   document.body.classList.toggle('print-preview-open', Boolean(showPreview));
@@ -2557,6 +2650,7 @@ async function captureQuotationSheet(documentNode) {
   documentNode.style.setProperty('height', '297mm', 'important');
   documentNode.style.setProperty('min-height', '297mm', 'important');
   try {
+    await waitForQuotationPrintImages(documentNode);
     return await html2canvas(documentNode, {
       scale: 3,
       backgroundColor: '#ffffff',

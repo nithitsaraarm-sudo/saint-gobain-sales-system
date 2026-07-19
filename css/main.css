@@ -140,8 +140,24 @@
 .quote-product-bu.gyproc{background:#e8f3ff;color:var(--blue)}
 .quote-product-bu.weber{background:#fff4a8;color:#514400}
 .quote-cross-bu-note{color:var(--muted);font-weight:800}
-.quote-type-switch{border:1px solid var(--line);background:#fff;border-radius:999px;padding:8px 12px;font-weight:900;color:var(--blue);box-shadow:0 6px 18px rgba(15,42,82,.05)}
+.quote-type-switch{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 12px;font-weight:900;color:var(--blue);box-shadow:0 6px 18px rgba(15,42,82,.05);display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;max-width:min(240px,100%);line-height:1}
+.quote-brand-logo-wrap{display:inline-flex;align-items:center;justify-content:center;min-width:86px;min-height:36px}
+.quote-brand-logo{display:none;width:auto;max-width:136px;height:34px;object-fit:contain}
+.quote-brand-fallback{display:inline}
+.quote-brand-logo-wrap.is-loaded .quote-brand-logo{display:block}
+.quote-brand-logo-wrap.is-loaded .quote-brand-fallback{display:none}
+.quote-brand-logo-wrap.is-fallback .quote-brand-logo{display:none}
+.quote-brand-logo-wrap.is-fallback .quote-brand-fallback{display:inline}
+.quote-brand-text,.quote-brand-fallback{white-space:nowrap}
+.quote-type-caret{flex:0 0 auto;font-size:12px;line-height:1;color:currentColor}
 .print-doc-title .quote-type-subtitle{font-size:20px!important;line-height:1.15!important;margin:6px 0 0!important;color:#6b7280!important;font-weight:800!important}
+.print-doc-title .quote-print-brand{display:flex!important;align-items:center!important;justify-content:flex-start!important;margin:6px 0 0!important;min-height:34px!important;line-height:1!important}
+.print-doc-title .quote-print-brand-logo{display:none!important;width:auto!important;max-width:170px!important;height:32px!important;object-fit:contain!important;object-position:left center!important}
+.print-doc-title .quote-print-brand-fallback{display:inline!important;color:#6b7280!important;font-size:20px!important;line-height:1.15!important;font-weight:800!important}
+.print-doc-title .quote-print-brand.is-loaded .quote-print-brand-logo{display:block!important}
+.print-doc-title .quote-print-brand.is-loaded .quote-print-brand-fallback{display:none!important}
+.print-doc-title .quote-print-brand.is-fallback .quote-print-brand-logo{display:none!important}
+.print-doc-title .quote-print-brand.is-fallback .quote-print-brand-fallback{display:inline!important}
 
 @media(max-width:700px){
   .topbar-user-area{gap:8px}
@@ -152,6 +168,9 @@
   .topbar-user-area .ghost{padding:10px 12px}
   .header-separator{height:24px}
   .quote-type-options{grid-template-columns:1fr}
+  .quote-type-switch{min-height:42px;max-width:100%;padding:5px 10px}
+  .quote-brand-logo-wrap{min-width:74px;min-height:34px}
+  .quote-brand-logo{max-width:116px;height:32px}
 }
 
 .quote-cart-header{display:flex;align-items:center;justify-content:space-between;gap:10px 12px;flex-wrap:wrap;min-width:0;margin:0 0 12px}
