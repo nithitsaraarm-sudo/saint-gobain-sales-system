@@ -249,7 +249,7 @@ function normalizeDb(data){
     publicSettings:identity,
     counts:source.counts&&typeof source.counts==='object'?source.counts:(existing.counts&&typeof existing.counts==='object'?existing.counts:{}),
     customers:Array.isArray(source.customers)?source.customers.map(normalizeCustomer):(Array.isArray(existing.customers)?existing.customers:[]),
-    products:Array.isArray(source.products)?source.products.map(normalizeProduct):(Array.isArray(existing.products)?existing.products:[]),
+    products:Array.isArray(source.products)?dedupeExactProducts(source.products.map(normalizeProduct),'normalizeDb.products'):(Array.isArray(existing.products)?existing.products:[]),
     promotions:Array.isArray(source.promotions)?source.promotions:[],
     quotes:Array.isArray(source.quotes)?source.quotes:[],
     quoteLines:Array.isArray(source.quoteLines)?source.quoteLines:(Array.isArray(existing.quoteLines)?existing.quoteLines:[])
@@ -258,7 +258,7 @@ function normalizeDb(data){
 
 function normalizeProduct(product){
   const p=product&&typeof product==='object'?product:{};
-  const id=String(p.productId||p.id||p.sku||'').trim();
+  const id=String(p.productId||p.id||p.sku||p.productCode||p.itemCode||'').trim();
   const groupCode=String(p.groupCode||'').trim();
   const productName=String(p.productName||p.itemName||'').trim();
   const description=String(p.description||p.itemDesc||'').trim();
@@ -279,12 +279,112 @@ function normalizeProduct(product){
     groupCode,
     group:groupCode,
     unit:String(p.unit||'').trim(),
+    rawListPrice:String(p.rawListPrice??p.listPrice??p.price??'').trim(),
     listPrice:parseClientNumber(p.listPrice),
     imageUrl:String(p.imageUrl||'').trim(),
     active:String(p.active||p.status||'').trim(),
     notes:String(p.notes||'').trim(),
     promoText:String(p.promoText||'').trim()
   };
+}
+
+function normalizeProductIdentityPart(value){
+  return String(value??'').trim().replace(/\s+/g,' ').toLowerCase();
+}
+function normalizeProductIdentityPrice(value){
+  const text=String(value??'').replace(/,/g,'').trim();
+  if(!text)return 'empty';
+  const numeric=Number(text);
+  if(!Number.isFinite(numeric))return normalizeProductIdentityPart(value);
+  return String(Math.round(numeric*1000000)/1000000);
+}
+function getProductIdentityFirstValue(product,fields){
+  const item=product&&typeof product==='object'?product:{};
+  for(let i=0;i<fields.length;i++){
+    const value=item[fields[i]];
+    if(value!==undefined&&value!==null&&String(value).trim()!=='')return value;
+  }
+  return '';
+}
+function createProductIdentityKey(product){
+  const item=product&&typeof product==='object'?product:{};
+  const parts=[
+    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['brand','businessUnit','productBusinessUnit','quoteType','bu'])),
+    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['productCode','sku','productId','id','itemCode'])),
+    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['productName','itemName','name'])),
+    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['unit','uom','unitName','salesUnit'])),
+    normalizeProductIdentityPrice(getProductIdentityFirstValue(item,['rawListPrice','rawPrice','listPrice','price','unitListPrice','masterListPrice'])),
+    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['priceType','priceListType'])),
+    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['priceList','priceListId','priceListName'])),
+    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['promotionId','promoId','promotionCode'])),
+    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['priceSource','priceListSource','promotionSource','promoText'])),
+    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['discountGroup','groupCode','group','category']))
+  ];
+  return parts.join('|');
+}
+function getProductCompletenessScore(product){
+  const item=product&&typeof product==='object'?product:{};
+  const fields=['productId','sku','productCode','productName','description','brand','businessUnit','productBusinessUnit','discountGroup','groupCode','unit','rawListPrice','listPrice','priceType','priceList','promotionId','priceSource','promoText','imageUrl','notes','active'];
+  return fields.reduce((score,field)=>score+(item[field]!==undefined&&item[field]!==null&&String(item[field]).trim()!==''?1:0),0);
+}
+function shouldReplaceDedupedProduct(current,candidate){
+  return getProductCompletenessScore(candidate)>getProductCompletenessScore(current);
+}
+function getProductDedupeDebugEnabled(){
+  try{
+    return window.PRODUCT_DEDUPE_DEBUG===true||String(localStorage.getItem('sg_product_dedupe_debug')||'').trim().toLowerCase()==='true';
+  }catch(error){
+    return window.PRODUCT_DEDUPE_DEBUG===true;
+  }
+}
+function logProductDedupeResult(result,source){
+  const info=result&&result.info?result.info:{sourceCount:0,deduplicatedCount:0,removedDuplicateCount:0};
+  if(info.removedDuplicateCount>0||getProductDedupeDebugEnabled()){
+    console.info('[PRODUCT_DEDUPE]',{
+      source:source||'products',
+      sourceCount:info.sourceCount,
+      deduplicatedCount:info.deduplicatedCount,
+      removedDuplicateCount:info.removedDuplicateCount
+    });
+  }
+}
+function dedupeExactProductsWithReport(products,source){
+  const list=Array.isArray(products)?products:[];
+  const result=[];
+  const byKey=new Map();
+  const duplicateGroups=new Map();
+  list.forEach((product,index)=>{
+    const item=product&&typeof product==='object'?product:{};
+    const key=createProductIdentityKey(item);
+    if(!key.replace(/\|/g,'')){
+      result.push(item);
+      return;
+    }
+    if(!byKey.has(key)){
+      byKey.set(key,{index:result.length,product:item,sourceIndexes:[index]});
+      result.push(item);
+      return;
+    }
+    const entry=byKey.get(key);
+    entry.sourceIndexes.push(index);
+    if(!duplicateGroups.has(key))duplicateGroups.set(key,entry.sourceIndexes);
+    if(shouldReplaceDedupedProduct(entry.product,item)){
+      entry.product=item;
+      result[entry.index]=item;
+    }
+  });
+  const info={
+    sourceCount:list.length,
+    deduplicatedCount:result.length,
+    removedDuplicateCount:Math.max(0,list.length-result.length),
+    duplicateGroupCount:Array.from(duplicateGroups.values()).filter(group=>group.length>1).length
+  };
+  const report={products:result,info:info,duplicateGroups:Array.from(duplicateGroups.entries()).map(entry=>({key:entry[0],sourceIndexes:entry[1].slice()}))};
+  logProductDedupeResult(report,source);
+  return report;
+}
+function dedupeExactProducts(products,source){
+  return dedupeExactProductsWithReport(products,source).products;
 }
 
 function parseCustomerBooleanForUi(value){
@@ -1058,7 +1158,7 @@ function invalidateBootstrapCustomerCacheIfNeeded(){
   }
 }
 function setProductsData(items){
-  DB.products=Array.isArray(items)?items.map(normalizeProduct):[];
+  DB.products=dedupeExactProducts(Array.isArray(items)?items.map(normalizeProduct):[],'setProductsData');
   productsLoaded=true;
   if(typeof setCache==='function')setCache('sg_products_cache',DB.products,15);
 }
@@ -2652,7 +2752,7 @@ function canManageQuoteProductPreferences(){return currentRole()!=='VIEWER'&&can
 function decorateQuotePreferenceProduct(product){const item=Object.assign({},product||{});const id=normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(item));const favoriteIds=getFavoriteProductIdSet();const pinnedOrders=getPinnedProductOrderMap();item.isFavoriteProduct=favoriteIds.has(id)||Boolean(item.isFavoriteProduct);item.isPinnedProduct=pinnedOrders.has(id)||Boolean(item.isPinnedProduct);item.pinnedSortOrder=pinnedOrders.get(id)||Number(item.pinnedSortOrder||0)||0;return item}
 function productPreferenceRank(product){const item=decorateQuotePreferenceProduct(product);if(item.isPinnedProduct)return item.pinnedSortOrder||1;return item.isFavoriteProduct?1000:2000}
 function findQuoteProductById(productId){const id=normalizeQuoteProductPreferenceId(productId);return DB.products.find(product=>normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(product))===id)||null}
-function getPreferenceProductList(list){return (Array.isArray(list)?list:[]).map(product=>decorateQuotePreferenceProduct(Object.assign({},findQuoteProductById(getQuoteProductPreferenceId(product))||{},product))).filter(product=>getQuoteProductPreferenceId(product))}
+function getPreferenceProductList(list){return dedupeExactProducts((Array.isArray(list)?list:[]).map(product=>decorateQuotePreferenceProduct(Object.assign({},findQuoteProductById(getQuoteProductPreferenceId(product))||{},product))).filter(product=>getQuoteProductPreferenceId(product)),'productPreferences')}
 function ensureProductPreferenceContainers(){const picker=$('productPicker');if(!picker||($('pinnedProducts')&&$('favoriteProducts')))return;const parent=picker.parentNode;if(!parent)return;if(!$('pinnedProducts')){const pinned=document.createElement('div');pinned.id='pinnedProducts';pinned.className='quote-product-preferences';parent.insertBefore(pinned,picker)}if(!$('favoriteProducts')){const favorite=document.createElement('div');favorite.id='favoriteProducts';favorite.className='quote-product-preferences';parent.insertBefore(favorite,picker)}}
 async function loadProductPreferences(force){if(productPreferencesLoaded&&!force)return {ok:true,data:{favorites:FAVORITE_PRODUCTS,pinned:PINNED_PRODUCTS}};if(productPreferencesPromise&&!force)return productPreferencesPromise;productPreferencesPromise=callApi('getProductPreferences',{}).then(response=>{if(response&&response.ok){const data=response.data||{};FAVORITE_PRODUCTS=getPreferenceProductList(data.favorites);PINNED_PRODUCTS=getPreferenceProductList(data.pinned).sort((a,b)=>(Number(a.pinnedSortOrder||0)||999)-(Number(b.pinnedSortOrder||0)||999));productPreferencesLoaded=true;}renderQuoteProductPreferenceSections();if($('productPicker')&&typeof renderQuoteProductPicker==='function')setTimeout(()=>renderQuoteProductPicker(),0);return response}).finally(()=>{productPreferencesPromise=null});return productPreferencesPromise}
 function renderQuoteProductPreferenceCard(product,options){
@@ -2703,4 +2803,5 @@ filterQuoteProductsByBusinessUnit=function(query,businessUnit){return baseFilter
 const baseRenderQuoteProductPickerForPreferences=renderQuoteProductPicker;
 renderQuoteProductPicker=function(){const requestId=++quoteProductSearchSequence;ensureProductPreferenceContainers();if(!productPreferencesLoaded&&!productPreferencesPromise&&USER)loadProductPreferences();const q=$('productSearch')?.value||'';const picker=$('productPicker');if(!picker)return;if(!isQuoteBusinessUnitReadyForProducts()){picker.innerHTML='<div class="row quote-empty">กรุณาเลือก BU ก่อนแสดงสินค้า</div>';renderQuoteProductPreferenceSections();return;}const businessUnit=getSelectedQuoteBusinessUnitForProducts();const businessUnitLabel=quoteBusinessUnitLabel(businessUnit);if(!productsLoaded&&!DB.products.length){picker.innerHTML=`<div class="row quote-empty">กำลังโหลดสินค้า โดยเรียง ${businessUnitLabel} ก่อน...</div>`;if(document.activeElement===$('productSearch')){loadProducts().then(()=>{if(requestId===quoteProductSearchSequence&&businessUnit===getSelectedQuoteBusinessUnitForProducts())renderQuoteProductPicker();});}renderQuoteProductPreferenceSections();return;}const matchesAll=filterQuoteProductsByBusinessUnit(q,businessUnit);const limited=limitList(matchesAll,QUOTE_PICKER_LIMIT);const notice=limited.limited?`<div class="list-limit">แสดง 30 รายการแรกจากทุก BU โดยเรียง ${businessUnitLabel} และสินค้าปักหมุดก่อน กรุณาค้นหาเพิ่มเติม</div>`:'';picker.innerHTML=limited.items.length?notice+limited.items.map(product=>renderQuoteProductPreferenceCard(product,{source:'SEARCH'})).join(''):`<div class="row quote-empty">ไม่พบสินค้าที่ตรงกับคำค้น</div>`;renderQuoteProductPreferenceSections();};
 window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.addProductCardToQuote=addProductCardToQuote; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
+window.createProductIdentityKey=createProductIdentityKey; window.dedupeExactProducts=dedupeExactProducts; window.dedupeExactProductsWithReport=dedupeExactProductsWithReport;
 window.normalizeSystemIdentitySettings=normalizeSystemIdentitySettings; window.applySystemIdentityToUI=applySystemIdentityToUI; window.renderLoginBranding=renderLoginBranding; window.renderSidebarBranding=renderSidebarBranding; window.refreshPublicSystemSettings=refreshPublicSystemSettings; window.setPublicSystemSettings=setPublicSystemSettings; window.loadSystemIdentitySettingsForSettings=loadSystemIdentitySettingsForSettings; window.saveSystemIdentitySettings=saveSystemIdentitySettings; window.savePersonalGreetingSettings=savePersonalGreetingSettings; window.saveSystemGreetingSettings=saveSystemGreetingSettings; window.canManageSystemIdentitySettings=canManageSystemIdentitySettings; window.applySettingsPermissionUi=applySettingsPermissionUi;
