@@ -1019,6 +1019,10 @@ function normalizeQuotationPayloadItem(item, lineNo, productBusinessUnit, canoni
     priceOverridden: parseQuotationOverrideFlag_(data.priceOverridden) || (masterListPrice > 0 && quotedListPrice > 0 && roundCurrency(masterListPrice) !== roundCurrency(quotedListPrice)) || (masterListPrice <= 0 && quotedListPrice > 0),
     unitOverridden: parseQuotationOverrideFlag_(data.unitOverridden) || Boolean(masterUnit && quotedUnit && normalizeString(masterUnit) !== normalizeString(quotedUnit)),
     overrideReason: sanitizeQuotationUnit_(data.overrideReason || ''),
+    priceType: sanitizeQuotationUnit_(data.priceType || data.priceListType || ''),
+    priceList: sanitizeQuotationUnit_(data.priceList || data.priceListId || data.priceListName || ''),
+    promotionId: sanitizeQuotationUnit_(data.promotionId || data.promoId || data.promotionCode || ''),
+    priceSource: sanitizeQuotationUnit_(data.priceSource || data.priceListSource || data.promotionSource || ''),
     updatedAt: String(data.updatedAt || new Date().toISOString()).trim(),
     updatedBy: updatedBy,
     isFreeItem: isFreeItem,
@@ -1033,6 +1037,45 @@ function getQuotationPayloadProductKey_(item) {
   return normalizeString(data.productId || data.productCode || data.sku);
 }
 
+function normalizeQuotationPayloadProductIdentityPart_(value) {
+  return String(value === null || value === undefined ? '' : value).trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function normalizeQuotationPayloadProductIdentityPrice_(value) {
+  const text = String(value === null || value === undefined ? '' : value).replace(/,/g, '').trim();
+  if (!text) return 'empty';
+  const numeric = Number(text);
+  if (!isFinite(numeric)) return normalizeQuotationPayloadProductIdentityPart_(value);
+  return String(Math.round(numeric * 1000000) / 1000000);
+}
+
+function getQuotationPayloadProductIdentityFirstValue_(item, fields) {
+  const data = item || {};
+  for (var i = 0; i < fields.length; i++) {
+    const value = data[fields[i]];
+    if (value !== undefined && value !== null && String(value).trim() !== '') return value;
+  }
+  return '';
+}
+
+function getQuotationPayloadProductIdentityKey_(item) {
+  const data = item || {};
+  const productKey = getQuotationPayloadProductKey_(data);
+  if (!productKey) return '';
+  return [
+    normalizeQuotationPayloadProductIdentityPart_(getQuotationProductBusinessUnit(data)),
+    normalizeQuotationPayloadProductIdentityPart_(productKey),
+    normalizeQuotationPayloadProductIdentityPart_(getQuotationPayloadProductIdentityFirstValue_(data, ['productName', 'name'])),
+    normalizeQuotationPayloadProductIdentityPart_(getQuotationPayloadProductIdentityFirstValue_(data, ['masterUnit', 'quotedUnit', 'unit'])),
+    normalizeQuotationPayloadProductIdentityPrice_(getQuotationPayloadProductIdentityFirstValue_(data, ['masterListPrice', 'quotedListPrice', 'listPrice'])),
+    normalizeQuotationPayloadProductIdentityPart_(getQuotationPayloadProductIdentityFirstValue_(data, ['priceType', 'priceListType'])),
+    normalizeQuotationPayloadProductIdentityPart_(getQuotationPayloadProductIdentityFirstValue_(data, ['priceList', 'priceListId', 'priceListName'])),
+    normalizeQuotationPayloadProductIdentityPart_(getQuotationPayloadProductIdentityFirstValue_(data, ['promotionId', 'promoId', 'promotionCode'])),
+    normalizeQuotationPayloadProductIdentityPart_(getQuotationPayloadProductIdentityFirstValue_(data, ['priceSource', 'priceListSource', 'promotionSource'])),
+    normalizeQuotationPayloadProductIdentityPart_(getQuotationPayloadProductIdentityFirstValue_(data, ['discountGroup', 'groupCode', 'group', 'category']))
+  ].join('|');
+}
+
 function validateNormalizedQuotationPayloadItems_(items) {
   const list = Array.isArray(items) ? items : [];
   const lineIds = {};
@@ -1042,6 +1085,7 @@ function validateNormalizedQuotationPayloadItems_(items) {
     const item = list[i] || {};
     const lineId = String(item.lineId || '').trim();
     const productKey = getQuotationPayloadProductKey_(item);
+    const productIdentityKey = getQuotationPayloadProductIdentityKey_(item);
     const isFreeItem = item.isFreeItem === true;
     if (!lineId) {
       return fail('lineId is required', 'INVALID_QUOTE_LINE', { index: i + 1 });
@@ -1068,10 +1112,10 @@ function validateNormalizedQuotationPayloadItems_(items) {
       return fail('isFreeItem must be Boolean', 'INVALID_FREE_ITEM_STATE', { productId: item.productId || item.productCode || item.sku });
     }
     if (isFreeItem) {
-      if (freeProductKeys[productKey]) {
-        return fail('Duplicate free product line detected', 'DUPLICATE_FREE_PRODUCT_LINE', { productId: item.productId, lineId: lineId });
+      if (freeProductKeys[productIdentityKey]) {
+        return fail('Duplicate free product line detected', 'DUPLICATE_FREE_PRODUCT_LINE', { productId: item.productId, lineId: lineId, productIdentityKey: productIdentityKey });
       }
-      freeProductKeys[productKey] = true;
+      freeProductKeys[productIdentityKey] = true;
       if (roundCurrency(parseQuotationNumericValue(item.unitPrice)) !== 0 || roundCurrency(parseQuotationNumericValue(item.lineTotal)) !== 0 || roundCurrency(parseQuotationNumericValue(item.vat)) !== 0 || roundCurrency(parseQuotationNumericValue(item.grandTotal)) !== 0) {
         return fail('Free product line must have zero totals', 'INVALID_FREE_ITEM_STATE', { productId: item.productId, lineId: lineId });
       }
@@ -1079,10 +1123,10 @@ function validateNormalizedQuotationPayloadItems_(items) {
       if (!isValidQuotationLinePrice_(item.quotedListPrice || item.listPrice)) {
         return fail('quotedListPrice is required', 'QUOTE_LINE_PRICE_REQUIRED', { productId: item.productId, lineId: lineId });
       }
-      if (paidProductKeys[productKey]) {
-        return fail('Duplicate paid product line detected', 'DUPLICATE_PAID_PRODUCT_LINE', { productId: item.productId, lineId: lineId });
+      if (paidProductKeys[productIdentityKey]) {
+        return fail('Duplicate paid product line detected', 'DUPLICATE_PAID_PRODUCT_LINE', { productId: item.productId, lineId: lineId, productIdentityKey: productIdentityKey });
       }
-      paidProductKeys[productKey] = true;
+      paidProductKeys[productIdentityKey] = true;
     }
   }
   return success(true);
