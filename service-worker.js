@@ -1,4 +1,4 @@
-const CACHE_NAME = 'sales-system-v5-0.5.8';
+const CACHE_NAME = 'sales-system-v5-0.5.9';
 const ASSETS = [
   './',
   './index.html',
@@ -13,7 +13,7 @@ const ASSETS = [
   './js/api.js',
   './js/api.js?v=0.5.7',
   './js/app.js',
-  './js/app.js?v=0.5.7',
+  './js/app.js?v=0.5.9',
   './js/auth.js',
   './js/auth.js?v=0.5.3',
   './js/quotation.js',

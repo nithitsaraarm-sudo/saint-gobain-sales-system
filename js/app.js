@@ -4,6 +4,8 @@ window.appState=window.appState||{};
 window.appState.publicSettings=normalizeSystemIdentitySettings(window.appState.publicSettings||SYSTEM_IDENTITY_FALLBACK);
 let DB=normalizeDb(), USER=null, CART=[], selectedCustomerId='';
 let PRODUCT_CALC_PRODUCT=null;
+let PRODUCT_CALC_STATE={selectedProduct:null,originalUnitPrice:0,editedUnitPrice:0,discountPercent:0,quantity:1,recordKey:'',sourceListIndex:null};
+let PRODUCT_CALC_RECORDS=new Map(), PRODUCT_CALC_RENDER_SEQUENCE=0, PRODUCT_CALC_RECORD_SEQUENCE=0;
 let PROFILE_IMAGE_DATA='';
 let bootstrapLoaded=false, bootstrapPromise=null;
 let quoteHistoryLoaded=false, quoteHistoryPromise=null;
@@ -777,25 +779,97 @@ function productSearchText(p){return [p.productId,p.sku,p.productName,p.descript
 function htmlAttr(value){
   return String(value??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
+function cloneProductForCalculator(product){
+  return Object.assign({},product&&typeof product==='object'?product:{});
+}
+function getProductCalculatorDebugEnabled(){
+  try{
+    return window.PRODUCT_CALCULATOR_DEBUG===true||String(localStorage.getItem('sg_product_calculator_debug')||'').trim().toLowerCase()==='true';
+  }catch(error){
+    return window.PRODUCT_CALCULATOR_DEBUG===true;
+  }
+}
+function debugProductCalculator(eventName,details){
+  if(!getProductCalculatorDebugEnabled()||typeof console==='undefined'||typeof console.debug!=='function')return;
+  console.debug('[PRODUCT_CALCULATOR]',eventName,details||{});
+}
+function getProductCalculatorReference(product){
+  const item=product&&typeof product==='object'?product:{};
+  return String(item.priceListItemId||item.recordId||item.rowId||item.sourceRow||item.productId||item.sku||item.productCode||item.id||'').trim();
+}
+function resetProductCalculatorRecordRegistry(){
+  PRODUCT_CALC_RENDER_SEQUENCE+=1;
+  PRODUCT_CALC_RECORD_SEQUENCE=0;
+  PRODUCT_CALC_RECORDS=new Map();
+}
+function registerProductCalculatorRecord(product,sourceListIndex){
+  const snapshot=cloneProductForCalculator(product);
+  const recordKey='product-calc-'+PRODUCT_CALC_RENDER_SEQUENCE+'-'+(++PRODUCT_CALC_RECORD_SEQUENCE);
+  PRODUCT_CALC_RECORDS.set(recordKey,{product:snapshot,sourceListIndex:sourceListIndex});
+  return recordKey;
+}
+function resolveProductCalculatorRecord(value){
+  if(value&&typeof value==='object'&&!Array.isArray(value)){
+    return {product:cloneProductForCalculator(value),recordKey:getProductCalculatorReference(value),source:'object'};
+  }
+  const key=String(value||'').trim();
+  if(key&&PRODUCT_CALC_RECORDS.has(key)){
+    const entry=PRODUCT_CALC_RECORDS.get(key)||{};
+    return {product:cloneProductForCalculator(entry.product),recordKey:key,source:'card-record',sourceListIndex:entry.sourceListIndex};
+  }
+  const product=findProductForCalculator(key);
+  return product?{product:cloneProductForCalculator(product),recordKey:key,source:'legacy-reference'}:null;
+}
+function parseProductCalculatorNumber(value,options){
+  const opts=options||{};
+  const raw=String(value===null||value===undefined?'':value).replace(/,/g,'').trim();
+  if(!raw){
+    return opts.required?{ok:false,value:0,reason:'blank'}:{ok:true,value:Number(opts.defaultValue||0),reason:''};
+  }
+  const number=Number(raw);
+  if(!Number.isFinite(number)){
+    return {ok:false,value:0,reason:'invalid'};
+  }
+  return {ok:true,value:number,reason:''};
+}
+function getProductCalculatorPrice(product){
+  const item=product&&typeof product==='object'?product:{};
+  const parsed=parseProductCalculatorNumber(item.listPrice!==undefined?item.listPrice:(item.price!==undefined?item.price:item.unitListPrice),{required:false,defaultValue:0});
+  return parsed.ok?parsed.value:0;
+}
 function findProductForCalculator(productId){
   const id=String(productId||'').trim().toLowerCase();
   return (Array.isArray(DB.products)?DB.products:[]).find(p=>String(p.productId||p.sku||p.id||'').trim().toLowerCase()===id)||null;
 }
-function openProductCalculator(productId){
-  const product=findProductForCalculator(productId);
-  if(!product){
+function openProductCalculator(productRecord){
+  const resolved=resolveProductCalculatorRecord(productRecord);
+  if(!resolved||!resolved.product){
     toast('ไม่พบสินค้า');
+    debugProductCalculator('open_failed',{recordKey:String(productRecord||'').trim()});
     return;
   }
-  PRODUCT_CALC_PRODUCT=product;
+  const product=cloneProductForCalculator(resolved.product);
+  const originalUnitPrice=getProductCalculatorPrice(product);
+  PRODUCT_CALC_STATE={selectedProduct:product,originalUnitPrice:originalUnitPrice,editedUnitPrice:originalUnitPrice,discountPercent:0,quantity:1,recordKey:resolved.recordKey||'',sourceListIndex:resolved.sourceListIndex??null};
+  PRODUCT_CALC_PRODUCT=PRODUCT_CALC_STATE.selectedProduct;
   const modal=$('productPriceModal');
   if(!modal)return;
   const priceInput=$('productCalcListPrice');
   const discountInput=$('productCalcDiscount');
   const qtyInput=$('productCalcQty');
-  if(priceInput)priceInput.value=parseClientNumber(product.listPrice).toFixed(2);
+  if(priceInput)priceInput.value=originalUnitPrice.toFixed(2);
   if(discountInput)discountInput.value='0';
   if(qtyInput)qtyInput.value='1';
+  debugProductCalculator('open',{
+    recordKey:PRODUCT_CALC_STATE.recordKey,
+    productCode:product.productCode||product.sku||product.productId||product.id||'',
+    productName:product.productName||product.name||'',
+    cardPrice:originalUnitPrice,
+    calculatorInitializedPrice:originalUnitPrice,
+    brand:product.brand||product.businessUnit||product.productBusinessUnit||'',
+    unit:product.unit||'',
+    sourceListIndex:PRODUCT_CALC_STATE.sourceListIndex
+  });
   renderProductCalculator();
   modal.classList.remove('hidden');
   modal.classList.add('show');
@@ -808,53 +882,88 @@ function closeProductCalculator(){
   }
 }
 function resetProductCalculator(){
-  if(!PRODUCT_CALC_PRODUCT)return;
+  if(!PRODUCT_CALC_STATE||!PRODUCT_CALC_STATE.selectedProduct)return;
   const priceInput=$('productCalcListPrice');
   const discountInput=$('productCalcDiscount');
   const qtyInput=$('productCalcQty');
-  if(priceInput)priceInput.value=parseClientNumber(PRODUCT_CALC_PRODUCT.listPrice).toFixed(2);
+  if(priceInput)priceInput.value=Number(PRODUCT_CALC_STATE.originalUnitPrice||0).toFixed(2);
   if(discountInput)discountInput.value='0';
   if(qtyInput)qtyInput.value='1';
+  PRODUCT_CALC_STATE.editedUnitPrice=PRODUCT_CALC_STATE.originalUnitPrice||0;
+  PRODUCT_CALC_STATE.discountPercent=0;
+  PRODUCT_CALC_STATE.quantity=1;
+  debugProductCalculator('reset',{
+    recordKey:PRODUCT_CALC_STATE.recordKey,
+    originalUnitPrice:PRODUCT_CALC_STATE.originalUnitPrice
+  });
   renderProductCalculator();
 }
 function renderProductCalculator(){
-  const product=PRODUCT_CALC_PRODUCT||{};
+  const product=PRODUCT_CALC_STATE&&PRODUCT_CALC_STATE.selectedProduct||PRODUCT_CALC_PRODUCT||{};
   const capture=$('productPriceCapture');
   if(!capture)return;
-  const listPrice=parseClientNumber($('productCalcListPrice')?.value||product.listPrice);
-  const discountPercent=parseClientNumber($('productCalcDiscount')?.value);
-  const qty=Math.max(0,parseClientNumber($('productCalcQty')?.value||1));
-  const netPrice=listPrice*(1-discountPercent/100);
-  const subtotal=netPrice*qty;
-  const vat=subtotal*0.07;
-  const grandTotal=subtotal+vat;
+  const priceParsed=parseProductCalculatorNumber($('productCalcListPrice')?.value,{required:true});
+  const discountParsed=parseProductCalculatorNumber($('productCalcDiscount')?.value,{required:false,defaultValue:0});
+  const qtyParsed=parseProductCalculatorNumber($('productCalcQty')?.value,{required:false,defaultValue:1});
+  const errors=[];
+  if(!priceParsed.ok)errors.push('กรุณากรอกราคาตั้งเป็นตัวเลข');
+  if(priceParsed.ok&&priceParsed.value<0)errors.push('ราคาตั้งต้องไม่ติดลบ');
+  if(!discountParsed.ok)errors.push('กรุณากรอกส่วนลดเป็นตัวเลข');
+  if(!qtyParsed.ok)errors.push('กรุณากรอกจำนวนเป็นตัวเลข');
+  if(qtyParsed.ok&&qtyParsed.value<0)errors.push('จำนวนต้องไม่ติดลบ');
+  const hasError=errors.length>0;
+  const listPrice=hasError?0:priceParsed.value;
+  const discountPercent=hasError?0:discountParsed.value;
+  const qty=hasError?0:Math.max(0,qtyParsed.value);
+  const netPrice=hasError?0:listPrice*(1-discountPercent/100);
+  const subtotal=hasError?0:netPrice*qty;
+  const vat=hasError?0:subtotal*0.07;
+  const grandTotal=hasError?0:subtotal+vat;
+  if(!hasError&&PRODUCT_CALC_STATE){
+    PRODUCT_CALC_STATE.editedUnitPrice=listPrice;
+    PRODUCT_CALC_STATE.discountPercent=discountPercent;
+    PRODUCT_CALC_STATE.quantity=qty;
+  }else if(hasError){
+    debugProductCalculator('validation_error',{
+      recordKey:PRODUCT_CALC_STATE&&PRODUCT_CALC_STATE.recordKey||'',
+      reason:errors[0]||'invalid_input',
+      productCode:product.productCode||product.sku||product.productId||product.id||'',
+      cardPrice:PRODUCT_CALC_STATE&&PRODUCT_CALC_STATE.originalUnitPrice
+    });
+  }
   const productId=product.productId||product.sku||product.id||'-';
   const imageUrl=String(product.imageUrl||'').trim();
-  capture.innerHTML=`
-    <div class="product-calc-head">
-      <div class="product-calc-img">${imageUrl?`<img src="${htmlAttr(imageUrl)}" alt="">`:'📦'}</div>
-      <div>
-        <span class="pill ${product.brand==='Weber'?'yellow':'blue'}">${product.brand||'-'}</span>
-        <h2>${product.productName||'-'}</h2>
-        <p>รหัสสินค้า: ${productId}</p>
-        <p>หน่วย: ${product.unit||'-'}</p>
-        <p>ราคาตั้ง: ${money(product.listPrice)}</p>
-      </div>
-    </div>
-    <div class="product-calc-input-summary">
-      <span>ราคาตั้งต่อหน่วย: <b>${money(listPrice)}</b></span>
-      <span>ส่วนลด: <b>${discountPercent}%</b></span>
-      <span>จำนวน: <b>${qty}</b></span>
-    </div>
-    <div class="product-calc-results">
+  const originalUnitPrice=PRODUCT_CALC_STATE&&PRODUCT_CALC_STATE.originalUnitPrice!==undefined?PRODUCT_CALC_STATE.originalUnitPrice:getProductCalculatorPrice(product);
+  const priceSource=String(product.priceSource||product.priceListSource||product.promotionSource||product.promoText||'').trim();
+  const resultHtml=hasError
+    ? `<div class="quote-modal-error product-calc-error" role="alert">${escapeHtml(errors[0])}</div>`
+    : `<div class="product-calc-results">
       <div><small>ราคาสุทธิต่อหน่วย</small><b>${money(netPrice)}</b></div>
       <div><small>VAT 7%</small><b>${money(vat)}</b></div>
       <div><small>ยอดก่อน VAT</small><b>${money(subtotal)}</b></div>
       <div class="grand"><small>ยอดลูกค้าชำระ</small><b>${money(grandTotal)}</b></div>
     </div>`;
+  capture.innerHTML=`
+    <div class="product-calc-head">
+      <div class="product-calc-img">${imageUrl?`<img src="${htmlAttr(imageUrl)}" alt="">`:'📦'}</div>
+      <div>
+        <span class="pill ${product.brand==='Weber'?'yellow':'blue'}">${escapeHtml(product.brand||'-')}</span>
+        <h2>${escapeHtml(product.productName||'-')}</h2>
+        <p>รหัสสินค้า: ${escapeHtml(productId)}</p>
+        <p>หน่วย: ${escapeHtml(product.unit||'-')}</p>
+        <p>ราคาตั้งจากการ์ด: ${money(originalUnitPrice)}</p>
+        ${priceSource?`<p>แหล่งราคา: ${escapeHtml(priceSource)}</p>`:''}
+      </div>
+    </div>
+    <div class="product-calc-input-summary">
+      <span>ราคาตั้งต่อหน่วย: <b>${hasError?'-':money(listPrice)}</b></span>
+      <span>ส่วนลด: <b>${hasError?'-':discountPercent+'%'}</b></span>
+      <span>จำนวน: <b>${hasError?'-':qty}</b></span>
+    </div>
+    ${resultHtml}`;
 }
 async function saveProductCalculatorImage(){
-  const product=PRODUCT_CALC_PRODUCT||{};
+  const product=PRODUCT_CALC_STATE&&PRODUCT_CALC_STATE.selectedProduct||PRODUCT_CALC_PRODUCT||{};
   const target=$('productPriceCapture');
   if(!target)return null;
   if(typeof html2canvas!=='function'){
@@ -887,8 +996,18 @@ async function saveProductCalculatorImage(){
 }
 function addProductCardToQuote(productId,event){
   if(event&&typeof event.stopPropagation==='function')event.stopPropagation();
-  const product=findProductForCalculator(productId);
+  const resolved=resolveProductCalculatorRecord(productId);
+  const product=resolved&&resolved.product?cloneProductForCalculator(resolved.product):null;
   if(product&&typeof addCart==='function'){
+    debugProductCalculator('add_to_quote',{
+      recordKey:resolved.recordKey||'',
+      productCode:product.productCode||product.sku||product.productId||product.id||'',
+      productName:product.productName||product.name||'',
+      cardPrice:getProductCalculatorPrice(product),
+      brand:product.brand||product.businessUnit||product.productBusinessUnit||'',
+      unit:product.unit||'',
+      sourceListIndex:resolved.sourceListIndex??null
+    });
     addCart(product);
   }
 }
@@ -2330,7 +2449,7 @@ async function toggleFavoriteCustomer(customerId){const favorite=isFavoriteCusto
 async function persistFavoriteOrder(){const grid=$('favoriteCustomerGrid');if(!grid)return;const customerIds=Array.from(grid.querySelectorAll('[data-customer-id]')).map(el=>el.dataset.customerId);const response=await callApi('reorderFavoriteCustomers',{customerIds:customerIds});if(!response.ok){toast(response.message||'จัดลำดับไม่สำเร็จ');await loadFavoriteCustomers();return;}const map=new Map(FAVORITE_CUSTOMERS.map(c=>[String(c.customerId),c]));FAVORITE_CUSTOMERS=customerIds.map(id=>map.get(id)).filter(Boolean)}
 function bindFavoriteDragAndDrop(){const grid=$('favoriteCustomerGrid');if(!grid||grid.dataset.bound)return;grid.dataset.bound='true';let dragged=null;grid.addEventListener('dragstart',event=>{dragged=event.target.closest('.favorite-card');if(!dragged)return;dragged.classList.add('is-dragging');event.dataTransfer.effectAllowed='move'});grid.addEventListener('dragover',event=>{event.preventDefault();const target=event.target.closest('.favorite-card');if(dragged&&target&&target!==dragged)grid.insertBefore(dragged,target)});grid.addEventListener('dragend',()=>{if(dragged)dragged.classList.remove('is-dragging');dragged=null;persistFavoriteOrder()});let timer=null,touchCard=null;grid.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'||event.target.closest('button,a'))return;touchCard=event.target.closest('.favorite-card');if(touchCard)timer=setTimeout(()=>{touchCard.classList.add('is-dragging');touchCard.setPointerCapture(event.pointerId)},350)});grid.addEventListener('pointermove',event=>{if(!touchCard||!touchCard.classList.contains('is-dragging'))return;event.preventDefault();const target=document.elementFromPoint(event.clientX,event.clientY)?.closest('.favorite-card');if(target&&target!==touchCard)grid.insertBefore(touchCard,target)});const finish=()=>{clearTimeout(timer);if(touchCard&&touchCard.classList.contains('is-dragging')){touchCard.classList.remove('is-dragging');persistFavoriteOrder()}touchCard=null};grid.addEventListener('pointerup',finish);grid.addEventListener('pointercancel',finish)}
 
-function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); if(!productsLoaded&&!DB.products.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>{const id=encodeURIComponent(String(p.productId||p.sku||p.id||''));return `<div class="card product-card-clickable" role="button" tabindex="0" onclick="openProductCalculator(decodeURIComponent('${id}'))" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProductCalculator(decodeURIComponent('${id}'))}"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${p.brand||'-'}</span><h3>${p.productName||'-'}</h3><p>รหัสสินค้า: ${p.sku||p.productId||p.id||'-'}</p><p>${p.unit||'-'}</p><b>${money(p.listPrice)}</b><br><button class="ghost" onclick="addProductCardToQuote(decodeURIComponent('${id}'),event)">เพิ่มลงใบเสนอราคา</button></div>`}).join('')}
+function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); if(!productsLoaded&&!DB.products.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} resetProductCalculatorRecordRegistry(); grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>{const recordKey=registerProductCalculatorRecord(p,DB.products.indexOf(p));const key=htmlAttr(recordKey);return `<div class="card product-card-clickable" role="button" tabindex="0" data-product-record-key="${key}" onclick="openProductCalculator('${key}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProductCalculator('${key}')}"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${escapeHtml(p.brand||'-')}</span><h3>${escapeHtml(p.productName||'-')}</h3><p>รหัสสินค้า: ${escapeHtml(p.sku||p.productId||p.id||'-')}</p><p>${escapeHtml(p.unit||'-')}</p><b>${money(p.listPrice)}</b><br><button class="ghost" onclick="addProductCardToQuote('${key}',event)">เพิ่มลงใบเสนอราคา</button></div>`}).join('')}
 
 function renderQuoteCustomerPicker(forceShow){
   const picker=$('quoteCustomerPicker'),input=$('quoteCustomerSearch');
