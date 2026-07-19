@@ -421,7 +421,7 @@ function createFallbackQuoteProductIdentityKey(product) {
     normalizeQuoteProductIdentityPart(getQuoteProductIdentityFirstValue(item, ['priceType', 'priceListType'])),
     normalizeQuoteProductIdentityPart(getQuoteProductIdentityFirstValue(item, ['priceList', 'priceListId', 'priceListName'])),
     normalizeQuoteProductIdentityPart(getQuoteProductIdentityFirstValue(item, ['promotionId', 'promoId', 'promotionCode'])),
-    normalizeQuoteProductIdentityPart(getQuoteProductIdentityFirstValue(item, ['priceSource', 'priceListSource', 'promotionSource', 'promoText'])),
+    normalizeQuoteProductIdentityPart(getQuoteProductIdentityFirstValue(item, ['priceSource', 'priceListSource', 'promotionSource'])),
     normalizeQuoteProductIdentityPart(getQuoteProductIdentityFirstValue(item, ['discountGroup', 'groupCode', 'group', 'category']))
   ].join('|');
 }
@@ -1183,7 +1183,7 @@ function createCartLine(product, qty, discountPercent, options) {
     priceType: String(product.priceType || product.priceListType || '').trim(),
     priceList: String(product.priceList || product.priceListId || product.priceListName || '').trim(),
     promotionId: String(product.promotionId || product.promoId || product.promotionCode || '').trim(),
-    priceSource: String(product.priceSource || product.priceListSource || product.promotionSource || product.promoText || '').trim(),
+    priceSource: String(product.priceSource || product.priceListSource || product.promotionSource || '').trim(),
     masterListPrice: masterListPrice,
     quotedListPrice: quotedListPrice,
     listPrice: quotedListPrice,

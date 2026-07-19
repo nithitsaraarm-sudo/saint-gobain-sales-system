@@ -64,7 +64,8 @@ function searchProducts(keyword) {
         item.brand,
         item.discountGroup,
         item.groupCode,
-        item.unit
+        item.unit,
+        item.promoText
       ].some(function (field) {
         return normalizeString(field).indexOf(query) >= 0;
       });
@@ -143,7 +144,7 @@ function searchQuoteProducts(payload) {
       return productsResult;
     }
     const products = Array.isArray(productsResult.data) ? productsResult.data : [];
-    const fields = ['productId', 'sku', 'productName', 'description', 'brand', 'discountGroup', 'groupCode', 'unit'];
+    const fields = ['productId', 'sku', 'productName', 'description', 'brand', 'discountGroup', 'groupCode', 'unit', 'promoText'];
     const matches = products.filter(function (item) {
       const productBusinessUnit = getProductBusinessUnit(item);
       if (!productBusinessUnit) {
@@ -263,7 +264,7 @@ function saveProduct(payload) {
       listPrice: String(data.listPrice || 0),
       imageUrl: String(data.imageUrl || ''),
       notes: String(data.notes || ''),
-      promoText: String(data.promoText || ''),
+      promoText: normalizeProductPromoText_(getProductPromoTextValue_(data)),
       active: 'TRUE',
       createdAt: now,
       updatedAt: now
@@ -400,6 +401,25 @@ function filterActiveProductObject(item) {
   return active === 'true' || active === 'yes' || active === '1' || active === 'active';
 }
 
+function normalizeProductPromoText_(value) {
+  if (value === null || value === undefined) return '';
+  const text = String(value).replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  const lowered = text.toLowerCase();
+  if (!text || lowered === 'null' || lowered === 'undefined') return '';
+  return text;
+}
+
+function getProductPromoTextValue_(source) {
+  const item = source && typeof source === 'object' ? source : {};
+  const fields = ['promoText', 'promotext', 'PromoText', 'Promo Text', 'promo_text', 'promotionText'];
+  for (var i = 0; i < fields.length; i++) {
+    if (Object.prototype.hasOwnProperty.call(item, fields[i]) && String(item[fields[i]] || '').trim() !== '') {
+      return item[fields[i]];
+    }
+  }
+  return item.promoText || '';
+}
+
 function normalizeProductObject(row) {
   const source = row && typeof row === 'object' ? row : {};
   const productId = String(source.productId || '').trim();
@@ -429,7 +449,7 @@ function normalizeProductObject(row) {
     imageUrl: String(source.imageUrl || '').trim(),
     active: String(source.active || source.status || '').trim(),
     notes: String(source.notes || '').trim(),
-    promoText: String(source.promoText || '').trim()
+    promoText: normalizeProductPromoText_(getProductPromoTextValue_(source))
   });
 }
 
@@ -467,7 +487,7 @@ function createProductIdentityKey(product) {
     normalizeProductIdentityText_(getProductIdentityValue_(item, ['priceType', 'priceListType'])),
     normalizeProductIdentityText_(getProductIdentityValue_(item, ['priceList', 'priceListId', 'priceListName'])),
     normalizeProductIdentityText_(getProductIdentityValue_(item, ['promotionId', 'promoId', 'promotionCode'])),
-    normalizeProductIdentityText_(getProductIdentityValue_(item, ['priceSource', 'priceListSource', 'promotionSource', 'promoText'])),
+    normalizeProductIdentityText_(getProductIdentityValue_(item, ['priceSource', 'priceListSource', 'promotionSource'])),
     normalizeProductIdentityText_(getProductIdentityValue_(item, ['discountGroup', 'groupCode', 'group', 'category']))
   ].join('|');
 }
