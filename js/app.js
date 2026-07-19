@@ -23,6 +23,8 @@ const SIDEBAR_MODE_EXPANDED='expanded';
 const SIDEBAR_MODE_MINI='mini';
 const PINNED_PRODUCTS_COLLAPSED_KEY='sg_pinned_products_collapsed';
 const FAVORITE_PRODUCTS_COLLAPSED_KEY='sg_favorite_products_collapsed';
+const PRODUCT_PROMO_CACHE_SCHEMA_KEY='sg_product_promo_cache_schema';
+const PRODUCT_PROMO_CACHE_SCHEMA_VERSION='1';
 const $=id=>document.getElementById(id); const money=n=>Number(n||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
 let sidebarDrawerFocusReturn=null, sidebarDrawerHistoryPushed=false, sidebarDrawerClosingFromHistory=false;
 
@@ -75,6 +77,28 @@ function checkAppVersion(){
   }catch(error){
     console.warn('[APP VERSION] update check failed',error);
     return false;
+  }
+}
+
+function ensureProductPromoCacheSchema(){
+  try{
+    const current=localStorage.getItem(PRODUCT_PROMO_CACHE_SCHEMA_KEY);
+    if(current===PRODUCT_PROMO_CACHE_SCHEMA_VERSION)return;
+    if(typeof clearCache==='function'){
+      clearCache('sg_products_cache');
+      const bootstrap=typeof getCache==='function'?getCache('sg_bootstrap_cache'):null;
+      if(bootstrap&&Array.isArray(bootstrap.products))clearCache('sg_bootstrap_cache');
+    }else{
+      localStorage.removeItem('sg_products_cache');
+      try{
+        const cachedBootstrap=JSON.parse(localStorage.getItem('sg_bootstrap_cache')||'null');
+        const bootstrap=cachedBootstrap&&cachedBootstrap.data?cachedBootstrap.data:cachedBootstrap;
+        if(bootstrap&&Array.isArray(bootstrap.products))localStorage.removeItem('sg_bootstrap_cache');
+      }catch(error){}
+    }
+    localStorage.setItem(PRODUCT_PROMO_CACHE_SCHEMA_KEY,PRODUCT_PROMO_CACHE_SCHEMA_VERSION);
+  }catch(error){
+    console.warn('[PRODUCT_PROMO_CACHE] schema check failed',error&&error.message?error.message:error);
   }
 }
 
@@ -216,6 +240,7 @@ function setupDebouncedSearchInputs(){
 }
 window.addEventListener('load',()=>{
   if(checkAppVersion())return;
+  ensureProductPromoCacheSchema();
   applySystemIdentityToUI(getSystemIdentitySettingsForUi());
   refreshPublicSystemSettings({silent:true});
   setupQuoteSearchEnhancements();
@@ -285,8 +310,25 @@ function normalizeProduct(product){
     imageUrl:String(p.imageUrl||'').trim(),
     active:String(p.active||p.status||'').trim(),
     notes:String(p.notes||'').trim(),
-    promoText:String(p.promoText||'').trim()
+    promoText:normalizeProductPromoText(getProductPromoTextValue(p))
   };
+}
+
+function normalizeProductPromoText(value){
+  if(value===null||value===undefined)return '';
+  const text=String(value).replace(/\r\n/g,'\n').replace(/\r/g,'\n').trim();
+  const lowered=text.toLowerCase();
+  if(!text||lowered==='null'||lowered==='undefined')return '';
+  return text;
+}
+
+function getProductPromoTextValue(product){
+  const item=product&&typeof product==='object'?product:{};
+  const fields=['promoText','promotext','PromoText','Promo Text','promo_text','promotionText'];
+  for(let i=0;i<fields.length;i++){
+    if(Object.prototype.hasOwnProperty.call(item,fields[i])&&String(item[fields[i]]??'').trim()!=='')return item[fields[i]];
+  }
+  return item.promoText||'';
 }
 
 function normalizeProductIdentityPart(value){
@@ -318,7 +360,7 @@ function createProductIdentityKey(product){
     normalizeProductIdentityPart(getProductIdentityFirstValue(item,['priceType','priceListType'])),
     normalizeProductIdentityPart(getProductIdentityFirstValue(item,['priceList','priceListId','priceListName'])),
     normalizeProductIdentityPart(getProductIdentityFirstValue(item,['promotionId','promoId','promotionCode'])),
-    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['priceSource','priceListSource','promotionSource','promoText'])),
+    normalizeProductIdentityPart(getProductIdentityFirstValue(item,['priceSource','priceListSource','promotionSource'])),
     normalizeProductIdentityPart(getProductIdentityFirstValue(item,['discountGroup','groupCode','group','category']))
   ];
   return parts.join('|');
@@ -923,6 +965,91 @@ function productSearchText(p){return [p.productId,p.sku,p.productName,p.descript
 function htmlAttr(value){
   return String(value??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
+let PRODUCT_PROMO_LAST_FOCUS=null, productPromoEscapeBound=false;
+function getProductPromoText(product){
+  return normalizeProductPromoText(product&&product.promoText);
+}
+function hasProductPromotion(product){
+  return !!getProductPromoText(product);
+}
+function getProductPromoRecord(productReference){
+  if(productReference&&typeof productReference==='object'&&!Array.isArray(productReference)){
+    return cloneProductRecordForSelection(productReference);
+  }
+  const key=String(productReference||'').trim();
+  if(key&&typeof resolveProductCalculatorRecord==='function'){
+    const calc=resolveProductCalculatorRecord(key);
+    if(calc&&calc.product)return cloneProductRecordForSelection(calc.product);
+  }
+  if(key&&typeof resolveProductRecordSelection==='function'){
+    const selected=resolveProductRecordSelection(key);
+    if(selected)return cloneProductRecordForSelection(selected);
+  }
+  const fallback=(Array.isArray(DB.products)?DB.products:[]).find(product=>{
+    return String(product&&product.sourceProductRecordKey||'')===key
+      || normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(product))===normalizeQuoteProductPreferenceId(key);
+  });
+  return fallback?cloneProductRecordForSelection(fallback):null;
+}
+function renderProductPromotionTeaser(product,recordKey,context){
+  const promoText=getProductPromoText(product);
+  if(!promoText)return '';
+  const jsRecordKey=escapeHtml(JSON.stringify(String(recordKey||'')));
+  const contextAttr=htmlAttr(context||'product');
+  const productName=String(product&&product.productName||product&&product.name||'สินค้า').trim()||'สินค้า';
+  const ariaLabel=htmlAttr('ดูโปรโมชั่นของสินค้า '+productName);
+  return `<div class="product-promo-teaser" data-no-drag data-context="${contextAttr}"><button type="button" class="product-promo-button" data-no-drag onclick='openProductPromotionDetail(${jsRecordKey},event)' aria-label="${ariaLabel}"><span class="product-promo-badge" aria-hidden="true">🎁 มีโปรโมชั่น</span><span class="product-promo-summary">${escapeHtml(promoText)}</span><span class="product-promo-detail-link">ดูรายละเอียด</span></button></div>`;
+}
+function ensureProductPromoEscapeHandler(){
+  if(productPromoEscapeBound)return;
+  productPromoEscapeBound=true;
+  document.addEventListener('keydown',event=>{
+    if(event.key==='Escape'&&$('modal')?.classList.contains('product-promo-modal')&&$('modal')?.classList.contains('show')){
+      closeModal();
+    }
+  });
+}
+function deactivateProductPromotionModal(){
+  const modal=$('modal');
+  if(modal)modal.classList.remove('product-promo-modal');
+  document.body.classList.remove('product-promo-scroll-locked');
+  const body=$('modalBody');
+  if(body)body.classList.remove('product-promo-modal-body');
+  if(PRODUCT_PROMO_LAST_FOCUS&&typeof PRODUCT_PROMO_LAST_FOCUS.focus==='function'){
+    try{PRODUCT_PROMO_LAST_FOCUS.focus({preventScroll:true});}catch(error){try{PRODUCT_PROMO_LAST_FOCUS.focus();}catch(ignore){}}
+  }
+  PRODUCT_PROMO_LAST_FOCUS=null;
+}
+function openProductPromotionDetail(productReference,event){
+  if(event&&typeof event.preventDefault==='function')event.preventDefault();
+  if(event&&typeof event.stopPropagation==='function')event.stopPropagation();
+  const product=getProductPromoRecord(productReference);
+  const promoText=getProductPromoText(product);
+  if(!product||!promoText){
+    toast('สินค้านี้ไม่มีข้อมูลโปรโมชั่น');
+    return;
+  }
+  PRODUCT_PROMO_LAST_FOCUS=event&&event.currentTarget||document.activeElement;
+  const modal=$('modal'),title=$('modalTitle'),body=$('modalBody');
+  if(!modal||!title||!body)return;
+  title.textContent='รายละเอียดโปรโมชั่น';
+  const brand=product.brand||quoteBusinessUnitLabel(normalizeProductBusinessUnitForUi(product))||'-';
+  const code=product.sku||product.productId||product.productCode||product.id||'-';
+  body.classList.add('product-promo-modal-body');
+  body.innerHTML=`<div class="product-promo-detail"><div class="product-promo-detail-meta"><span class="pill ${brand==='Weber'?'yellow':'blue'}">${escapeHtml(brand)}</span><div><b>${escapeHtml(product.productName||product.name||'-')}</b><small>รหัสสินค้า: ${escapeHtml(code)} • ${escapeHtml(product.unit||'-')} • ${money(product.listPrice||product.price||0)}</small></div></div><div class="product-promo-full" tabindex="0">${escapeHtml(promoText)}</div><div class="actions product-promo-actions"><button type="button" class="primary" onclick="closeModal()">ปิด</button></div></div>`;
+  modal.classList.remove('customer-modal');
+  modal.classList.add('product-promo-modal','show');
+  document.body.classList.add('product-promo-scroll-locked');
+  const card=modal.querySelector('.modal-card');
+  if(card){
+    card.setAttribute('role','dialog');
+    card.setAttribute('aria-modal','true');
+    card.setAttribute('aria-labelledby','modalTitle');
+  }
+  ensureProductPromoEscapeHandler();
+  const closeButton=modal.querySelector('.section-title .ghost');
+  setTimeout(()=>{try{(closeButton||body.querySelector('.primary')||body).focus();}catch(error){}},0);
+}
 function cloneProductForCalculator(product){
   return Object.assign({},product&&typeof product==='object'?product:{});
 }
@@ -1078,7 +1205,7 @@ function renderProductCalculator(){
   const productId=product.productId||product.sku||product.id||'-';
   const imageUrl=String(product.imageUrl||'').trim();
   const originalUnitPrice=PRODUCT_CALC_STATE&&PRODUCT_CALC_STATE.originalUnitPrice!==undefined?PRODUCT_CALC_STATE.originalUnitPrice:getProductCalculatorPrice(product);
-  const priceSource=String(product.priceSource||product.priceListSource||product.promotionSource||product.promoText||'').trim();
+  const priceSource=String(product.priceSource||product.priceListSource||product.promotionSource||'').trim();
   const resultHtml=hasError
     ? `<div class="quote-modal-error product-calc-error" role="alert">${escapeHtml(errors[0])}</div>`
     : `<div class="product-calc-results">
@@ -2426,6 +2553,7 @@ const baseCloseModalForCustomerLayout=closeModal;
 closeModal=function(){
   baseCloseModalForCustomerLayout();
   deactivateCustomerModalLayout();
+  deactivateProductPromotionModal();
 };
 const baseSaveCustomerModalForCustomerLayout=saveCustomerModal;
 saveCustomerModal=async function(existingId){
@@ -2593,7 +2721,15 @@ async function toggleFavoriteCustomer(customerId){const favorite=isFavoriteCusto
 async function persistFavoriteOrder(){const grid=$('favoriteCustomerGrid');if(!grid)return;const customerIds=Array.from(grid.querySelectorAll('[data-customer-id]')).map(el=>el.dataset.customerId);const response=await callApi('reorderFavoriteCustomers',{customerIds:customerIds});if(!response.ok){toast(response.message||'จัดลำดับไม่สำเร็จ');await loadFavoriteCustomers();return;}const map=new Map(FAVORITE_CUSTOMERS.map(c=>[String(c.customerId),c]));FAVORITE_CUSTOMERS=customerIds.map(id=>map.get(id)).filter(Boolean)}
 function bindFavoriteDragAndDrop(){const grid=$('favoriteCustomerGrid');if(!grid||grid.dataset.bound)return;grid.dataset.bound='true';let dragged=null;grid.addEventListener('dragstart',event=>{dragged=event.target.closest('.favorite-card');if(!dragged)return;dragged.classList.add('is-dragging');event.dataTransfer.effectAllowed='move'});grid.addEventListener('dragover',event=>{event.preventDefault();const target=event.target.closest('.favorite-card');if(dragged&&target&&target!==dragged)grid.insertBefore(dragged,target)});grid.addEventListener('dragend',()=>{if(dragged)dragged.classList.remove('is-dragging');dragged=null;persistFavoriteOrder()});let timer=null,touchCard=null;grid.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'||event.target.closest('button,a'))return;touchCard=event.target.closest('.favorite-card');if(touchCard)timer=setTimeout(()=>{touchCard.classList.add('is-dragging');touchCard.setPointerCapture(event.pointerId)},350)});grid.addEventListener('pointermove',event=>{if(!touchCard||!touchCard.classList.contains('is-dragging'))return;event.preventDefault();const target=document.elementFromPoint(event.clientX,event.clientY)?.closest('.favorite-card');if(target&&target!==touchCard)grid.insertBefore(touchCard,target)});const finish=()=>{clearTimeout(timer);if(touchCard&&touchCard.classList.contains('is-dragging')){touchCard.classList.remove('is-dragging');persistFavoriteOrder()}touchCard=null};grid.addEventListener('pointerup',finish);grid.addEventListener('pointercancel',finish)}
 
-function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); if(!productsLoaded&&!DB.products.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} resetProductCalculatorRecordRegistry(); grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>{const recordKey=registerProductCalculatorRecord(p,DB.products.indexOf(p));const key=htmlAttr(recordKey);return `<div class="card product-card-clickable" role="button" tabindex="0" data-product-record-key="${key}" onclick="openProductCalculator('${key}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProductCalculator('${key}')}"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${escapeHtml(p.brand||'-')}</span><h3>${escapeHtml(p.productName||'-')}</h3><p>รหัสสินค้า: ${escapeHtml(p.sku||p.productId||p.id||'-')}</p><p>${escapeHtml(p.unit||'-')}</p><b>${money(p.listPrice)}</b><br><button class="ghost" onclick="addProductCardToQuote('${key}',event)">เพิ่มลงใบเสนอราคา</button></div>`}).join('')}
+function renderProductCard(product,sourceListIndex){
+  const p=product&&typeof product==='object'?product:{};
+  const recordKey=registerProductCalculatorRecord(p,sourceListIndex);
+  const key=htmlAttr(recordKey);
+  const brandClass=normalizeProductBusinessUnitForUi(p)==='WEBER'||p.brand==='Weber'?'yellow':'blue';
+  const promoHtml=renderProductPromotionTeaser(p,recordKey,'product-list');
+  return `<div class="card product-card-clickable" role="button" tabindex="0" data-product-record-key="${key}" onclick="openProductCalculator('${key}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProductCalculator('${key}')}"><span class="pill ${brandClass}">${escapeHtml(p.brand||'-')}</span><h3>${escapeHtml(p.productName||'-')}</h3><p>รหัสสินค้า: ${escapeHtml(p.sku||p.productId||p.id||'-')}</p><p>${escapeHtml(p.unit||'-')}</p><b>${money(p.listPrice)}</b>${promoHtml}<div class="product-card-actions"><button class="ghost" onclick="addProductCardToQuote('${key}',event)">เพิ่มลงใบเสนอราคา</button></div></div>`;
+}
+function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); if(!productsLoaded&&!DB.products.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} resetProductCalculatorRecordRegistry(); grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>renderProductCard(p,DB.products.indexOf(p))).join('')}
 
 function renderQuoteCustomerPicker(forceShow){
   const picker=$('quoteCustomerPicker'),input=$('quoteCustomerSearch');
@@ -2813,8 +2949,9 @@ function renderQuoteProductPreferenceCard(product,options){
   const draggable=opts.pinned&&canManageQuoteProductPreferences()?' draggable="true" data-product-id="'+idAttr+'" data-product-record-key="'+recordKeyAttr+'"':'';
   const listPrice=Number(String(item.listPrice||0).replace(/,/g,''));
   const priceHtml=listPrice>0?money(listPrice):'<span class="quote-product-missing-price">ยังไม่มีราคา</span>';
+  const promoHtml=renderProductPromotionTeaser(item,recordKey,'quote-product');
   const actions=canManageQuoteProductPreferences()?`<div class="quote-product-actions" data-no-drag><button type="button" class="quote-product-pref-button ${item.isFavoriteProduct?'is-active':''}" data-no-drag onclick='toggleFavoriteProduct(${jsId})'>${item.isFavoriteProduct?'♥':'♡'}</button><button type="button" class="quote-product-pref-button ${item.isPinnedProduct?'is-active':''}" data-no-drag onclick='togglePinnedProduct(${jsId})'>${item.isPinnedProduct?'📌':'📍'}</button><button type="button" class="tiny quote-add-product-button" data-no-drag data-product-id="${idAttr}" data-product-record-key="${recordKeyAttr}" data-product-source="${sourceAttr}" onclick="addProductToQuoteByReference(event)">+ เพิ่ม</button></div>`:'';
-  return `<div class="row quote-product-pref-card ${opts.pinned?'pinned-product-card':''}"${draggable}><div class="product-img">${productUnit==='WEBER'?'🟨':'🟦'}</div><div class="quote-product-pref-main"><div class="quote-product-title">${quoteProductBusinessUnitBadge(item,getSelectedQuoteBusinessUnitForProducts())}<b>${escapeHtml(item.productName||'-')}</b></div><small>${escapeHtml(item.brand||quoteBusinessUnitLabel(productUnit))} · ${escapeHtml(item.sku||item.productId||item.id||'-')} · ${escapeHtml(item.unit||'-')} · ${priceHtml}</small></div>${actions}</div>`;
+  return `<div class="row quote-product-pref-card ${opts.pinned?'pinned-product-card':''}"${draggable}><div class="product-img">${productUnit==='WEBER'?'🟨':'🟦'}</div><div class="quote-product-pref-main"><div class="quote-product-title">${quoteProductBusinessUnitBadge(item,getSelectedQuoteBusinessUnitForProducts())}<b>${escapeHtml(item.productName||'-')}</b></div><small>${escapeHtml(item.brand||quoteBusinessUnitLabel(productUnit))} · ${escapeHtml(item.sku||item.productId||item.id||'-')} · ${escapeHtml(item.unit||'-')} · ${priceHtml}</small>${promoHtml}</div>${actions}</div>`;
 }
 function getProductPreferenceCollapseKey(type){return type==='favorite'?FAVORITE_PRODUCTS_COLLAPSED_KEY:PINNED_PRODUCTS_COLLAPSED_KEY}
 function isProductPreferenceCollapsed(type){try{return localStorage.getItem(getProductPreferenceCollapseKey(type))==='true'}catch(error){return false}}
@@ -2848,6 +2985,6 @@ const baseFilterQuoteProductsByBusinessUnitForPreferences=filterQuoteProductsByB
 filterQuoteProductsByBusinessUnit=function(query,businessUnit){return baseFilterQuoteProductsByBusinessUnitForPreferences(query,businessUnit).map(decorateQuotePreferenceProduct).sort((a,b)=>productPreferenceRank(a)-productPreferenceRank(b)||rankQuoteProductBusinessUnit(a,businessUnit)-rankQuoteProductBusinessUnit(b,businessUnit)||rankQuoteProduct(a,query)-rankQuoteProduct(b,query)||String(a.productName||'').localeCompare(String(b.productName||''),'th'))};
 const baseRenderQuoteProductPickerForPreferences=renderQuoteProductPicker;
 renderQuoteProductPicker=function(){const requestId=++quoteProductSearchSequence;ensureProductPreferenceContainers();if(!productPreferencesLoaded&&!productPreferencesPromise&&USER)loadProductPreferences();const q=$('productSearch')?.value||'';const picker=$('productPicker');if(!picker)return;if(!isQuoteBusinessUnitReadyForProducts()){picker.innerHTML='<div class="row quote-empty">กรุณาเลือก BU ก่อนแสดงสินค้า</div>';renderQuoteProductPreferenceSections();return;}const businessUnit=getSelectedQuoteBusinessUnitForProducts();const businessUnitLabel=quoteBusinessUnitLabel(businessUnit);if(!productsLoaded&&!DB.products.length){picker.innerHTML=`<div class="row quote-empty">กำลังโหลดสินค้า โดยเรียง ${businessUnitLabel} ก่อน...</div>`;if(document.activeElement===$('productSearch')){loadProducts().then(()=>{if(requestId===quoteProductSearchSequence&&businessUnit===getSelectedQuoteBusinessUnitForProducts())renderQuoteProductPicker();});}renderQuoteProductPreferenceSections();return;}const matchesAll=filterQuoteProductsByBusinessUnit(q,businessUnit);const limited=limitList(matchesAll,QUOTE_PICKER_LIMIT);const notice=limited.limited?`<div class="list-limit">แสดง 30 รายการแรกจากทุก BU โดยเรียง ${businessUnitLabel} และสินค้าปักหมุดก่อน กรุณาค้นหาเพิ่มเติม</div>`:'';picker.innerHTML=limited.items.length?notice+limited.items.map(product=>renderQuoteProductPreferenceCard(product,{source:'SEARCH'})).join(''):`<div class="row quote-empty">ไม่พบสินค้าที่ตรงกับคำค้น</div>`;renderQuoteProductPreferenceSections();};
-window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.addProductCardToQuote=addProductCardToQuote; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
+window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.addProductCardToQuote=addProductCardToQuote; window.openProductPromotionDetail=openProductPromotionDetail; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
 window.createProductIdentityKey=createProductIdentityKey; window.dedupeExactProducts=dedupeExactProducts; window.dedupeExactProductsWithReport=dedupeExactProductsWithReport; window.cloneProductRecordForSelection=cloneProductRecordForSelection; window.getStableProductRecordKey=getStableProductRecordKey; window.registerProductRecordSelection=registerProductRecordSelection; window.resolveProductRecordSelection=resolveProductRecordSelection;
 window.normalizeSystemIdentitySettings=normalizeSystemIdentitySettings; window.applySystemIdentityToUI=applySystemIdentityToUI; window.renderLoginBranding=renderLoginBranding; window.renderSidebarBranding=renderSidebarBranding; window.refreshPublicSystemSettings=refreshPublicSystemSettings; window.setPublicSystemSettings=setPublicSystemSettings; window.loadSystemIdentitySettingsForSettings=loadSystemIdentitySettingsForSettings; window.saveSystemIdentitySettings=saveSystemIdentitySettings; window.savePersonalGreetingSettings=savePersonalGreetingSettings; window.saveSystemGreetingSettings=saveSystemGreetingSettings; window.canManageSystemIdentitySettings=canManageSystemIdentitySettings; window.applySettingsPermissionUi=applySettingsPermissionUi;

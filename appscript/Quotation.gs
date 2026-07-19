@@ -2,6 +2,7 @@ const QUOTATION_SAVE_LOCK_TIMEOUT_MS = 15000;
 const QUOTATION_SAVE_IDEMPOTENCY_TTL_SECONDS = 600;
 const QUOTATION_SAVE_IN_PROGRESS_TTL_SECONDS = 90;
 const QUOTATION_LINE_PRICE_MAX = 999999999;
+const QUOTATION_NUMBER_MAX_RUNNING = 9999;
 
 function normalizeQuoteType(value) {
   const text = String(value || '').trim().toUpperCase();
@@ -22,6 +23,46 @@ function getQuotationProductBusinessUnit(product) {
   if (text.indexOf('GYPROC') >= 0) return 'GYPROC';
   if (text.indexOf('WEBER') >= 0) return 'WEBER';
   return '';
+}
+
+function normalizeQuotationNumberPrefix_(prefix) {
+  const text = String(prefix || '').trim().toUpperCase();
+  if (text === 'GYPQT') return 'GYPQT';
+  if (text === 'MBQT') return 'MBQT';
+  return 'WEBQT';
+}
+
+function getQuotationNumberPrefixForBusinessUnits_(businessUnits) {
+  var hasWeber = false;
+  var hasGyproc = false;
+  (Array.isArray(businessUnits) ? businessUnits : []).forEach(function (businessUnit) {
+    const normalizedUnit = getQuotationProductBusinessUnit({ businessUnit: businessUnit });
+    if (normalizedUnit === 'WEBER') hasWeber = true;
+    if (normalizedUnit === 'GYPROC') hasGyproc = true;
+  });
+  if (hasWeber && hasGyproc) return 'MBQT';
+  if (hasGyproc) return 'GYPQT';
+  return 'WEBQT';
+}
+
+function getQuotationNumberPrefixForItems_(items) {
+  const businessUnits = (Array.isArray(items) ? items : []).map(function (item) {
+    return item && item.productBusinessUnit;
+  });
+  return getQuotationNumberPrefixForBusinessUnits_(businessUnits);
+}
+
+function parseQuotationNumberParts_(quoteNo) {
+  const match = String(quoteNo || '').trim().toUpperCase().match(/^(WEBQT|GYPQT|MBQT)-(\d{6})-(\d{4})$/);
+  return match ? {
+    quotationPrefix: match[1],
+    quotationYearMonth: match[2],
+    quotationRunning: parseInt(match[3], 10)
+  } : null;
+}
+
+function isLegacyQuotationNumber_(value) {
+  return /^QT-\d{6,8}-\d{4,5}$/i.test(String(value || '').trim());
 }
 
 function validateProductForQuotationLine(product) {
@@ -444,6 +485,7 @@ function saveQuotationPayload(payload) {
     subtotal = sumQuotationItems(normalizedItems, 'lineTotal');
     vat = sumQuotationItems(normalizedItems, 'vat');
     grandTotal = roundCurrency(subtotal + vat + shipping - specialDiscount);
+    const quotationNumberPrefix = getQuotationNumberPrefixForItems_(normalizedItems);
 
     lock = LockService.getScriptLock();
     lockAcquired = lock.tryLock(QUOTATION_SAVE_LOCK_TIMEOUT_MS);
@@ -479,7 +521,7 @@ function saveQuotationPayload(payload) {
     }
     const quoteType = normalizeQuoteType(data.quoteType || data.businessUnit || (existingQuote && (existingQuote.quoteType || existingQuote.businessUnit)));
 
-    const quoteNo = resolveQuotationNumberForSave_(data, existingQuote);
+    const quoteNo = resolveQuotationNumberForSave_(data, existingQuote, quotationNumberPrefix);
     if (!quoteNo.ok) {
       return quoteNo;
     }
@@ -594,13 +636,38 @@ function getQuotationSaveProgressCacheKey_(requestId, cacheScope) {
   return ['quotationSave', 'progress', cacheScope || 'anonymous', String(requestId || '').trim()].join(':');
 }
 
-function resolveQuotationNumberForSave_(data, existingQuote) {
+function resolveQuotationNumberForSave_(data, existingQuote, quotationNumberPrefix) {
   try {
-    const quoteNo = String(existingQuote && existingQuote.quoteNo || data.quoteNo || '').trim();
+    const quoteNo = String(existingQuote && existingQuote.quoteNo || '').trim();
     if (quoteNo) {
-      return success({ quoteNo: quoteNo });
+      const existingParts = parseQuotationNumberParts_(quoteNo) || {};
+      return success(Object.assign({
+        quoteNo: quoteNo,
+        generated: false
+      }, existingParts));
     }
-    return success({ quoteNo: generateQuoteNoLocked_() });
+    const legacyQuoteId = String(existingQuote && existingQuote.quoteId || '').trim();
+    const quoteIdParts = parseQuotationNumberParts_(legacyQuoteId);
+    if (quoteIdParts) {
+      return success(Object.assign({
+        quoteNo: legacyQuoteId,
+        generated: false
+      }, quoteIdParts));
+    }
+    if (isLegacyQuotationNumber_(legacyQuoteId)) {
+      return success({
+        quoteNo: legacyQuoteId,
+        generated: false,
+        legacy: true
+      });
+    }
+    const prefix = normalizeQuotationNumberPrefix_(quotationNumberPrefix);
+    const generatedQuoteNo = generateQuoteNoLocked_(prefix);
+    const generatedParts = parseQuotationNumberParts_(generatedQuoteNo) || {};
+    return success(Object.assign({
+      quoteNo: generatedQuoteNo,
+      generated: true
+    }, generatedParts));
   } catch (error) {
     logError('resolveQuotationNumberForSave_', error);
     return fail(error && error.message ? error.message : 'Failed to generate quotation number');
@@ -1216,21 +1283,22 @@ function normalizeQuotationStatus(value, fallback) {
   return fallback || QUOTE_STATUSES.SAVED;
 }
 
-function generateQuoteNo() {
-  return generateQuoteNoLocked_();
+function generateQuoteNo(prefix) {
+  return generateQuoteNoLocked_(prefix || 'WEBQT');
 }
 
-function generateQuoteNoLocked_() {
-  const now = new Date();
-  const yyyy = now.getFullYear();
-  const mm = ('0' + (now.getMonth() + 1)).slice(-2);
-  const dd = ('0' + now.getDate()).slice(-2);
-  const datePart = '' + yyyy + mm + dd;
-  const prefix = 'QT-' + datePart + '-';
+function generateQuoteNoLocked_(prefix, dateValue) {
+  const normalizedPrefix = normalizeQuotationNumberPrefix_(prefix);
+  const now = dateValue ? new Date(dateValue) : new Date();
+  const safeDate = isNaN(now.getTime()) ? new Date() : now;
+  const yyyy = safeDate.getFullYear();
+  const mm = ('0' + (safeDate.getMonth() + 1)).slice(-2);
+  const yearMonth = '' + yyyy + mm;
+  const quoteNoPrefix = normalizedPrefix + '-' + yearMonth + '-';
   ensureQuotationSheets();
   const sheet = getSheet(QUOTE_HISTORY_SHEET);
   if (!sheet || sheet.getLastRow() < 2) {
-    return prefix + '0001';
+    return quoteNoPrefix + '0001';
   }
   const headers = getQuotationSheetHeaders(sheet);
   const quoteNoIndex = headers.indexOf('quoteNo');
@@ -1238,15 +1306,18 @@ function generateQuoteNoLocked_() {
   const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), headers.length)).getDisplayValues();
   var maxNo = 0;
   values.forEach(function (row) {
-    const quoteNo = String((quoteNoIndex >= 0 ? row[quoteNoIndex] : '') || (quoteIdIndex >= 0 ? row[quoteIdIndex] : '') || '').trim();
-    if (quoteNo.indexOf(prefix) === 0) {
-      const running = parseInt(quoteNo.slice(prefix.length), 10);
+    const quoteNo = String((quoteNoIndex >= 0 ? row[quoteNoIndex] : '') || (quoteIdIndex >= 0 ? row[quoteIdIndex] : '') || '').trim().toUpperCase();
+    if (quoteNo.indexOf(quoteNoPrefix) === 0) {
+      const running = parseInt(quoteNo.slice(quoteNoPrefix.length), 10);
       if (!isNaN(running) && running > maxNo) {
         maxNo = running;
       }
     }
   });
-  return prefix + ('0000' + (maxNo + 1)).slice(-4);
+  if (maxNo >= QUOTATION_NUMBER_MAX_RUNNING) {
+    throw new Error('Quotation running number exceeded for ' + normalizedPrefix + '-' + yearMonth);
+  }
+  return quoteNoPrefix + ('0000' + (maxNo + 1)).slice(-4);
 }
 
 function appendQuotationObject(sheetName, headers, object) {

@@ -66,6 +66,37 @@
 .product-card-clickable{cursor:pointer;transition:transform .16s ease,box-shadow .16s ease}
 .product-card-clickable:hover{transform:translateY(-2px);box-shadow:0 22px 46px rgba(15,42,82,.12)}
 .product-card-clickable:focus{outline:3px solid rgba(0,103,177,.22);outline-offset:2px}
+.product-card-actions{margin-top:14px}
+.product-promo-teaser{margin-top:12px;min-width:0;max-width:100%}
+.product-promo-button{box-sizing:border-box;width:100%;max-width:100%;min-height:44px;border:1px solid #f0d84b;background:#fffbea;color:#3f3200;border-radius:18px;padding:10px 12px;display:grid;grid-template-columns:1fr;gap:5px;text-align:left;touch-action:manipulation}
+.product-promo-button:hover,.product-promo-button:focus-visible{background:#fff6c4;outline:3px solid rgba(255,210,0,.35);outline-offset:2px}
+.product-promo-badge{display:inline-flex;align-items:center;width:max-content;max-width:100%;border-radius:999px;background:#fff4a8;color:#514400;font-size:12px;font-weight:900;padding:4px 9px;line-height:1.2}
+.product-promo-summary{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:#5b4a00;font-size:13px;line-height:1.35;overflow-wrap:anywhere;word-break:normal}
+.product-promo-detail-link{color:var(--blue);font-size:12px;font-weight:900;line-height:1.2}
+.quote-product-pref-main .product-promo-teaser{max-width:100%;margin-top:8px}
+.quote-product-pref-main .product-promo-button{border-radius:14px;box-shadow:none}
+body.product-promo-scroll-locked{overflow:hidden;touch-action:none}
+#modal.product-promo-modal{box-sizing:border-box;padding:12px;padding:calc(12px + env(safe-area-inset-top,0px)) 12px calc(12px + env(safe-area-inset-bottom,0px));overflow:hidden;align-items:center;justify-items:center}
+#modal.product-promo-modal .modal-card{box-sizing:border-box;width:min(720px,100%);max-width:100%;max-height:calc(100vh - 24px);max-height:calc(100dvh - 24px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;overflow:hidden;padding:20px;border-radius:26px}
+#modal.product-promo-modal .section-title{flex-shrink:0;margin-bottom:12px;gap:12px}
+#modal.product-promo-modal .section-title h2{min-width:0;margin:0;overflow-wrap:anywhere}
+#modal.product-promo-modal .section-title .ghost{flex-shrink:0;min-height:44px}
+#modal.product-promo-modal #modalBody{min-height:0;overflow:hidden}
+.product-promo-modal-body{min-height:0;overflow:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding-right:2px}
+.product-promo-detail{display:grid;gap:14px;min-width:0;max-width:100%}
+.product-promo-detail-meta{display:flex;gap:12px;align-items:flex-start;min-width:0}
+.product-promo-detail-meta>div{min-width:0}
+.product-promo-detail-meta b{display:block;color:#08223c;overflow-wrap:anywhere;word-break:normal}
+.product-promo-detail-meta small{display:block;color:var(--muted);margin-top:3px;overflow-wrap:anywhere;word-break:normal}
+.product-promo-full{box-sizing:border-box;border:1px solid var(--line);background:#f8fbff;border-radius:18px;padding:14px;color:#111827;white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal;line-height:1.55;max-height:min(48vh,420px);overflow:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.product-promo-actions{justify-content:flex-end}
+@media(max-width:700px){
+  #modal.product-promo-modal{padding:8px;padding:calc(8px + env(safe-area-inset-top,0px)) 8px calc(8px + env(safe-area-inset-bottom,0px));align-items:end}
+  #modal.product-promo-modal .modal-card{width:calc(100vw - 16px);max-height:calc(100vh - 16px);max-height:calc(100dvh - 16px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px));border-radius:22px;padding:16px}
+  .product-promo-detail-meta{display:grid;grid-template-columns:1fr}
+  .product-promo-actions .primary{width:100%;min-height:44px}
+  .product-promo-full{max-height:50vh}
+}
 .product-price-modal,.quote-detail-modal{position:fixed;inset:0;z-index:140;background:rgba(3,17,35,.62);display:none;place-items:center;padding:20px;overflow:auto}
 .quotation-print-overlay{z-index:180!important}
 .product-price-modal.show,.quote-detail-modal.show{display:grid}
