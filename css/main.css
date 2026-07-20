@@ -166,8 +166,10 @@ body.product-promo-scroll-locked{overflow:hidden;touch-action:none}
 .quote-type-option{border:1px solid var(--line);border-radius:20px;background:#fff;padding:18px;text-align:left;display:grid;gap:4px;font-weight:900}
 .quote-type-option span{font-size:22px}
 .quote-type-option small{color:var(--muted);font-weight:800}
-.quote-type-option.gyproc{border-color:#c7ddf5;background:#eef6ff;color:var(--blue)}
-.quote-type-option.weber{border-color:#f3df64;background:#fff8c7;color:#514400}
+.quote-type-option.gyproc,.quote-type-option.weber{background:#fff;align-items:center;justify-items:center;text-align:center;min-height:82px}
+.quote-type-option.gyproc{border-color:#c7ddf5;color:var(--blue)}
+.quote-type-option.weber{border-color:#f3df64;color:#514400}
+.quote-type-option-logo{display:block;width:auto;max-width:100%;height:24px;max-height:28px;object-fit:contain}
 .quote-type-badge{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:5px 10px;font-size:12px;font-weight:900}
 .quote-type-badge.gyproc{background:#e8f3ff;color:var(--blue)}
 .quote-type-badge.weber{background:#fff4a8;color:#514400}
