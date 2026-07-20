@@ -704,8 +704,14 @@ function placeSidebarToggleButton(){
   const button=getSidebarToggleButton();
   const desktopHost=document.getElementById('sidebarHeader');
   const mobileHost=document.getElementById('mobileSidebarToggleHost');
-  if(!button||!desktopHost)return;
-  const target=isMobileSidebar()?mobileHost:desktopHost;
+  if(!button||!desktopHost){
+    console.warn('[SIDEBAR] Toggle placement skipped: required element missing');
+    return;
+  }
+  const sidebar=document.getElementById('sidebar');
+  const mobile=isMobileSidebar();
+  const drawerOpen=mobile&&!!sidebar?.classList.contains('open');
+  const target=mobile&&!drawerOpen&&mobileHost?mobileHost:desktopHost;
   if(target&&button.parentNode!==target){
     target.appendChild(button);
   }
@@ -1825,7 +1831,7 @@ function renderHistory(){
   }
   const keyword=$('quoteHistorySearch')?.value||'';
   const quotes=(Array.isArray(DB.quotes)?DB.quotes:[]).map(normalizeQuoteRecord).filter(q=>smartMatch(q,keyword,getQuoteSearchFields())).sort((a,b)=>new Date(b.createdAt||b.updatedAt||0)-new Date(a.createdAt||a.updatedAt||0));
-  history.innerHTML=quotes.length?quotes.map(q=>`<div class="row quote-history-row"><div><b>${q.quoteNo||'-'}</b><br><small>${q.customerName||'-'} · ${q.customerId||'-'}</small></div><span class="quote-type-badge ${quoteTypeClassForUi(q.quoteType)}">${quoteTypeLabelForUi(q.quoteType)}</span><span class="pill ${q.status==='CANCELLED'?'yellow':'blue'}">${q.status||'-'}</span><span>${formatDateTime(q.createdAt)}</span><b style="margin-left:auto">${money(q.grandTotal||q.total)}</b><button class="tiny" onclick="openQuotationDetail('${q.quoteId}')">เปิดดู</button><button class="tiny" onclick="editQuotationFromHistory('${q.quoteId}')">แก้ไข</button></div>`).join(''):'<p style="color:var(--muted)">ยังไม่มีใบเสนอราคา</p>';
+  history.innerHTML=quotes.length?quotes.map(q=>`<div class="row quote-history-row"><div><b>${q.quoteNo||'-'}</b><br><small>${q.customerName||'-'} · ${q.customerId||'-'}</small></div><span class="quote-type-badge ${quoteTypeClassForUi(q.quoteType)}">${quoteTypeLabelForUi(q.quoteType)}</span><span class="pill ${q.status==='CANCELLED'?'yellow':'blue'}">${q.status||'-'}</span><span>${formatDateTime(q.createdAt)}</span><b style="margin-left:auto">${money(q.grandTotal||q.total)}</b><button class="tiny" onclick="openQuotationDetail('${htmlAttr(q.quoteId||q.quoteNo||'')}')">เปิดดู</button><button class="tiny" data-quote-edit-button data-quote-edit-source="quotation-history" data-quote-id="${htmlAttr(q.quoteId||'')}" data-quote-no="${htmlAttr(q.quoteNo||'')}" onclick="navigateToQuotationEdit('${htmlAttr(q.quoteId||q.quoteNo||'')}',event,{source:'quotation-history'})">แก้ไข</button></div>`).join(''):'<p style="color:var(--muted)">ยังไม่มีใบเสนอราคา</p>';
 }
 async function refreshQuotationHistory(options){
   const force=!!(options&&options.force);
@@ -1880,7 +1886,8 @@ function buildQuotationDetailHtml(data){
   const lines=Array.isArray(data.lines)?data.lines:[];
   const totals=data.totals||{};
   const quoteIdAttr=htmlAttr(quote.quoteId||quote.quoteNo||'');
-  return `<div class="section-title"><div><h2>${quote.quoteNo||quote.quoteId||'-'}</h2><p style="color:var(--muted);margin:4px 0 0">${quote.customerName||'-'} · ${quote.customerId||'-'}</p></div><span class="pill ${quote.status==='CANCELLED'?'yellow':'blue'}">${quote.status||'-'}</span></div><div class="quote-detail-meta"><span>วันที่: ${formatDateTime(quote.createdAt)}</span><span>ยอดสุทธิ: ${money(totals.grandTotal||quote.grandTotal)}</span></div><div class="list quote-detail-lines">${lines.length?lines.map((line,index)=>`<div class="row"><div><b>${line.productName||'-'}</b><br><small>${line.productId||'-'} · ${line.unit||'-'}</small></div><span>จำนวน ${line.qty||0}</span><span>ราคา ${money(line.listPrice)}</span><span>ส่วนลด ${line.discountPercent||0}%</span><b style="margin-left:auto">${money(line.grandTotal||line.lineTotal)}</b></div>`).join(''):'<p style="color:var(--muted)">ไม่มีรายการสินค้า</p>'}</div><div class="quote-total-box"><p>Subtotal <b>${money(totals.subtotal||quote.subtotal)}</b></p><p>VAT <b>${money(totals.vat||quote.vat)}</b></p><p>Grand Total <b>${money(totals.grandTotal||quote.grandTotal)}</b></p></div><div class="actions no-print"><button class="primary" onclick="printQuotation('${quoteIdAttr}')">Print</button><button class="yellow" onclick="exportQuotationPNG('${quoteIdAttr}')">Save PNG</button><button class="yellow" onclick="shareQuote('${quoteIdAttr}')">Share</button><button class="ghost" onclick="editQuotationFromHistory('${quoteIdAttr}')">แก้ไข</button><button class="ghost" onclick="duplicateQuotationFromHistory('${quoteIdAttr}')">Duplicate</button><button class="yellow" onclick="cancelQuotationFromHistory('${quoteIdAttr}')">Cancel</button></div>`;
+  const quoteNoAttr=htmlAttr(quote.quoteNo||'');
+  return `<div class="section-title"><div><h2>${quote.quoteNo||quote.quoteId||'-'}</h2><p style="color:var(--muted);margin:4px 0 0">${quote.customerName||'-'} · ${quote.customerId||'-'}</p></div><span class="pill ${quote.status==='CANCELLED'?'yellow':'blue'}">${quote.status||'-'}</span></div><div class="quote-detail-meta"><span>วันที่: ${formatDateTime(quote.createdAt)}</span><span>ยอดสุทธิ: ${money(totals.grandTotal||quote.grandTotal)}</span></div><div class="list quote-detail-lines">${lines.length?lines.map((line,index)=>`<div class="row"><div><b>${line.productName||'-'}</b><br><small>${line.productId||'-'} · ${line.unit||'-'}</small></div><span>จำนวน ${line.qty||0}</span><span>ราคา ${money(line.listPrice)}</span><span>ส่วนลด ${line.discountPercent||0}%</span><b style="margin-left:auto">${money(line.grandTotal||line.lineTotal)}</b></div>`).join(''):'<p style="color:var(--muted)">ไม่มีรายการสินค้า</p>'}</div><div class="quote-total-box"><p>Subtotal <b>${money(totals.subtotal||quote.subtotal)}</b></p><p>VAT <b>${money(totals.vat||quote.vat)}</b></p><p>Grand Total <b>${money(totals.grandTotal||quote.grandTotal)}</b></p></div><div class="actions no-print"><button class="primary" onclick="printQuotation('${quoteIdAttr}')">Print</button><button class="yellow" onclick="exportQuotationPNG('${quoteIdAttr}')">Save PNG</button><button class="yellow" onclick="shareQuote('${quoteIdAttr}')">Share</button><button class="ghost" data-quote-edit-button data-quote-edit-source="quotation-detail" data-quote-id="${quoteIdAttr}" data-quote-no="${quoteNoAttr}" onclick="navigateToQuotationEdit('${quoteIdAttr}',event,{source:'quotation-detail'})">แก้ไข</button><button class="yellow" onclick="cancelQuotationFromHistory('${quoteIdAttr}')">Cancel</button></div>`;
 }
 function renderQuotationDetail(data){
   const box=$('quoteDetail');
@@ -1958,6 +1965,9 @@ async function duplicateQuotationFromHistory(quoteId){
   }
 }
 async function editQuotationFromHistory(quoteId){
+  if(typeof navigateToQuotationEdit==='function'){
+    return navigateToQuotationEdit(quoteId,null,{source:'legacy-edit-handler'});
+  }
   if(typeof openQuotation!=='function'){
     toast('ไม่พบฟังก์ชันโหลดใบเสนอราคา');
     return;
