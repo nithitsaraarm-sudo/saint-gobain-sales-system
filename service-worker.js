@@ -1,4 +1,4 @@
-const CACHE_NAME = 'sales-system-v5-0.5.17';
+const CACHE_NAME = 'sales-system-v5-0.5.18';
 const ASSETS = [
   './',
   './index.html',
@@ -7,9 +7,9 @@ const ASSETS = [
   './manifest.json',
   './manifest.json?v=0.5.7',
   './css/main.css',
-  './css/main.css?v=0.5.15',
+  './css/main.css?v=0.5.18',
   './js/config.js',
-  './js/config.js?v=0.5.17',
+  './js/config.js?v=0.5.18',
   './js/api.js',
   './js/api.js?v=0.5.17',
   './js/app.js',
@@ -17,7 +17,7 @@ const ASSETS = [
   './js/auth.js',
   './js/auth.js?v=0.5.3',
   './js/quotation.js',
-  './js/quotation.js?v=0.5.16',
+  './js/quotation.js?v=0.5.18',
   './images/gyproc-logo.png',
   './images/gyproc-logo.png?v=0.5.8',
   './images/weber-logo.png',

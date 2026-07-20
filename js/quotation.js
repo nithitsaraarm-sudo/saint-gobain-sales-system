@@ -1756,9 +1756,36 @@ function getQuoteMasterUnit(source) {
   return sanitizeQuoteUnit(item.masterUnit ?? item.productUnit ?? item.unit ?? item.uom ?? item.unitName ?? item.salesUnit ?? '');
 }
 
+function getQuoteLineProductMaster(source) {
+  const item = source && typeof source === 'object' ? source : {};
+  const recordKey = normalizeProductReference(item.sourceProductRecordKey || item.productRecordKey || item.recordKey);
+  if (recordKey) {
+    const registeredProduct = resolveQuoteProductRecordSelection(recordKey);
+    if (registeredProduct) return registeredProduct;
+  }
+  const references = [item.productId, item.productCode, item.sku, item.id, item.itemCode];
+  for (var i = 0; i < references.length; i++) {
+    const reference = normalizeProductReference(references[i]);
+    if (!reference) continue;
+    const product = getProductById(reference);
+    if (product) return product;
+  }
+  return null;
+}
+
+function resolveQuoteLineUnit(source) {
+  const item = source && typeof source === 'object' ? source : {};
+  const savedUnit = sanitizeQuoteUnit(item.quotedUnit || item.unit);
+  if (savedUnit) return savedUnit;
+  const masterUnit = sanitizeQuoteUnit(item.masterUnit || item.originalSelectedUnit);
+  if (masterUnit) return masterUnit;
+  const masterProduct = getQuoteLineProductMaster(item);
+  return sanitizeQuoteUnit(getQuoteMasterUnit(masterProduct));
+}
+
 function getQuoteLineUnit(source) {
   const item = source && typeof source === 'object' ? source : {};
-  return sanitizeQuoteUnit(item.quotedUnit ?? item.unit ?? item.masterUnit ?? item.uom ?? item.unitName ?? item.salesUnit ?? '');
+  return sanitizeQuoteUnit(item.quotedUnit || item.unit || item.masterUnit || item.uom || item.unitName || item.salesUnit || resolveQuoteLineUnit(item) || '');
 }
 
 function getCurrentQuoteAuditName() {
@@ -1769,8 +1796,11 @@ function syncQuoteLineSnapshot(item) {
   if (!item || typeof item !== 'object') return item;
   const masterListPrice = roundValue(toPriceNumber(item.masterListPrice !== undefined ? item.masterListPrice : item.listPrice));
   const quotedListPrice = roundValue(toPriceNumber(item.quotedListPrice !== undefined ? item.quotedListPrice : item.listPrice));
-  const masterUnit = sanitizeQuoteUnit(item.masterUnit || item.unit || item.quotedUnit);
-  const quotedUnit = sanitizeQuoteUnit(item.quotedUnit || item.unit || masterUnit);
+  const masterProduct = getQuoteLineProductMaster(item);
+  const savedUnit = sanitizeQuoteUnit(item.quotedUnit || item.unit);
+  const productUnit = sanitizeQuoteUnit(getQuoteMasterUnit(masterProduct));
+  const masterUnit = sanitizeQuoteUnit(item.masterUnit || item.originalSelectedUnit || productUnit || savedUnit);
+  const quotedUnit = sanitizeQuoteUnit(savedUnit || productUnit || masterUnit);
   item.masterListPrice = masterListPrice;
   item.quotedListPrice = quotedListPrice;
   item.listPrice = quotedListPrice;
@@ -2588,11 +2618,17 @@ async function openQuoteLinePriceEditor(lineId) {
 }
 
 function getQuoteUnitOptionsForLine(line) {
-  const current = sanitizeQuoteUnit(line && (line.quotedUnit || line.unit || line.masterUnit));
-  const options = QUOTE_UNIT_OPTIONS.slice();
-  if (current && options.indexOf(current) < 0) {
-    options.unshift(current);
-  }
+  const current = resolveQuoteLineUnit(line);
+  const productUnit = sanitizeQuoteUnit(getQuoteMasterUnit(getQuoteLineProductMaster(line)));
+  const options = [];
+  [current, line && line.masterUnit, line && line.originalSelectedUnit, productUnit].forEach(function (unit) {
+    const text = sanitizeQuoteUnit(unit);
+    if (text && options.indexOf(text) < 0) options.push(text);
+  });
+  QUOTE_UNIT_OPTIONS.forEach(function (unit) {
+    const text = sanitizeQuoteUnit(unit);
+    if (text && options.indexOf(text) < 0) options.push(text);
+  });
   return options;
 }
 
@@ -2757,6 +2793,71 @@ function renderQuoteMeta() {
   renderQuotationPreviewState();
 }
 
+function getQuotationLineDisplayName(line) {
+  const item = line && typeof line === 'object' ? line : {};
+  return String(item.productName || item.productCode || item.sku || item.productId || 'สินค้า').trim();
+}
+
+function isQuotationSaveDebugEnabled() {
+  try {
+    return String(window.APP_ENV || '').trim().toLowerCase() === 'development'
+      || window.DEBUG_QUOTATION_SAVE === true
+      || localStorage.getItem('sg_debug_quote_save') === 'true';
+  } catch (error) {
+    return false;
+  }
+}
+
+function logQuotationSavePayloadLines(payload) {
+  if (!isQuotationSaveDebugEnabled() || typeof console === 'undefined' || typeof console.info !== 'function') return;
+  const items = Array.isArray(payload && payload.items) ? payload.items : [];
+  console.info('[QuotationSave] payload lines', items.map(function (item) {
+    return {
+      lineId: String(item && item.lineId || '').trim(),
+      productId: String(item && item.productId || '').trim(),
+      quotedUnit: String(item && item.quotedUnit || '').trim(),
+      quantity: Number(item && item.qty || 0),
+      price: Number(item && (item.quotedListPrice || item.listPrice) || 0)
+    };
+  }));
+}
+
+function markQuoteLineUnitInvalid(lineId) {
+  const id = String(lineId || '').trim();
+  if (!id) return;
+  renderCart();
+  scheduleScrollToAddedItem(id);
+  setTimeout(function () {
+    const element = getQuoteItemElement(id);
+    if (element) {
+      element.classList.add('is-invalid-line');
+      setTimeout(function () {
+        element.classList.remove('is-invalid-line');
+      }, 3600);
+    }
+  }, 80);
+}
+
+function validateQuotationLinesBeforeSave(payload) {
+  const items = Array.isArray(payload && payload.items) ? payload.items : [];
+  for (var i = 0; i < items.length; i++) {
+    const item = items[i] || {};
+    if (!sanitizeQuoteUnit(item.quotedUnit)) {
+      const matchingLine = CART.find(function (line) {
+        return String(line && line.lineId || '').trim() === String(item.lineId || '').trim();
+      }) || item;
+      return {
+        ok: false,
+        code: 'QUOTE_LINE_UNIT_REQUIRED',
+        message: 'สินค้า "' + getQuotationLineDisplayName(matchingLine) + '" ยังไม่ได้เลือกหน่วย\nกรุณาเลือกหน่วยก่อนบันทึก',
+        lineId: String(item.lineId || matchingLine.lineId || '').trim(),
+        productId: String(item.productId || matchingLine.productId || '').trim()
+      };
+    }
+  }
+  return { ok: true };
+}
+
 function buildQuotationPayload(status) {
   const totals = calcCart();
   ensureCartLineIdentityAndOrder();
@@ -2769,6 +2870,10 @@ function buildQuotationPayload(status) {
     customerName: CURRENT_QUOTE.customerName,
     items: CART.map((item, index) => {
       recalcLineItem(item);
+      const quotedUnit = resolveQuoteLineUnit(item);
+      item.quotedUnit = quotedUnit;
+      item.unit = quotedUnit;
+      item.masterUnit = sanitizeQuoteUnit(item.masterUnit || item.originalSelectedUnit || getQuoteMasterUnit(getQuoteLineProductMaster(item)) || quotedUnit);
       return {
         lineNo: index + 1,
         lineOrder: index + 1,
@@ -2779,9 +2884,9 @@ function buildQuotationPayload(status) {
         sku: item.sku || item.productId,
         productBusinessUnit: getProductBusinessUnitClient(item) || item.productBusinessUnit || '',
         productName: item.productName,
-        unit: item.quotedUnit || item.unit,
+        unit: quotedUnit,
         masterUnit: item.masterUnit || '',
-        quotedUnit: item.quotedUnit || item.unit || '',
+        quotedUnit: quotedUnit,
         qty: item.qty,
         listPrice: item.quotedListPrice || item.listPrice,
         masterListPrice: item.masterListPrice || 0,
@@ -2919,8 +3024,10 @@ function applyLoadedQuotationResponse(response, fallbackQuoteId) {
     const masterProduct = getProductById(line.productId || line.productCode || line.sku) || {};
     const masterListPrice = roundValue(toPriceNumber(line.masterListPrice !== undefined ? line.masterListPrice : (masterProduct.listPrice !== undefined ? masterProduct.listPrice : line.listPrice || 0)));
     const quotedListPrice = roundValue(toPriceNumber(line.quotedListPrice !== undefined ? line.quotedListPrice : (line.listPrice !== undefined ? line.listPrice : masterListPrice)));
-    const masterUnit = sanitizeQuoteUnit(line.masterUnit || masterProduct.unit || line.unit || '');
-    const quotedUnit = sanitizeQuoteUnit(line.quotedUnit || line.unit || masterUnit);
+    const productUnit = sanitizeQuoteUnit(getQuoteMasterUnit(masterProduct));
+    const savedUnit = sanitizeQuoteUnit(line.quotedUnit || line.unit);
+    const masterUnit = sanitizeQuoteUnit(line.masterUnit || line.originalSelectedUnit || productUnit || savedUnit);
+    const quotedUnit = sanitizeQuoteUnit(savedUnit || productUnit || masterUnit);
     CART.push(recalcLineItem({
       lineId: String(line.lineId || createLineId()),
       lineNo: String(line.lineNo || '').trim(),
@@ -3990,11 +4097,14 @@ function renderCart() {
     const freeBadge = it.isFree ? '<span class="pill yellow">FREE</span>' : '';
     const priceOverrideBadge = it.priceOverridden ? '<span class="quote-line-override-badge" title="ราคานี้ใช้เฉพาะใบเสนอราคานี้">แก้ไขแล้ว</span>' : '';
     const unitOverrideBadge = it.unitOverridden ? '<span class="quote-line-override-badge" title="หน่วยนี้ใช้เฉพาะใบเสนอราคานี้">แก้ไขแล้ว</span>' : '';
-    const unitOptions = getQuoteUnitOptionsForLine(it).map(unit => `<option value="${escapeQuotationPrintHtml(unit)}" ${sanitizeQuoteUnit(it.quotedUnit || it.unit) === unit ? 'selected' : ''}>${escapeQuotationPrintHtml(unit)}</option>`).join('');
+    const currentUnit = sanitizeQuoteUnit(it.quotedUnit || it.unit);
+    const unitPlaceholder = currentUnit ? '' : '<option value="" selected disabled>เลือกหน่วย</option>';
+    const unitOptions = unitPlaceholder + getQuoteUnitOptionsForLine(it).map(unit => `<option value="${escapeQuotationPrintHtml(unit)}" ${currentUnit === unit ? 'selected' : ''}>${escapeQuotationPrintHtml(unit)}</option>`).join('');
+    const invalidUnitClass = currentUnit ? '' : ' is-invalid-line';
     const productUnit = getProductBusinessUnitClient(it);
     const productBuBadge = productUnit ? `<span class="quote-product-bu ${getQuoteTypeClass(productUnit)}">${getQuoteTypeLabel(productUnit)}</span>` : '';
     const crossBuNote = productUnit && productUnit !== getCurrentQuoteBusinessUnit() ? '<small class="quote-cross-bu-note">สินค้าร่วมข้าม BU</small>' : '';
-    return `<div class="row item-card quote-line quote-item-card" data-line-id="${it.lineId}" role="listitem" tabindex="0" aria-label="กดค้างแล้วลากเพื่อเรียงสินค้า หรือกด Alt พร้อมลูกศรขึ้นลง" title="กดค้างแล้วลากเพื่อเรียงสินค้า">
+    return `<div class="row item-card quote-line quote-item-card${invalidUnitClass}" data-line-id="${it.lineId}" role="listitem" tabindex="0" aria-label="กดค้างแล้วลากเพื่อเรียงสินค้า หรือกด Alt พร้อมลูกศรขึ้นลง" title="กดค้างแล้วลากเพื่อเรียงสินค้า">
       <div class="quote-line-main">
         <div class="quote-product-title">${productBuBadge}<b>${it.productName || '-'} ${freeBadge}</b>${crossBuNote}</div>
         <small>${it.productId || ''}${it.unit ? ' · ' + it.unit : ''}</small>
@@ -4549,6 +4659,13 @@ async function saveQuotationWithStatus(status) {
     return { ok: false, code: 'DUPLICATE_SUBMIT', message: 'Quotation save is already in progress' };
   }
   const payload = buildQuotationPayload(status);
+  logQuotationSavePayloadLines(payload);
+  const lineValidation = validateQuotationLinesBeforeSave(payload);
+  if (!lineValidation.ok) {
+    markQuoteLineUnitInvalid(lineValidation.lineId);
+    toast(lineValidation.message);
+    return lineValidation;
+  }
   const requestId = getQuotationSaveRequestIdForPayload(payload);
   QUOTE_SAVE_IN_PROGRESS = true;
   setQuotationSaveBusy(true);

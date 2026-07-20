@@ -264,6 +264,8 @@ body.product-promo-scroll-locked{overflow:hidden;touch-action:none}
 .quote-line.card--drag-ready,.quote-line.card--chosen{box-shadow:0 12px 30px rgba(15,42,82,.12);transform:translateY(-1px)}
 .quote-line.is-dragging,.quote-line.card--dragging{opacity:.7;box-shadow:0 24px 54px rgba(15,42,82,.22);cursor:grabbing}
 .quote-line.is-newly-added{animation:quote-item-highlight 1.8s ease;border-color:#f0d84b!important;box-shadow:0 0 0 4px rgba(240,216,75,.34),0 18px 42px rgba(15,42,82,.18)!important}
+.quote-line.is-invalid-line{border-color:#ef4444!important;box-shadow:0 0 0 4px rgba(239,68,68,.18),0 18px 42px rgba(15,42,82,.16)!important}
+.quote-line.is-invalid-line .quote-line-unit-editor select{border-color:#ef4444;box-shadow:0 0 0 3px rgba(239,68,68,.14)}
 @keyframes quote-item-highlight{0%{transform:translateY(-2px);background:#fff7bd}45%{background:#fffdf0}100%{transform:translateY(0);background:#fff}}
 .quote-drop-placeholder,.quote-drop-placeholder.card--ghost{border:2px dashed #8bbce8;border-radius:18px;background:#eef6ff;margin:6px 0;min-height:54px}
 body.quote-reordering{user-select:none;cursor:grabbing;overscroll-behavior:contain}
