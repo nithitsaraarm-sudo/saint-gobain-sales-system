@@ -1032,7 +1032,7 @@ function renderCart() {
     calcCart();
     return;
   }
-  cartList.innerHTML = CART.length ? CART.map(it => `<div class="row item-card"><div><b>${it.productName}</b><br><small>${money(it.listPrice)} · ส่วนลด <input style="width:60px;border:1px solid var(--line);border-radius:10px;padding:3px" type="number" value="${it.discount}" onchange="changeDiscount('${it.lineId}', Number(this.value))">%</small></div><div class="qty"><button onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button><b>${it.qty}</b><button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button></div><button class="ghost" onclick="removeProduct('${it.lineId}')">ลบ</button></div>`).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
+  cartList.innerHTML = CART.length ? CART.map(it => `<div class="row item-card"><div><b>${it.productName}</b><br><small>${money(it.listPrice)} · ส่วนลด <input style="width:60px;border:1px solid var(--line);border-radius:10px;padding:3px" type="number" value="${it.discount}" onchange="changeDiscount('${it.lineId}', Number(this.value))">%</small></div><div class="qty"><button onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button><b>${it.qty}</b><button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button></div><button class="ghost quote-item-delete" data-no-drag aria-label="ลบสินค้า" title="ลบสินค้า" onclick="removeProduct('${it.lineId}')">${getQuoteDeleteIconHtml()}</button></div>`).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
   calcCart();
 }
 
@@ -2482,7 +2482,7 @@ function renderCart() {
   }
   ensureCartLineIdentityAndOrder();
   CART.forEach(recalcLineItem);
-  cartList.innerHTML = CART.length ? CART.map(it => `<div class="row item-card quote-line"><div class="quote-line-main"><b>${it.productName||'-'}</b><br><small>${it.unit||'-'}</small><div class="quote-line-prices"><span>ราคาตั้ง ${money(it.listPrice)}</span><span>ส่วนลด <input style="width:60px;border:1px solid var(--line);border-radius:10px;padding:3px" type="number" value="${it.discountPercent||0}" onchange="changeDiscount('${it.lineId}', Number(this.value))">%</span><span>ราคาสุทธิ ${money(it.unitPrice)}</span><span>รวม ${money(it.lineTotal)}</span></div></div><div class="qty"><button onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button><b>${it.qty}</b><button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button></div><button class="ghost" onclick="removeProduct('${it.lineId}')">ลบ</button></div>`).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
+  cartList.innerHTML = CART.length ? CART.map(it => `<div class="row item-card quote-line"><div class="quote-line-main"><b>${it.productName||'-'}</b><br><small>${it.unit||'-'}</small><div class="quote-line-prices"><span>ราคาตั้ง ${money(it.listPrice)}</span><span>ส่วนลด <input style="width:60px;border:1px solid var(--line);border-radius:10px;padding:3px" type="number" value="${it.discountPercent||0}" onchange="changeDiscount('${it.lineId}', Number(this.value))">%</span><span>ราคาสุทธิ ${money(it.unitPrice)}</span><span>รวม ${money(it.lineTotal)}</span></div></div><div class="qty"><button onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button><b>${it.qty}</b><button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button></div><button class="ghost quote-item-delete" data-no-drag aria-label="ลบสินค้า" title="ลบสินค้า" onclick="removeProduct('${it.lineId}')">${getQuoteDeleteIconHtml()}</button></div>`).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
   calcCart();
 }
 
@@ -4074,6 +4074,10 @@ renderQuote = function () {
   renderQuoteMeta();
 };
 
+function getQuoteDeleteIconHtml() {
+  return '<svg class="quote-delete-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 4h6l1 2h4v2H4V6h4l1-2Z"></path><path d="M7 10h10l-.7 9.2A2 2 0 0 1 14.3 21H9.7a2 2 0 0 1-2-1.8L7 10Z"></path><path d="M10 12v6M14 12v6"></path></svg>';
+}
+
 function renderCart() {
   const cartList = document.getElementById('cartList');
   if (!cartList) {
@@ -4122,7 +4126,7 @@ function renderCart() {
         <input type="number" min="1" value="${Number(it.qty) || 1}" onchange="changeQty('${it.lineId}', this.value)">
         <button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button>
       </div>
-      <button class="ghost quote-item-delete" data-no-drag onclick="removeProduct('${it.lineId}')">ลบ</button>
+      <button class="ghost quote-item-delete" data-no-drag aria-label="ลบสินค้า" title="ลบสินค้า" onclick="removeProduct('${it.lineId}')">${getQuoteDeleteIconHtml()}</button>
     </div>`;
   }).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
   calcCart();
