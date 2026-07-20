@@ -229,17 +229,22 @@ body.product-promo-scroll-locked{overflow:hidden;touch-action:none}
 
 .quote-cart-header{display:flex;align-items:center;justify-content:space-between;gap:10px 12px;flex-wrap:wrap;min-width:0;margin:0 0 12px}
 .quote-cart-header h2{margin:0;min-width:0;line-height:1.25}
+.quote-cart-add-product-row{display:flex;justify-content:flex-end;align-items:center;min-width:0;max-width:100%;margin:12px 0 14px}
 .quote-search-shortcut{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;min-width:44px;max-width:100%;padding:10px 14px;line-height:1.2;white-space:nowrap;touch-action:manipulation}
 .quote-search-shortcut:hover{background:#eef6ff;box-shadow:0 8px 22px rgba(15,42,82,.08)}
 .quote-search-shortcut:focus-visible{outline:3px solid rgba(0,103,177,.24);outline-offset:2px}
 .quote-search-shortcut:active{transform:translateY(1px)}
 .quote-search-shortcut-icon{width:18px;height:18px;flex:0 0 18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.quotation-adjustments{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:start;margin:12px 0;min-width:0;max-width:100%}
+.quotation-adjustments .field{min-width:0;margin:0}
+.quotation-adjustments input{box-sizing:border-box;width:100%;min-width:0;min-height:44px;font-size:16px}
 .quote-product-search-field{scroll-margin-top:calc(env(safe-area-inset-top,0px) + 96px)}
 .quote-product-search-field.product-search--navigation-highlight{border-radius:18px;animation:product-search-navigation-highlight 1.35s ease}
 .quote-product-search-field.product-search--navigation-highlight input{border-color:var(--blue);box-shadow:0 0 0 4px rgba(0,103,177,.16)}
 @keyframes product-search-navigation-highlight{0%{box-shadow:0 0 0 0 rgba(0,103,177,.28)}35%{box-shadow:0 0 0 6px rgba(0,103,177,.18)}100%{box-shadow:0 0 0 0 rgba(0,103,177,0)}}
 @media(prefers-reduced-motion:reduce){.quote-search-shortcut:active{transform:none}.quote-product-search-field.product-search--navigation-highlight{animation:none}.quote-product-search-field.product-search--navigation-highlight input{box-shadow:0 0 0 4px rgba(0,103,177,.16)}}
-@media(max-width:380px){.quote-cart-header{align-items:stretch}.quote-search-shortcut{width:100%;white-space:normal}.quote-search-shortcut span{font-size:13px}}
+@media(max-width:380px){.quote-cart-header{align-items:stretch}.quote-search-shortcut{width:100%;white-space:normal}.quote-search-shortcut span{font-size:13px}.quotation-adjustments{gap:8px}.quotation-adjustments .field label{font-size:12px;line-height:1.25}.quotation-adjustments input{padding-left:10px;padding-right:10px}}
+@media(max-width:319px){.quotation-adjustments{grid-template-columns:1fr}}
 
 /* Quotation screen ratio + cart reorder */
 @media(min-width:1024px){.quote-layout{grid-template-columns:calc(60% - 10px) calc(40% - 10px)!important;align-items:start}.quote-layout>*{min-width:0}.quote-layout>.card{min-width:0}}
