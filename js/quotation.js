@@ -4505,6 +4505,36 @@ async function addProduct(productId, qty) {
   return requestAddProductToQuote(productId, QUOTE_PRODUCT_ADD_SOURCE.SEARCH, qty || 1);
 }
 
+const QUOTATION_SAVE_VALIDATION_CODES = [
+  'VALIDATION_ERROR',
+  'INVALID_QUOTATION_PAYLOAD',
+  'MISSING_CUSTOMER',
+  'EMPTY_QUOTATION_LINES',
+  'INVALID_PRODUCT_LINE',
+  'UNKNOWN_PRODUCT_BRAND',
+  'INVALID_QUOTATION_TYPE',
+  'QUOTE_LINE_PRICE_REQUIRED',
+  'QUOTE_LINE_UNIT_REQUIRED',
+  'PRODUCT_NOT_FOUND',
+  'DUPLICATE_LINE_ID',
+  'DUPLICATE_PAID_PRODUCT_LINE',
+  'DUPLICATE_FREE_PRODUCT_LINE',
+  'INVALID_FREE_ITEM_STATE'
+];
+
+function getQuotationSaveFailureMessage(status, response) {
+  const code = String(response && response.code || '').trim();
+  if (code === 'SAVE_RESULT_PENDING' || code === 'TIMEOUT') {
+    return 'การบันทึกใช้เวลานานกว่าปกติ ระบบกำลังตรวจสอบผลการบันทึก กรุณาอย่ากดบันทึกซ้ำ';
+  }
+  if (QUOTATION_SAVE_VALIDATION_CODES.indexOf(code) >= 0) {
+    return 'กรุณาตรวจสอบข้อมูลใบเสนอราคาให้ครบถ้วน';
+  }
+  return status === 'DRAFT'
+    ? 'ไม่สามารถบันทึกใบเสนอราคาได้ กรุณาลองใหม่อีกครั้ง'
+    : 'ไม่สามารถอัปเดตใบเสนอราคาได้ กรุณาลองใหม่อีกครั้ง';
+}
+
 async function saveQuotationWithStatus(status) {
   if (!CURRENT_QUOTE.customerId) {
     toast('กรุณาเลือกลูกค้าก่อนบันทึกใบเสนอราคา');
@@ -4534,9 +4564,11 @@ async function saveQuotationWithStatus(status) {
         code: response.code || '',
         message: response.message || '',
         quoteId: payload.quoteId || '',
+        quoteNo: payload.quoteNo || '',
+        clientRequestId: payload.clientRequestId || '',
         hasQuotationNumber: Boolean(payload.quoteNo)
       });
-      toast(status === 'DRAFT' ? 'ไม่สามารถบันทึกใบเสนอราคาได้ กรุณาลองใหม่อีกครั้ง' : 'ไม่สามารถอัปเดตใบเสนอราคาได้ กรุณาลองใหม่อีกครั้ง');
+      toast(getQuotationSaveFailureMessage(status, response));
       return response;
     }
     clearQuotationSaveRequestState();
