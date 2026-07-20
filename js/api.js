@@ -1,4 +1,4 @@
-window.APP_VERSION = window.APP_VERSION || '0.5.7';
+window.APP_VERSION = window.APP_VERSION || '0.5.17';
 const APP_ENV = String(window.APP_ENV || 'production').trim().toLowerCase();
 const API_MOCK_MODE = APP_ENV === 'development';
 const GAS_WEB_APP_URL =
@@ -16,6 +16,9 @@ const CACHE_KEYS = {
   quotationHistory: 'sg_quotation_history_cache'
 };
 const API_TIMEOUT_MS = 30000;
+const API_RESPONSE_PREVIEW_LIMIT = 500;
+const QUOTATION_SAVE_RECONCILE_ACTIONS = ['saveQuotation', 'updateQuotation', 'quotation'];
+const API_POST_RECONCILE_CODES = ['NETWORK_ERROR', 'TIMEOUT', 'HTTP_ERROR', 'EMPTY_RESPONSE', 'INVALID_JSON', 'API_RESPONSE_INVALID'];
 const READ_ACTIONS = [
   'bootstrap',
   'getPublicSystemSettings',
@@ -86,6 +89,149 @@ function logApiDebug(action, state) {
   if (isApiDebugEnabled() && typeof console !== 'undefined' && typeof console.log === 'function') {
     console.log('[API]', action, state);
   }
+}
+
+function normalizeApiBoolean(value) {
+  if (value === true || value === false) return value;
+  const text = String(value === undefined || value === null ? '' : value).trim().toLowerCase();
+  if (text === 'true' || text === 'yes' || text === '1' || text === 'success' || text === 'ok') return true;
+  if (text === 'false' || text === 'no' || text === '0' || text === 'error' || text === 'failed') return false;
+  return null;
+}
+
+function getApiResponsePreview(text) {
+  return String(text === undefined || text === null ? '' : text).slice(0, API_RESPONSE_PREVIEW_LIMIT);
+}
+
+function normalizeApiResponse(response, fallback) {
+  const context = fallback || {};
+  if (!response || typeof response !== 'object') {
+    return {
+      ok: false,
+      success: false,
+      code: context.code || 'EMPTY_RESPONSE',
+      message: context.message || 'Empty API response',
+      detail: context.detail || null
+    };
+  }
+  const okValue = Object.prototype.hasOwnProperty.call(response, 'ok') ? normalizeApiBoolean(response.ok) : null;
+  const successValue = Object.prototype.hasOwnProperty.call(response, 'success') ? normalizeApiBoolean(response.success) : null;
+  const ok = okValue !== null ? okValue : (successValue !== null ? successValue : false);
+  const errorObject = response.error && typeof response.error === 'object' ? response.error : null;
+  const message = String(
+    response.message ||
+    (errorObject && errorObject.message) ||
+    (typeof response.error === 'string' ? response.error : '') ||
+    context.message ||
+    (ok ? '' : 'API request failed')
+  );
+  const code = String(
+    response.code ||
+    (errorObject && errorObject.code) ||
+    context.code ||
+    (ok ? 'SUCCESS' : 'ERROR')
+  );
+  const data = response.data !== undefined
+    ? response.data
+    : (response.result !== undefined
+      ? response.result
+      : (ok && !Object.prototype.hasOwnProperty.call(response, 'data') ? null : response.data));
+  return Object.assign({}, response, {
+    ok: ok,
+    success: ok,
+    code: code,
+    data: data === undefined ? null : data,
+    message: message,
+    detail: response.detail || (errorObject && errorObject.detail) || context.detail || null
+  });
+}
+
+function parseApiResponseText(text, context) {
+  const body = String(text === undefined || text === null ? '' : text);
+  if (!body.trim()) {
+    return normalizeApiResponse(null, {
+      code: 'EMPTY_RESPONSE',
+      message: 'Empty API response'
+    });
+  }
+  try {
+    return normalizeApiResponse(JSON.parse(body), context);
+  } catch (error) {
+    return {
+      ok: false,
+      success: false,
+      code: 'API_RESPONSE_INVALID',
+      message: 'API response is not JSON',
+      detail: getApiResponsePreview(body)
+    };
+  }
+}
+
+function logApiTechnicalIssue(action, issue) {
+  if (typeof console === 'undefined' || typeof console.warn !== 'function') return;
+  const data = issue || {};
+  console.warn('[API] technical issue', {
+    action: String(action || '').trim(),
+    code: data.code || '',
+    status: data.status || '',
+    redirected: Boolean(data.redirected),
+    url: data.url ? String(data.url).slice(0, 160) : '',
+    message: data.message || '',
+    detail: data.detail ? String(data.detail).slice(0, API_RESPONSE_PREVIEW_LIMIT) : ''
+  });
+}
+
+function shouldReconcileQuotationSave(action, payload, response) {
+  const normalizedAction = String(action || '').trim();
+  const data = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+  const code = String(response && response.code || '').trim();
+  return QUOTATION_SAVE_RECONCILE_ACTIONS.indexOf(normalizedAction) >= 0
+    && String(data.clientRequestId || data.clientSaveId || data.quoteSaveRequestId || '').trim()
+    && response
+    && response.ok !== true
+    && API_POST_RECONCILE_CODES.indexOf(code) >= 0;
+}
+
+function getPendingQuotationSaveMessage() {
+  return 'การบันทึกใช้เวลานานกว่าปกติ ระบบกำลังตรวจสอบผลการบันทึก กรุณาอย่ากดบันทึกซ้ำ';
+}
+
+function reconcileQuotationSaveResponse(action, payload, postFailure) {
+  logApiTechnicalIssue(action, {
+    code: postFailure && postFailure.code || 'POST_SAVE_RESPONSE_FAILED',
+    message: 'Trying save reconciliation with same clientRequestId',
+    detail: postFailure && postFailure.detail || ''
+  });
+  return apiJsonpGet(action, payload, { timeoutMs: API_TIMEOUT_MS }).then(function (reconcileResponse) {
+    const normalized = normalizeApiResponse(reconcileResponse, {
+      code: reconcileResponse && reconcileResponse.code || 'SAVE_RECONCILE_FAILED',
+      message: reconcileResponse && reconcileResponse.message || ''
+    });
+    if (normalized.ok) {
+      normalized.reconciled = true;
+      normalized.originalPostCode = postFailure && postFailure.code || '';
+      return normalized;
+    }
+    if (normalized.code === 'DUPLICATE_SUBMIT') {
+      return Object.assign({}, normalized, {
+        code: 'SAVE_RESULT_PENDING',
+        retryable: true,
+        message: getPendingQuotationSaveMessage(),
+        originalPostCode: postFailure && postFailure.code || ''
+      });
+    }
+    return Object.assign({}, postFailure, {
+      reconcileCode: normalized.code,
+      reconcileMessage: normalized.message,
+      message: postFailure && postFailure.message || normalized.message || 'API request failed'
+    });
+  }, function (error) {
+    logApiTechnicalIssue(action, {
+      code: 'SAVE_RECONCILE_EXCEPTION',
+      message: error && error.message ? error.message : String(error || '')
+    });
+    return postFailure;
+  });
 }
 
 function setCache(key, data, ttlMinutes) {
@@ -408,20 +554,21 @@ function gas(action, payload) {
   return callApi(action, payload);
 }
 
-function apiJsonpGet(action, payload) {
+function apiJsonpGet(action, payload, options) {
   return new Promise(function (resolve) {
     const callbackName = '__sgApiCallback_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
     const script = document.createElement('script');
     let settled = false;
     let timedOut = false;
+    const timeoutMs = Number(options && options.timeoutMs || API_TIMEOUT_MS);
 
     const timeout = window.setTimeout(function () {
       timedOut = true;
       settled = true;
       removeScript();
       scheduleCallbackDelete();
-      resolve({ ok: false, code: 'TIMEOUT', message: 'API request timeout' });
-    }, API_TIMEOUT_MS);
+      resolve({ ok: false, success: false, code: 'TIMEOUT', message: 'API request timeout' });
+    }, timeoutMs);
 
     function removeScript() {
       if (script.parentNode) {
@@ -454,11 +601,11 @@ function apiJsonpGet(action, payload) {
       if (timedOut) {
         return;
       }
-      finish(response || { ok: false, code: 'EMPTY_RESPONSE', message: 'Empty API response' });
+      finish(normalizeApiResponse(response, { code: 'EMPTY_RESPONSE', message: 'Empty API response' }));
     };
 
     script.onerror = function () {
-      finish({ ok: false, code: 'NETWORK_ERROR', message: 'API request failed' });
+      finish({ ok: false, success: false, code: 'NETWORK_ERROR', message: 'API request failed' });
     };
 
     script.src = GAS_WEB_APP_URL
@@ -494,29 +641,54 @@ function apiPost(action, payload, options) {
   }).then(function (response) {
     return response.text().then(function (text) {
       if (!response.ok) {
-        return {
+        const httpResult = {
           ok: false,
+          success: false,
           code: 'HTTP_ERROR',
           message: 'HTTP ' + response.status,
-          detail: text ? text.slice(0, 500) : ''
+          detail: getApiResponsePreview(text),
+          status: response.status,
+          redirected: response.redirected,
+          responseUrl: response.url || ''
         };
+        logApiTechnicalIssue(action, httpResult);
+        return httpResult;
       }
-      try {
-        return text ? JSON.parse(text) : { ok: false, code: 'EMPTY_RESPONSE', message: 'Empty API response' };
-      } catch (error) {
-        return {
-          ok: false,
-          code: 'INVALID_JSON',
-          message: 'API response is not JSON',
-          detail: text ? text.slice(0, 500) : ''
-        };
+      const parsed = parseApiResponseText(text, {
+        status: response.status,
+        redirected: response.redirected,
+        url: response.url || ''
+      });
+      if (!parsed.ok && API_POST_RECONCILE_CODES.indexOf(parsed.code) >= 0) {
+        logApiTechnicalIssue(action, {
+          code: parsed.code,
+          status: response.status,
+          redirected: response.redirected,
+          url: response.url || '',
+          message: parsed.message,
+          detail: parsed.detail || ''
+        });
       }
+      return parsed;
     });
-  }).catch(function (error) {
-    if (error && error.name === 'AbortError') {
-      return { ok: false, code: 'TIMEOUT', message: 'API request timeout' };
+  }).then(function (result) {
+    const normalized = normalizeApiResponse(result);
+    if (shouldReconcileQuotationSave(action, payload, normalized)) {
+      return reconcileQuotationSaveResponse(action, payload, normalized);
     }
-    return { ok: false, code: 'NETWORK_ERROR', message: error && error.message ? error.message : 'API request failed' };
+    return normalized;
+  }).catch(function (error) {
+    let result;
+    if (error && error.name === 'AbortError') {
+      result = { ok: false, success: false, code: 'TIMEOUT', message: 'API request timeout' };
+    } else {
+      result = { ok: false, success: false, code: 'NETWORK_ERROR', message: error && error.message ? error.message : 'API request failed' };
+    }
+    logApiTechnicalIssue(action, result);
+    if (shouldReconcileQuotationSave(action, payload, result)) {
+      return reconcileQuotationSaveResponse(action, payload, result);
+    }
+    return result;
   }).finally(function () {
     if (timeoutId) {
       window.clearTimeout(timeoutId);

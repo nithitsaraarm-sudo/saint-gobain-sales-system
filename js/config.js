@@ -1,8 +1,8 @@
 window.APP_NAME = "Saint-Gobain Sales System";
-window.APP_VERSION = "0.5.7";
+window.APP_VERSION = "0.5.18";
 window.APP_ENV = "production";
 
-window.CACHE_VERSION = "20260716";
+window.CACHE_VERSION = "20260720";
 window.DEFAULT_PAGE_SIZE = 50;
 
 window.APP_CACHE_KEYS = [

@@ -123,16 +123,729 @@ function clearQuotationSaveRequestState() {
   QUOTE_SAVE_REQUEST_SIGNATURE = '';
 }
 
+const QUOTATION_UNSAVED_NUMBER_LABEL = 'ยังไม่มีเลขที่ใบเสนอราคา';
+const QUOTATION_EXPORT_BLOCKED_TITLE = 'ยังไม่สามารถส่งออกได้';
+let QUOTE_LAST_SAVED_SIGNATURE = '';
+let QUOTE_LAST_SAVE_SUCCEEDED = false;
+let QUOTE_WORKFLOW_RENDER_TIMER = 0;
+let QUOTE_ACTION_SHEET_OPEN = '';
+let QUOTE_ACTION_SHEET_KEYDOWN_BOUND = false;
+let QUOTE_EDIT_NAVIGATION_PROMISE = null;
+const QUOTATION_EDIT_OPEN_ERROR_MESSAGE = 'ไม่สามารถเปิดใบเสนอราคาสำหรับแก้ไขได้ กรุณาลองใหม่อีกครั้ง';
+
+function normalizeQuotationWorkflowText(value) {
+  return String(value === undefined || value === null ? '' : value).replace(/\s+/g, ' ').trim();
+}
+
+function normalizeQuotationWorkflowKey(value) {
+  return normalizeQuotationWorkflowText(value).toUpperCase().replace(/\s+/g, '');
+}
+
+function normalizeQuotationWorkflowNumber(value) {
+  const numeric = Number(String(value === undefined || value === null ? '' : value).replace(/,/g, '').trim());
+  return Number.isFinite(numeric) ? roundValue(numeric) : 0;
+}
+
+function getRealQuotationNumber(value) {
+  const text = normalizeQuotationWorkflowText(value);
+  const key = normalizeQuotationWorkflowKey(text);
+  if (!text || text === '-' || !/[0-9]/.test(key)) return '';
+  if (key === 'QT-PREVIEW' || key === 'PREVIEW' || key === 'DRAFT' || key === 'UNSAVED') return '';
+  if (key.indexOf('ยังไม่มีเลขที่ใบเสนอราคา') >= 0) return '';
+  if (/^QUOTE[_-]/i.test(key) || /^TEMP/i.test(key)) return '';
+  return text;
+}
+
+function getCurrentRealQuotationNumber() {
+  return getRealQuotationNumber(CURRENT_QUOTE && CURRENT_QUOTE.quoteNo)
+    || getRealQuotationNumber(CURRENT_QUOTE && CURRENT_QUOTE.quoteId);
+}
+
+function getCurrentQuotationIdentifiers() {
+  const quote = CURRENT_QUOTE || {};
+  return [
+    quote.quoteId,
+    quote.quoteNo,
+    getCurrentRealQuotationNumber()
+  ].map(normalizeQuotationWorkflowKey).filter(Boolean);
+}
+
+function quotationPreviewMatchesCurrent(documentNode) {
+  if (!documentNode || !documentNode.dataset) return true;
+  const currentIds = getCurrentQuotationIdentifiers();
+  const previewIds = [
+    documentNode.dataset.quoteId,
+    documentNode.dataset.quoteNo
+  ].map(normalizeQuotationWorkflowKey).filter(Boolean);
+  if (!previewIds.length) return true;
+  if (!currentIds.length) return false;
+  return previewIds.some(id => currentIds.indexOf(id) >= 0);
+}
+
+function getOpenQuotationPreviewDocument() {
+  const preview = typeof document !== 'undefined' ? document.getElementById('quotationPrintPreview') : null;
+  if (!preview || !preview.classList.contains('is-open')) return null;
+  return document.getElementById('printQuotationSheet');
+}
+
+function isExternalQuotationExportRequest(quoteId) {
+  const id = normalizeQuotationWorkflowKey(quoteId);
+  if (!id) return false;
+  const currentIds = getCurrentQuotationIdentifiers();
+  return currentIds.indexOf(id) < 0;
+}
+
+function getQuotationSnapshotLine(item, index) {
+  const line = recalcLineItem(Object.assign({}, item || {}));
+  const unit = sanitizeQuoteUnit(line.quotedUnit || line.unit || '');
+  const productUnit = getProductBusinessUnitClient(line) || line.productBusinessUnit || line.businessUnit || '';
+  return {
+    lineNo: index + 1,
+    lineId: normalizeQuotationWorkflowText(line.lineId),
+    productId: normalizeQuotationWorkflowText(line.productId || line.productCode || line.sku),
+    productCode: normalizeQuotationWorkflowText(line.productCode || line.sku || line.productId),
+    sku: normalizeQuotationWorkflowText(line.sku || line.productCode || line.productId),
+    productBusinessUnit: normalizeQuotationWorkflowKey(productUnit),
+    productName: normalizeQuotationWorkflowText(line.productName),
+    unit: unit,
+    masterUnit: sanitizeQuoteUnit(line.masterUnit || ''),
+    quotedUnit: unit,
+    qty: normalizeQuotationWorkflowNumber(line.qty),
+    listPrice: normalizeQuotationWorkflowNumber(line.quotedListPrice !== undefined ? line.quotedListPrice : line.listPrice),
+    masterListPrice: normalizeQuotationWorkflowNumber(line.masterListPrice),
+    discountPercent: normalizeQuotationWorkflowNumber(line.discountPercent || line.discount),
+    unitPrice: normalizeQuotationWorkflowNumber(line.unitPrice || line.netPrice),
+    lineTotal: normalizeQuotationWorkflowNumber(line.lineTotal),
+    vat: normalizeQuotationWorkflowNumber(line.vat),
+    grandTotal: normalizeQuotationWorkflowNumber(line.grandTotal),
+    isFreeItem: Boolean(getQuoteLineFreeState(line)),
+    priceOverridden: Boolean(line.priceOverridden),
+    unitOverridden: Boolean(line.unitOverridden),
+    overrideReason: normalizeQuotationWorkflowText(line.overrideReason),
+    priceType: normalizeQuotationWorkflowText(line.priceType),
+    priceList: normalizeQuotationWorkflowText(line.priceList),
+    promotionId: normalizeQuotationWorkflowText(line.promotionId),
+    priceSource: normalizeQuotationWorkflowText(line.priceSource),
+    status: normalizeQuotationWorkflowKey(line.status || 'ACTIVE')
+  };
+}
+
+function getQuotationSnapshotPayload() {
+  const quote = CURRENT_QUOTE || {};
+  const items = Array.isArray(CART) ? CART.map(getQuotationSnapshotLine) : [];
+  const subtotal = roundValue(items.reduce((sum, item) => sum + item.lineTotal, 0));
+  const vat = roundValue(items.reduce((sum, item) => sum + item.vat, 0));
+  const shipping = normalizeQuotationWorkflowNumber(document.getElementById('shipping')?.value ?? quote.shipping);
+  const specialDiscount = normalizeQuotationWorkflowNumber(document.getElementById('specialDiscount')?.value ?? quote.specialDiscount);
+  return {
+    quoteType: normalizeQuoteType(quote.quoteType || quote.businessUnit || CURRENT_QUOTE_TYPE),
+    businessUnit: normalizeQuoteType(quote.quoteType || quote.businessUnit || CURRENT_QUOTE_TYPE),
+    customerId: normalizeQuotationWorkflowText(quote.customerId),
+    customerName: normalizeQuotationWorkflowText(quote.customerName),
+    shipping: shipping,
+    specialDiscount: specialDiscount,
+    notes: normalizeQuotationWorkflowText(quote.notes || quote.remark || quote.remarks),
+    items: items,
+    subtotal: subtotal,
+    vat: vat,
+    grandTotal: roundValue(subtotal + vat + shipping - specialDiscount)
+  };
+}
+
+function getQuotationSnapshotSignature() {
+  try {
+    return JSON.stringify(getQuotationSnapshotPayload());
+  } catch (error) {
+    console.warn('Unable to build quotation snapshot', error);
+    return '';
+  }
+}
+
+function markQuotationSavedSnapshot() {
+  QUOTE_LAST_SAVED_SIGNATURE = getQuotationSnapshotSignature();
+  QUOTE_LAST_SAVE_SUCCEEDED = Boolean(QUOTE_LAST_SAVED_SIGNATURE && getCurrentRealQuotationNumber());
+  renderQuotationActions();
+  renderQuotationPreviewState();
+}
+
+function clearQuotationSavedSnapshot() {
+  QUOTE_LAST_SAVED_SIGNATURE = '';
+  QUOTE_LAST_SAVE_SUCCEEDED = false;
+  renderQuotationActions();
+  renderQuotationPreviewState();
+}
+
+function isQuotationDirty() {
+  const quoteNo = getCurrentRealQuotationNumber();
+  if (!quoteNo || !QUOTE_LAST_SAVED_SIGNATURE) return false;
+  return getQuotationSnapshotSignature() !== QUOTE_LAST_SAVED_SIGNATURE;
+}
+
+function getQuotationWorkflowState() {
+  const quoteNo = getCurrentRealQuotationNumber();
+  const status = normalizeQuotationWorkflowKey(CURRENT_QUOTE && CURRENT_QUOTE.status || 'DRAFT');
+  const isBusy = Boolean(QUOTE_SAVE_IN_PROGRESS);
+  const isCancelled = status === 'CANCELLED';
+  const hasQuotationNumber = Boolean(quoteNo);
+  const isDirty = Boolean(hasQuotationNumber && !isCancelled && isQuotationDirty());
+  const lastSaveSucceeded = Boolean(hasQuotationNumber && QUOTE_LAST_SAVE_SUCCEEDED && QUOTE_LAST_SAVED_SIGNATURE);
+  let state = 'NEW';
+  if (isBusy) state = hasQuotationNumber ? 'UPDATING' : 'SAVING';
+  else if (isCancelled) state = 'CANCELLED';
+  else if (!hasQuotationNumber) state = 'NEW';
+  else if (isDirty) state = 'MODIFIED';
+  else if (lastSaveSucceeded) state = 'UPDATED';
+  else state = 'ERROR';
+  return {
+    state: state,
+    quoteNo: quoteNo,
+    hasQuotationNumber: hasQuotationNumber,
+    isPersisted: hasQuotationNumber,
+    isDirty: isDirty,
+    isSaving: isBusy && !hasQuotationNumber,
+    isUpdating: isBusy && hasQuotationNumber,
+    isBusy: isBusy,
+    lastSaveSucceeded: lastSaveSucceeded,
+    isCancelled: isCancelled,
+    canPreview: !isBusy,
+    canExport: Boolean(hasQuotationNumber && !isDirty && !isBusy && lastSaveSucceeded && !isCancelled),
+    canCancel: Boolean(hasQuotationNumber && !isBusy && !isCancelled)
+  };
+}
+
+function getQuotationWorkflowStatusLabel(state) {
+  const workflow = state || getQuotationWorkflowState();
+  if (workflow.isBusy) return workflow.isUpdating ? 'UPDATING' : 'SAVING';
+  if (workflow.isCancelled) return 'CANCELLED';
+  if (!workflow.hasQuotationNumber) return 'DRAFT / UNSAVED';
+  if (workflow.isDirty) return 'มีการแก้ไขที่ยังไม่ได้บันทึก';
+  if (workflow.lastSaveSucceeded) return 'UPDATED / SAVED';
+  return 'ERROR';
+}
+
+function scheduleQuotationWorkflowRender() {
+  if (QUOTE_WORKFLOW_RENDER_TIMER) return;
+  QUOTE_WORKFLOW_RENDER_TIMER = setTimeout(() => {
+    QUOTE_WORKFLOW_RENDER_TIMER = 0;
+    renderQuotationActions();
+    renderQuotationPreviewState();
+  }, 0);
+}
+
+function getQuotationButtonHtml(options) {
+  const data = options || {};
+  const classes = [data.className || 'ghost', data.extraClass || ''].filter(Boolean).join(' ');
+  const disabled = data.disabled ? ' disabled aria-disabled="true"' : '';
+  const busy = data.busy ? ' aria-busy="true"' : '';
+  const title = data.title ? ` title="${escapeQuotationPrintHtml(data.title)}"` : '';
+  return `<button type="button" class="${classes}" onclick="${data.onclick || ''}"${disabled}${busy}${title}>${escapeQuotationPrintHtml(data.label || '')}</button>`;
+}
+
+function renderQuotationActions() {
+  const bar = typeof document !== 'undefined' ? document.getElementById('quoteActionBar') : null;
+  if (!bar) return;
+  const state = getQuotationWorkflowState();
+  const disabled = state.isBusy;
+  const buttons = [];
+  if (!state.isPersisted) {
+    buttons.push(getQuotationButtonHtml({
+      className: 'primary quote-action-primary',
+      onclick: 'saveDraftQuotation()',
+      label: state.isBusy ? 'กำลังบันทึก...' : 'บันทึกแบบร่าง',
+      disabled: disabled,
+      busy: state.isBusy
+    }));
+    buttons.push(getQuotationButtonHtml({
+      className: 'ghost quote-action-secondary',
+      onclick: 'closeCurrentQuotation()',
+      label: 'ปิด',
+      disabled: disabled
+    }));
+  } else {
+    buttons.push(getQuotationButtonHtml({
+      className: 'primary quote-action-primary',
+      onclick: 'updateQuotation()',
+      label: state.isBusy ? 'กำลังอัปเดต...' : 'อัปเดตใบเสนอราคา',
+      disabled: disabled,
+      busy: state.isBusy
+    }));
+    buttons.push(getQuotationButtonHtml({
+      className: 'ghost quote-action-secondary',
+      onclick: 'printQuotation()',
+      label: 'ดูตัวอย่าง',
+      disabled: !state.canPreview
+    }));
+    buttons.push(getQuotationButtonHtml({
+      className: 'yellow quote-action-export',
+      onclick: 'openQuotationExportMenu()',
+      label: 'ส่งออก ▾',
+      disabled: !state.canExport,
+      title: state.canExport ? '' : 'ต้องบันทึกหรืออัปเดตใบเสนอราคาก่อนส่งออก'
+    }));
+    buttons.push(getQuotationButtonHtml({
+      className: 'ghost quote-action-secondary',
+      onclick: 'openQuotationMoreMenu()',
+      label: 'เพิ่มเติม ▾',
+      disabled: disabled
+    }));
+    buttons.push(getQuotationButtonHtml({
+      className: 'ghost quote-action-secondary',
+      onclick: 'closeCurrentQuotation()',
+      label: 'ปิด',
+      disabled: disabled
+    }));
+  }
+  bar.dataset.quotationState = state.state;
+  bar.innerHTML = buttons.join('');
+}
+
+function handleQuotationActionSheetKeydown(event) {
+  if (event && event.key === 'Escape') {
+    closeQuotationActionSheet();
+  }
+}
+
+function closeQuotationActionSheet() {
+  const sheet = typeof document !== 'undefined' ? document.getElementById('quotationActionSheet') : null;
+  if (sheet && sheet.parentNode) {
+    sheet.classList.remove('is-open');
+    sheet.parentNode.removeChild(sheet);
+  }
+  QUOTE_ACTION_SHEET_OPEN = '';
+  if (typeof document !== 'undefined') {
+    document.body.classList.remove('quotation-action-sheet-open');
+    if (QUOTE_ACTION_SHEET_KEYDOWN_BOUND) {
+      document.removeEventListener('keydown', handleQuotationActionSheetKeydown);
+      QUOTE_ACTION_SHEET_KEYDOWN_BOUND = false;
+    }
+  }
+}
+
+function openQuotationActionSheet(type, title, message, items) {
+  if (typeof document === 'undefined') return;
+  closeQuotationActionSheet();
+  QUOTE_ACTION_SHEET_OPEN = String(type || '').trim();
+  const overlay = document.createElement('div');
+  overlay.id = 'quotationActionSheet';
+  overlay.className = 'quotation-action-sheet-backdrop';
+  overlay.setAttribute('role', 'presentation');
+  const panel = document.createElement('div');
+  panel.className = 'quotation-action-sheet';
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-modal', 'true');
+  panel.setAttribute('aria-label', title || 'Quotation actions');
+  const header = document.createElement('div');
+  header.className = 'quotation-action-sheet-header';
+  header.innerHTML = `<b>${escapeQuotationPrintHtml(title || '')}</b>${message ? `<p>${escapeQuotationPrintHtml(message)}</p>` : ''}`;
+  panel.appendChild(header);
+  const body = document.createElement('div');
+  body.className = 'quotation-action-sheet-body';
+  (Array.isArray(items) ? items : []).forEach(item => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = item.className || 'ghost';
+    button.textContent = item.label || '';
+    if (item.disabled) button.disabled = true;
+    button.addEventListener('click', async () => {
+      if (button.disabled) return;
+      closeQuotationActionSheet();
+      try {
+        if (typeof item.onClick === 'function') {
+          await item.onClick();
+        }
+      } catch (error) {
+        console.warn('Quotation action failed', error);
+        toast('ไม่สามารถทำรายการได้ กรุณาลองใหม่อีกครั้ง');
+      }
+    });
+    body.appendChild(button);
+  });
+  panel.appendChild(body);
+  overlay.appendChild(panel);
+  overlay.addEventListener('click', event => {
+    if (event.target === overlay) {
+      closeQuotationActionSheet();
+    }
+  });
+  document.body.appendChild(overlay);
+  document.body.classList.add('quotation-action-sheet-open');
+  if (!QUOTE_ACTION_SHEET_KEYDOWN_BOUND) {
+    document.addEventListener('keydown', handleQuotationActionSheetKeydown);
+    QUOTE_ACTION_SHEET_KEYDOWN_BOUND = true;
+  }
+  requestAnimationFrame(() => overlay.classList.add('is-open'));
+  const firstButton = panel.querySelector('button:not([disabled])');
+  if (firstButton && typeof firstButton.focus === 'function') {
+    setTimeout(() => {
+      try {
+        firstButton.focus({ preventScroll: true });
+      } catch (error) {
+        firstButton.focus();
+      }
+    }, 30);
+  }
+}
+
+function showQuotationExportBlockedDialog(actionName) {
+  const state = getQuotationWorkflowState();
+  const message = !state.hasQuotationNumber
+    ? 'กรุณาบันทึกใบเสนอราคาก่อน เพื่อสร้างเลขที่ใบเสนอราคา'
+    : state.isDirty
+      ? 'ใบเสนอราคามีการแก้ไขที่ยังไม่ได้บันทึก กรุณากด “อัปเดตใบเสนอราคา” ก่อนส่งออก'
+      : state.isBusy
+        ? 'ระบบกำลังบันทึกใบเสนอราคา กรุณารอสักครู่'
+        : state.isCancelled
+          ? 'ใบเสนอราคานี้ถูกยกเลิกแล้ว ไม่สามารถส่งออกได้'
+          : 'กรุณาบันทึกหรืออัปเดตใบเสนอราคาให้สำเร็จก่อนส่งออก';
+  const primary = !state.hasQuotationNumber
+    ? { label: 'บันทึกแบบร่าง', className: 'primary', onClick: () => saveDraftQuotation() }
+    : state.isDirty
+      ? { label: 'อัปเดตใบเสนอราคา', className: 'primary', onClick: () => updateQuotation() }
+      : null;
+  const items = [];
+  if (primary && !state.isBusy) items.push(primary);
+  items.push({ label: 'ปิด', className: 'ghost', onClick: () => {} });
+  console.warn('Blocked quotation export', {
+    action: actionName || '',
+    state: state.state,
+    hasQuotationNumber: state.hasQuotationNumber,
+    isDirty: state.isDirty,
+    isBusy: state.isBusy
+  });
+  openQuotationActionSheet('export-blocked', QUOTATION_EXPORT_BLOCKED_TITLE, message, items);
+  return false;
+}
+
+function assertQuotationCanExport(quoteId, actionName) {
+  if (isExternalQuotationExportRequest(quoteId)) {
+    return true;
+  }
+  const previewDocument = getOpenQuotationPreviewDocument();
+  if (!quoteId && previewDocument && !quotationPreviewMatchesCurrent(previewDocument)) {
+    if (getRealQuotationNumber(previewDocument.dataset && previewDocument.dataset.quoteNo)) return true;
+    return showQuotationExportBlockedDialog(actionName);
+  }
+  const state = getQuotationWorkflowState();
+  if (state.canExport) return true;
+  return showQuotationExportBlockedDialog(actionName);
+}
+
+function assertPreparedQuotationCanExport(prepared, actionName) {
+  const documentNode = prepared && prepared.documentNode;
+  const data = prepared && prepared.response && prepared.response.data ? prepared.response.data : {};
+  const quote = data && data.quote ? data.quote : {};
+  const quoteNo = getRealQuotationNumber(documentNode && documentNode.dataset && documentNode.dataset.quoteNo)
+    || getRealQuotationNumber(quote.quoteNo)
+    || getRealQuotationNumber(quote.quoteId);
+  if (!quoteNo) {
+    return showQuotationExportBlockedDialog(actionName);
+  }
+  if (documentNode && quotationPreviewMatchesCurrent(documentNode)) {
+    const state = getQuotationWorkflowState();
+    if (!state.canExport) {
+      return showQuotationExportBlockedDialog(actionName);
+    }
+  }
+  return true;
+}
+
+function canExportOpenQuotationPreview() {
+  const documentNode = getOpenQuotationPreviewDocument();
+  if (documentNode && !quotationPreviewMatchesCurrent(documentNode)) {
+    return Boolean(getRealQuotationNumber(documentNode.dataset && documentNode.dataset.quoteNo)) && !QUOTE_SAVE_IN_PROGRESS;
+  }
+  return getQuotationWorkflowState().canExport;
+}
+
+function renderQuotationPreviewState() {
+  const banner = typeof document !== 'undefined' ? document.getElementById('quotationPreviewState') : null;
+  const controls = typeof document !== 'undefined' ? Array.from(document.querySelectorAll('[data-quote-export-control]')) : [];
+  const canExport = canExportOpenQuotationPreview();
+  controls.forEach(button => {
+    button.disabled = !canExport;
+    button.setAttribute('aria-disabled', String(!canExport));
+    button.title = canExport ? '' : 'ต้องบันทึกหรืออัปเดตใบเสนอราคาก่อนส่งออก';
+  });
+  if (!banner) return;
+  const previewDocument = getOpenQuotationPreviewDocument();
+  if (!previewDocument) {
+    banner.className = 'quotation-preview-state no-print hidden';
+    banner.textContent = '';
+    return;
+  }
+  const externalSavedPreview = previewDocument && !quotationPreviewMatchesCurrent(previewDocument) && getRealQuotationNumber(previewDocument.dataset && previewDocument.dataset.quoteNo);
+  if (externalSavedPreview) {
+    banner.className = 'quotation-preview-state no-print is-ready';
+    banner.textContent = 'UPDATED / SAVED — พร้อมส่งออก';
+    return;
+  }
+  const state = getQuotationWorkflowState();
+  if (!state.hasQuotationNumber) {
+    banner.className = 'quotation-preview-state no-print is-warning';
+    banner.textContent = 'DRAFT / UNSAVED — ยังไม่มีเลขที่ใบเสนอราคา กรุณาบันทึกก่อนส่งออก';
+    return;
+  }
+  if (state.isDirty) {
+    banner.className = 'quotation-preview-state no-print is-warning';
+    banner.textContent = 'มีการแก้ไขที่ยังไม่ได้บันทึก — กรุณาอัปเดตใบเสนอราคาก่อนส่งออก';
+    return;
+  }
+  if (state.isCancelled) {
+    banner.className = 'quotation-preview-state no-print is-error';
+    banner.textContent = 'CANCELLED — ใบเสนอราคานี้ถูกยกเลิกแล้ว';
+    return;
+  }
+  banner.className = 'quotation-preview-state no-print is-ready';
+  banner.textContent = 'UPDATED / SAVED — พร้อมส่งออก';
+}
+
+function openQuotationExportMenu() {
+  const state = getQuotationWorkflowState();
+  if (!state.canExport) {
+    return showQuotationExportBlockedDialog('export-menu');
+  }
+  return openQuotationActionSheet('export', 'ส่งออกใบเสนอราคา', '', [
+    { label: 'PDF', className: 'primary', onClick: () => saveQuotationPdf() },
+    { label: 'PNG', className: 'yellow', onClick: () => saveQuotationPng() },
+    { label: 'Share', className: 'yellow', onClick: () => shareQuote() },
+    { label: 'Print', className: 'ghost', onClick: () => printQuotationSheet() },
+    { label: 'ปิด', className: 'ghost', onClick: () => {} }
+  ]);
+}
+
+async function confirmAndCancelCurrentQuotation() {
+  const state = getQuotationWorkflowState();
+  if (!state.canCancel) return;
+  const confirmed = typeof window === 'undefined' || typeof window.confirm !== 'function'
+    ? true
+    : window.confirm('ยืนยันการยกเลิกใบเสนอราคานี้?');
+  if (!confirmed) return;
+  await cancelCurrentQuotation();
+}
+
+function openQuotationMoreMenu() {
+  const state = getQuotationWorkflowState();
+  const items = [];
+  if (state.canCancel) {
+    items.push({ label: 'ยกเลิกใบเสนอราคา', className: 'quotation-action-danger', onClick: () => confirmAndCancelCurrentQuotation() });
+  }
+  items.push({ label: 'ปิด', className: 'ghost', onClick: () => {} });
+  return openQuotationActionSheet('more', 'เพิ่มเติม', state.canCancel ? '' : 'ไม่มี action เพิ่มเติมสำหรับสถานะนี้', items);
+}
+
+function closeCurrentQuotation() {
+  closeQuotationActionSheet();
+  closeQuotationPrintPreview();
+  if (typeof go === 'function') {
+    go('quotes');
+  }
+}
+
+function getQuotationEditReference(reference) {
+  if (reference && typeof reference === 'object') {
+    const dataset = reference.dataset || {};
+    return String(
+      reference.quoteId ||
+      reference.quotationId ||
+      reference.id ||
+      dataset.quoteId ||
+      reference.quoteNo ||
+      reference.quotationNo ||
+      dataset.quoteNo ||
+      reference.value ||
+      ''
+    ).trim();
+  }
+  return String(reference || '').trim();
+}
+
+function getQuotationEditButtonFromEvent(event) {
+  if (!event) return null;
+  const target = event.currentTarget || event.target;
+  if (target && target.closest) {
+    return target.closest('button,[data-quote-edit-button]');
+  }
+  return target && target.tagName === 'BUTTON' ? target : null;
+}
+
+function setQuotationEditButtonBusy(button, isBusy) {
+  if (!button) return;
+  if (isBusy) {
+    if (button.dataset.quoteEditOriginalText === undefined) {
+      button.dataset.quoteEditOriginalText = button.textContent || '';
+    }
+    if (button.dataset.quoteEditWasDisabled === undefined) {
+      button.dataset.quoteEditWasDisabled = button.disabled ? 'true' : 'false';
+    }
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    button.textContent = 'กำลังเปิด...';
+  } else {
+    if (button.dataset.quoteEditOriginalText !== undefined) {
+      button.textContent = button.dataset.quoteEditOriginalText;
+      delete button.dataset.quoteEditOriginalText;
+    }
+    button.disabled = button.dataset.quoteEditWasDisabled === 'true';
+    delete button.dataset.quoteEditWasDisabled;
+    button.removeAttribute('aria-busy');
+  }
+}
+
+function quotationEditTargetMatchesCurrent(reference) {
+  const key = normalizeQuotationWorkflowKey(reference);
+  if (!key) return false;
+  return getCurrentQuotationIdentifiers().indexOf(key) >= 0;
+}
+
+function confirmQuotationEditNavigation(reference) {
+  if (typeof isQuotationDirty !== 'function' || !isQuotationDirty()) return true;
+  if (quotationEditTargetMatchesCurrent(reference)) return true;
+  if (typeof window === 'undefined' || typeof window.confirm !== 'function') return true;
+  return window.confirm('มีการแก้ไขใบเสนอราคาปัจจุบันที่ยังไม่ได้บันทึก ต้องการเปิดใบเสนอราคาอื่นหรือไม่?');
+}
+
+function closeQuotationEditSurfaces() {
+  try {
+    closeQuotationActionSheet();
+  } catch (error) {
+    console.warn('[QuotationEdit] close action sheet failed', error);
+  }
+  try {
+    closeQuotationPrintPreview();
+  } catch (error) {
+    console.warn('[QuotationEdit] close preview failed', error);
+  }
+  try {
+    if (typeof window !== 'undefined' && typeof window.closeQuotationDetailModal === 'function') {
+      window.closeQuotationDetailModal();
+    }
+  } catch (error) {
+    console.warn('[QuotationEdit] close detail modal failed', error);
+  }
+  const detail = typeof document !== 'undefined' ? document.getElementById('quoteDetail') : null;
+  if (detail) detail.classList.add('hidden');
+  if (typeof document !== 'undefined' && document.body) {
+    document.body.classList.remove('quotation-action-sheet-open', 'print-preview-open');
+  }
+}
+
+function showQuotationEditLoadingState(reference) {
+  const label = escapeQuotationPrintHtml(reference || '-');
+  const meta = typeof document !== 'undefined' ? document.getElementById('quoteMeta') : null;
+  const cartList = typeof document !== 'undefined' ? document.getElementById('cartList') : null;
+  const actionBar = typeof document !== 'undefined' ? document.getElementById('quoteActionBar') : null;
+  if (meta) meta.innerHTML = `<span>กำลังเปิดใบเสนอราคา: <b>${label}</b></span>`;
+  if (cartList) cartList.innerHTML = '<p class="loading-text">กำลังโหลดข้อมูลใบเสนอราคา...</p>';
+  if (actionBar) actionBar.innerHTML = '<button type="button" class="primary" disabled aria-busy="true">กำลังโหลด...</button>';
+}
+
+function showQuotationEditErrorState(reference) {
+  const label = escapeQuotationPrintHtml(reference || '-');
+  const meta = typeof document !== 'undefined' ? document.getElementById('quoteMeta') : null;
+  const cartList = typeof document !== 'undefined' ? document.getElementById('cartList') : null;
+  const actionBar = typeof document !== 'undefined' ? document.getElementById('quoteActionBar') : null;
+  if (meta) meta.innerHTML = `<span class="quote-workflow-status quote-status-error">เปิดใบเสนอราคาไม่สำเร็จ: <b>${label}</b></span>`;
+  if (cartList) cartList.innerHTML = `<p class="quote-modal-error">${escapeQuotationPrintHtml(QUOTATION_EDIT_OPEN_ERROR_MESSAGE)}</p>`;
+  if (actionBar) actionBar.innerHTML = '';
+}
+
+function logQuotationEditNavigation(level, detail) {
+  const payload = detail || {};
+  const logger = level === 'error' ? console.error : (level === 'warn' ? console.warn : console.info);
+  try {
+    logger('[QuotationEditNavigation]', {
+      reference: payload.reference || '',
+      source: payload.source || '',
+      code: payload.code || '',
+      timeout: Boolean(payload.timeout),
+      message: payload.message || '',
+      stack: payload.stack || ''
+    });
+  } catch (ignore) {}
+}
+
+async function navigateToQuotationEdit(reference, eventOrOptions, maybeOptions) {
+  const event = eventOrOptions && typeof eventOrOptions.preventDefault === 'function' ? eventOrOptions : null;
+  const options = event ? (maybeOptions || {}) : (eventOrOptions || {});
+  if (event) {
+    event.preventDefault();
+    if (typeof event.stopPropagation === 'function') event.stopPropagation();
+  }
+  const button = getQuotationEditButtonFromEvent(event);
+  const source = String(options.source || (button && button.dataset && button.dataset.quoteEditSource) || 'quotation').trim();
+  const quotationReference = getQuotationEditReference(reference || (button && button.dataset));
+  if (!quotationReference) {
+    toast(QUOTATION_EDIT_OPEN_ERROR_MESSAGE);
+    logQuotationEditNavigation('warn', { reference: '', source: source, code: 'INVALID_REFERENCE', message: 'quotation reference is required' });
+    return { ok: false, code: 'INVALID_REFERENCE', message: 'quotation reference is required' };
+  }
+  if (QUOTE_EDIT_NAVIGATION_PROMISE) {
+    return QUOTE_EDIT_NAVIGATION_PROMISE;
+  }
+  if (!confirmQuotationEditNavigation(quotationReference)) {
+    return { ok: false, code: 'NAVIGATION_CANCELLED', message: 'navigation cancelled' };
+  }
+  setQuotationEditButtonBusy(button, true);
+  QUOTE_EDIT_NAVIGATION_PROMISE = (async () => {
+    try {
+      closeQuotationEditSurfaces();
+      if (typeof go === 'function') go('quote');
+      showQuotationEditLoadingState(quotationReference);
+      const response = await loadQuotation(quotationReference, { silent: true, force: true });
+      if (!response || !response.ok) {
+        showQuotationEditErrorState(quotationReference);
+        toast(QUOTATION_EDIT_OPEN_ERROR_MESSAGE);
+        logQuotationEditNavigation('warn', {
+          reference: quotationReference,
+          source: source,
+          code: response && response.code || '',
+          timeout: Boolean(response && response.timeout),
+          message: response && response.message || 'loadQuotation failed'
+        });
+        return response || { ok: false, code: 'LOAD_FAILED', message: 'loadQuotation failed' };
+      }
+      if (typeof go === 'function' && typeof document !== 'undefined' && !document.getElementById('page-quote')?.classList.contains('active')) {
+        go('quote');
+      }
+      renderQuoteMeta();
+      renderCart();
+      closeQuotationEditSurfaces();
+      logQuotationEditNavigation('info', { reference: quotationReference, source: source, code: 'OK' });
+      return response;
+    } catch (error) {
+      showQuotationEditErrorState(quotationReference);
+      toast(QUOTATION_EDIT_OPEN_ERROR_MESSAGE);
+      logQuotationEditNavigation('error', {
+        reference: quotationReference,
+        source: source,
+        code: 'EXCEPTION',
+        message: error && error.message ? error.message : String(error || ''),
+        stack: error && error.stack ? error.stack : ''
+      });
+      return { ok: false, code: 'EXCEPTION', message: error && error.message ? error.message : 'Quotation edit navigation failed' };
+    } finally {
+      setQuotationEditButtonBusy(button, false);
+      QUOTE_EDIT_NAVIGATION_PROMISE = null;
+    }
+  })();
+  return QUOTE_EDIT_NAVIGATION_PROMISE;
+}
+
 function getQuotationSaveActionButtons() {
   if (typeof document === 'undefined') return [];
-  return Array.from(document.querySelectorAll([
+  const buttons = Array.from(document.querySelectorAll([
     'button[onclick="saveDraftQuotation()"]',
     'button[onclick="updateQuotation()"]',
     'button[onclick="saveQuotation()"]',
     'button[onclick="saveQuotationPdf()"]',
     'button[onclick="saveQuotationPng()"]',
-    'button[onclick="shareQuote()"]'
+    'button[onclick="shareQuote()"]',
+    'button[onclick="openQuotationExportMenu()"]',
+    'button[onclick="openQuotationMoreMenu()"]',
+    'button[onclick="printQuotationSheet()"]',
+    'button[onclick="printQuotation()"]'
   ].join(',')));
+  return Array.from(new Set(buttons.concat(Array.from(document.querySelectorAll('#quoteActionBar button,.quotation-action-sheet button,.quotation-print-actions button')))));
 }
 
 function setQuotationSaveBusy(isBusy) {
@@ -161,6 +874,8 @@ function setQuotationSaveBusy(isBusy) {
       button.removeAttribute('aria-busy');
     }
   });
+  renderQuotationActions();
+  renderQuotationPreviewState();
 }
 
 function getProductBusinessUnitClient(product) {
@@ -198,6 +913,9 @@ function setCurrentQuoteType(value, explicit) {
   renderQuoteMeta();
   if (typeof renderProductPicker === 'function') {
     renderProductPicker();
+  }
+  if (previousType !== CURRENT_QUOTE_TYPE || explicit) {
+    scheduleQuotationWorkflowRender();
   }
   return CURRENT_QUOTE_TYPE;
 }
@@ -314,7 +1032,7 @@ function renderCart() {
     calcCart();
     return;
   }
-  cartList.innerHTML = CART.length ? CART.map(it => `<div class="row item-card"><div><b>${it.productName}</b><br><small>${money(it.listPrice)} · ส่วนลด <input style="width:60px;border:1px solid var(--line);border-radius:10px;padding:3px" type="number" value="${it.discount}" onchange="changeDiscount('${it.lineId}', Number(this.value))">%</small></div><div class="qty"><button onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button><b>${it.qty}</b><button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button></div><button class="ghost" onclick="removeProduct('${it.lineId}')">ลบ</button></div>`).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
+  cartList.innerHTML = CART.length ? CART.map(it => `<div class="row item-card"><div><b>${it.productName}</b><br><small>${money(it.listPrice)} · ส่วนลด <input style="width:60px;border:1px solid var(--line);border-radius:10px;padding:3px" type="number" value="${it.discount}" onchange="changeDiscount('${it.lineId}', Number(this.value))">%</small></div><div class="qty"><button onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button><b>${it.qty}</b><button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button></div><button class="ghost quote-item-delete" data-no-drag aria-label="ลบสินค้า" title="ลบสินค้า" onclick="removeProduct('${it.lineId}')">${getQuoteDeleteIconHtml()}</button></div>`).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
   calcCart();
 }
 
@@ -1038,9 +1756,36 @@ function getQuoteMasterUnit(source) {
   return sanitizeQuoteUnit(item.masterUnit ?? item.productUnit ?? item.unit ?? item.uom ?? item.unitName ?? item.salesUnit ?? '');
 }
 
+function getQuoteLineProductMaster(source) {
+  const item = source && typeof source === 'object' ? source : {};
+  const recordKey = normalizeProductReference(item.sourceProductRecordKey || item.productRecordKey || item.recordKey);
+  if (recordKey) {
+    const registeredProduct = resolveQuoteProductRecordSelection(recordKey);
+    if (registeredProduct) return registeredProduct;
+  }
+  const references = [item.productId, item.productCode, item.sku, item.id, item.itemCode];
+  for (var i = 0; i < references.length; i++) {
+    const reference = normalizeProductReference(references[i]);
+    if (!reference) continue;
+    const product = getProductById(reference);
+    if (product) return product;
+  }
+  return null;
+}
+
+function resolveQuoteLineUnit(source) {
+  const item = source && typeof source === 'object' ? source : {};
+  const savedUnit = sanitizeQuoteUnit(item.quotedUnit || item.unit);
+  if (savedUnit) return savedUnit;
+  const masterUnit = sanitizeQuoteUnit(item.masterUnit || item.originalSelectedUnit);
+  if (masterUnit) return masterUnit;
+  const masterProduct = getQuoteLineProductMaster(item);
+  return sanitizeQuoteUnit(getQuoteMasterUnit(masterProduct));
+}
+
 function getQuoteLineUnit(source) {
   const item = source && typeof source === 'object' ? source : {};
-  return sanitizeQuoteUnit(item.quotedUnit ?? item.unit ?? item.masterUnit ?? item.uom ?? item.unitName ?? item.salesUnit ?? '');
+  return sanitizeQuoteUnit(item.quotedUnit || item.unit || item.masterUnit || item.uom || item.unitName || item.salesUnit || resolveQuoteLineUnit(item) || '');
 }
 
 function getCurrentQuoteAuditName() {
@@ -1051,8 +1796,11 @@ function syncQuoteLineSnapshot(item) {
   if (!item || typeof item !== 'object') return item;
   const masterListPrice = roundValue(toPriceNumber(item.masterListPrice !== undefined ? item.masterListPrice : item.listPrice));
   const quotedListPrice = roundValue(toPriceNumber(item.quotedListPrice !== undefined ? item.quotedListPrice : item.listPrice));
-  const masterUnit = sanitizeQuoteUnit(item.masterUnit || item.unit || item.quotedUnit);
-  const quotedUnit = sanitizeQuoteUnit(item.quotedUnit || item.unit || masterUnit);
+  const masterProduct = getQuoteLineProductMaster(item);
+  const savedUnit = sanitizeQuoteUnit(item.quotedUnit || item.unit);
+  const productUnit = sanitizeQuoteUnit(getQuoteMasterUnit(masterProduct));
+  const masterUnit = sanitizeQuoteUnit(item.masterUnit || item.originalSelectedUnit || productUnit || savedUnit);
+  const quotedUnit = sanitizeQuoteUnit(savedUnit || productUnit || masterUnit);
   item.masterListPrice = masterListPrice;
   item.quotedListPrice = quotedListPrice;
   item.listPrice = quotedListPrice;
@@ -1454,8 +2202,8 @@ async function newQuotation(customerId) {
   const response = await callApi('createQuotation', { customerId: selectedCustomerId, quoteType: selectedQuoteType, businessUnit: selectedQuoteType });
   if (response.ok && response.data) {
     CURRENT_QUOTE = {
-      quoteId: response.data.quoteId || CURRENT_QUOTE.quoteId,
-      quoteNo: response.data.quoteNo || CURRENT_QUOTE.quoteNo || '',
+      quoteId: response.data.quoteId || '',
+      quoteNo: getRealQuotationNumber(response.data.quoteNo) || '',
       customerId: selectedCustomerId,
       customerName: customer.customerName || '',
       quoteType: normalizeQuoteType(response.data.quoteType || selectedQuoteType),
@@ -1466,7 +2214,8 @@ async function newQuotation(customerId) {
     };
   } else {
     CURRENT_QUOTE = {
-      quoteId: CURRENT_QUOTE.quoteId || '',
+      quoteId: '',
+      quoteNo: '',
       customerId: selectedCustomerId,
       customerName: customer.customerName || '',
       quoteType: selectedQuoteType,
@@ -1482,6 +2231,7 @@ async function newQuotation(customerId) {
   document.getElementById('shipping').value = 0;
   document.getElementById('specialDiscount').value = 0;
   await refreshQuotation();
+  clearQuotationSavedSnapshot();
   toast('เริ่มต้นใบเสนอราคาใหม่');
 }
 
@@ -1732,7 +2482,7 @@ function renderCart() {
   }
   ensureCartLineIdentityAndOrder();
   CART.forEach(recalcLineItem);
-  cartList.innerHTML = CART.length ? CART.map(it => `<div class="row item-card quote-line"><div class="quote-line-main"><b>${it.productName||'-'}</b><br><small>${it.unit||'-'}</small><div class="quote-line-prices"><span>ราคาตั้ง ${money(it.listPrice)}</span><span>ส่วนลด <input style="width:60px;border:1px solid var(--line);border-radius:10px;padding:3px" type="number" value="${it.discountPercent||0}" onchange="changeDiscount('${it.lineId}', Number(this.value))">%</span><span>ราคาสุทธิ ${money(it.unitPrice)}</span><span>รวม ${money(it.lineTotal)}</span></div></div><div class="qty"><button onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button><b>${it.qty}</b><button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button></div><button class="ghost" onclick="removeProduct('${it.lineId}')">ลบ</button></div>`).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
+  cartList.innerHTML = CART.length ? CART.map(it => `<div class="row item-card quote-line"><div class="quote-line-main"><b>${it.productName||'-'}</b><br><small>${it.unit||'-'}</small><div class="quote-line-prices"><span>ราคาตั้ง ${money(it.listPrice)}</span><span>ส่วนลด <input style="width:60px;border:1px solid var(--line);border-radius:10px;padding:3px" type="number" value="${it.discountPercent||0}" onchange="changeDiscount('${it.lineId}', Number(this.value))">%</span><span>ราคาสุทธิ ${money(it.unitPrice)}</span><span>รวม ${money(it.lineTotal)}</span></div></div><div class="qty"><button onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button><b>${it.qty}</b><button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button></div><button class="ghost quote-item-delete" data-no-drag aria-label="ลบสินค้า" title="ลบสินค้า" onclick="removeProduct('${it.lineId}')">${getQuoteDeleteIconHtml()}</button></div>`).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
   calcCart();
 }
 
@@ -1750,6 +2500,7 @@ function calcCart() {
   if (vatEl) vatEl.textContent = money(vat);
   const totalEl = document.getElementById('sumTotal');
   if (totalEl) totalEl.textContent = money(total);
+  scheduleQuotationWorkflowRender();
   return { subtotal, vat, shipping, specialDiscount, total, grandTotal: total };
 }
 
@@ -1867,11 +2618,17 @@ async function openQuoteLinePriceEditor(lineId) {
 }
 
 function getQuoteUnitOptionsForLine(line) {
-  const current = sanitizeQuoteUnit(line && (line.quotedUnit || line.unit || line.masterUnit));
-  const options = QUOTE_UNIT_OPTIONS.slice();
-  if (current && options.indexOf(current) < 0) {
-    options.unshift(current);
-  }
+  const current = resolveQuoteLineUnit(line);
+  const productUnit = sanitizeQuoteUnit(getQuoteMasterUnit(getQuoteLineProductMaster(line)));
+  const options = [];
+  [current, line && line.masterUnit, line && line.originalSelectedUnit, productUnit].forEach(function (unit) {
+    const text = sanitizeQuoteUnit(unit);
+    if (text && options.indexOf(text) < 0) options.push(text);
+  });
+  QUOTE_UNIT_OPTIONS.forEach(function (unit) {
+    const text = sanitizeQuoteUnit(unit);
+    if (text && options.indexOf(text) < 0) options.push(text);
+  });
   return options;
 }
 
@@ -2026,11 +2783,79 @@ async function saveQuotation() {
 function renderQuoteMeta() {
   const meta = document.getElementById('quoteMeta');
   if (!meta) return;
-  const quoteNo = CURRENT_QUOTE.quoteNo || CURRENT_QUOTE.quoteId || 'ยังไม่บันทึก';
-  const status = CURRENT_QUOTE.status || 'DRAFT';
+  const workflow = getQuotationWorkflowState();
+  const quoteNo = workflow.quoteNo || QUOTATION_UNSAVED_NUMBER_LABEL;
+  const status = getQuotationWorkflowStatusLabel(workflow);
   const quoteType = normalizeQuoteType(CURRENT_QUOTE.quoteType || CURRENT_QUOTE.businessUnit || CURRENT_QUOTE_TYPE);
   const typeContent = renderQuoteBrandSwitchContent(quoteType);
-  meta.innerHTML = `<button type="button" class="quote-type-switch ${getQuoteTypeClass(quoteType)}" onclick="openQuoteTypeModal()" aria-label="เลือกแบรนด์ ${escapeQuotationPrintHtml(getQuoteTypeLabel(quoteType))}">${typeContent}</button><span>เลขที่ใบเสนอราคา: <b>${quoteNo}</b></span><span>สถานะ: <b>${status}</b></span>`;
+  meta.innerHTML = `<button type="button" class="quote-type-switch ${getQuoteTypeClass(quoteType)}" onclick="openQuoteTypeModal()" aria-label="เลือกแบรนด์ ${escapeQuotationPrintHtml(getQuoteTypeLabel(quoteType))}">${typeContent}</button><span>เลขที่ใบเสนอราคา: <b>${escapeQuotationPrintHtml(quoteNo)}</b></span><span class="quote-workflow-status quote-status-${workflow.state.toLowerCase()}">สถานะ: <b>${escapeQuotationPrintHtml(status)}</b></span>`;
+  renderQuotationActions();
+  renderQuotationPreviewState();
+}
+
+function getQuotationLineDisplayName(line) {
+  const item = line && typeof line === 'object' ? line : {};
+  return String(item.productName || item.productCode || item.sku || item.productId || 'สินค้า').trim();
+}
+
+function isQuotationSaveDebugEnabled() {
+  try {
+    return String(window.APP_ENV || '').trim().toLowerCase() === 'development'
+      || window.DEBUG_QUOTATION_SAVE === true
+      || localStorage.getItem('sg_debug_quote_save') === 'true';
+  } catch (error) {
+    return false;
+  }
+}
+
+function logQuotationSavePayloadLines(payload) {
+  if (!isQuotationSaveDebugEnabled() || typeof console === 'undefined' || typeof console.info !== 'function') return;
+  const items = Array.isArray(payload && payload.items) ? payload.items : [];
+  console.info('[QuotationSave] payload lines', items.map(function (item) {
+    return {
+      lineId: String(item && item.lineId || '').trim(),
+      productId: String(item && item.productId || '').trim(),
+      quotedUnit: String(item && item.quotedUnit || '').trim(),
+      quantity: Number(item && item.qty || 0),
+      price: Number(item && (item.quotedListPrice || item.listPrice) || 0)
+    };
+  }));
+}
+
+function markQuoteLineUnitInvalid(lineId) {
+  const id = String(lineId || '').trim();
+  if (!id) return;
+  renderCart();
+  scheduleScrollToAddedItem(id);
+  setTimeout(function () {
+    const element = getQuoteItemElement(id);
+    if (element) {
+      element.classList.add('is-invalid-line');
+      setTimeout(function () {
+        element.classList.remove('is-invalid-line');
+      }, 3600);
+    }
+  }, 80);
+}
+
+function validateQuotationLinesBeforeSave(payload) {
+  const items = Array.isArray(payload && payload.items) ? payload.items : [];
+  for (var i = 0; i < items.length; i++) {
+    const item = items[i] || {};
+    if (!sanitizeQuoteUnit(item.quotedUnit)) {
+      const matchingLine = CART.find(function (line) {
+        return String(line && line.lineId || '').trim() === String(item.lineId || '').trim();
+      }) || item;
+      return {
+        ok: false,
+        code: 'QUOTE_LINE_UNIT_REQUIRED',
+        message: 'สินค้า "' + getQuotationLineDisplayName(matchingLine) + '" ยังไม่ได้เลือกหน่วย\nกรุณาเลือกหน่วยก่อนบันทึก',
+        lineId: String(item.lineId || matchingLine.lineId || '').trim(),
+        productId: String(item.productId || matchingLine.productId || '').trim()
+      };
+    }
+  }
+  return { ok: true };
 }
 
 function buildQuotationPayload(status) {
@@ -2038,13 +2863,17 @@ function buildQuotationPayload(status) {
   ensureCartLineIdentityAndOrder();
   return {
     quoteId: CURRENT_QUOTE.quoteId || '',
-    quoteNo: CURRENT_QUOTE.quoteNo || '',
+    quoteNo: getCurrentRealQuotationNumber() || '',
     quoteType: normalizeQuoteType(CURRENT_QUOTE.quoteType || CURRENT_QUOTE_TYPE),
     businessUnit: normalizeQuoteType(CURRENT_QUOTE.quoteType || CURRENT_QUOTE_TYPE),
     customerId: CURRENT_QUOTE.customerId,
     customerName: CURRENT_QUOTE.customerName,
     items: CART.map((item, index) => {
       recalcLineItem(item);
+      const quotedUnit = resolveQuoteLineUnit(item);
+      item.quotedUnit = quotedUnit;
+      item.unit = quotedUnit;
+      item.masterUnit = sanitizeQuoteUnit(item.masterUnit || item.originalSelectedUnit || getQuoteMasterUnit(getQuoteLineProductMaster(item)) || quotedUnit);
       return {
         lineNo: index + 1,
         lineOrder: index + 1,
@@ -2055,9 +2884,9 @@ function buildQuotationPayload(status) {
         sku: item.sku || item.productId,
         productBusinessUnit: getProductBusinessUnitClient(item) || item.productBusinessUnit || '',
         productName: item.productName,
-        unit: item.quotedUnit || item.unit,
+        unit: quotedUnit,
         masterUnit: item.masterUnit || '',
-        quotedUnit: item.quotedUnit || item.unit || '',
+        quotedUnit: quotedUnit,
         qty: item.qty,
         listPrice: item.quotedListPrice || item.listPrice,
         masterListPrice: item.masterListPrice || 0,
@@ -2136,13 +2965,14 @@ async function saveQuotation() {
   return saveQuotationWithStatus('SAVED');
 }
 
-async function loadQuotation(quoteId) {
+async function loadQuotation(quoteId, options) {
+  const opts = options || {};
   const id = String(quoteId || '').trim();
   if (!id) {
-    toast('ต้องระบุเลขที่ใบเสนอราคา');
-    return;
+    if (!opts.silent) toast('ต้องระบุเลขที่ใบเสนอราคา');
+    return { ok: false, code: 'INVALID_REFERENCE', message: 'quoteId is required' };
   }
-  const cached = getLoadedQuotationCache(id);
+  const cached = opts.force ? null : getLoadedQuotationCache(id);
   if (cached) {
     applyLoadedQuotationResponse(cached, id);
     return cached;
@@ -2150,11 +2980,11 @@ async function loadQuotation(quoteId) {
   if (QUOTATION_LOAD_PROMISES[id]) {
     return QUOTATION_LOAD_PROMISES[id];
   }
-  toast('กำลังโหลดข้อมูล...');
+  if (!opts.silent) toast('กำลังโหลดข้อมูล...');
   console.log('[Quotation] load', id);
   QUOTATION_LOAD_PROMISES[id] = callApi('loadQuotation', { quoteId: id }).then(response => {
   if (!response.ok) {
-    toast(response.message || 'โหลดใบเสนอราคาไม่สำเร็จ');
+    if (!opts.silent) toast(response.message || 'โหลดใบเสนอราคาไม่สำเร็จ');
     return response;
   }
     setLoadedQuotationCache(id, response);
@@ -2179,7 +3009,7 @@ function applyLoadedQuotationResponse(response, fallbackQuoteId) {
   });
   CURRENT_QUOTE = {
     quoteId: String(quote.quoteId || fallbackQuoteId).trim(),
-    quoteNo: String(quote.quoteNo || quote.quoteId || fallbackQuoteId).trim(),
+    quoteNo: getRealQuotationNumber(quote.quoteNo) || getRealQuotationNumber(quote.quoteId) || getRealQuotationNumber(fallbackQuoteId) || '',
     customerId: String(quote.customerId || '').trim(),
     customerName: String(quote.customerName || '').trim(),
     quoteType: normalizeQuoteType(quote.quoteType || quote.businessUnit),
@@ -2194,8 +3024,10 @@ function applyLoadedQuotationResponse(response, fallbackQuoteId) {
     const masterProduct = getProductById(line.productId || line.productCode || line.sku) || {};
     const masterListPrice = roundValue(toPriceNumber(line.masterListPrice !== undefined ? line.masterListPrice : (masterProduct.listPrice !== undefined ? masterProduct.listPrice : line.listPrice || 0)));
     const quotedListPrice = roundValue(toPriceNumber(line.quotedListPrice !== undefined ? line.quotedListPrice : (line.listPrice !== undefined ? line.listPrice : masterListPrice)));
-    const masterUnit = sanitizeQuoteUnit(line.masterUnit || masterProduct.unit || line.unit || '');
-    const quotedUnit = sanitizeQuoteUnit(line.quotedUnit || line.unit || masterUnit);
+    const productUnit = sanitizeQuoteUnit(getQuoteMasterUnit(masterProduct));
+    const savedUnit = sanitizeQuoteUnit(line.quotedUnit || line.unit);
+    const masterUnit = sanitizeQuoteUnit(line.masterUnit || line.originalSelectedUnit || productUnit || savedUnit);
+    const quotedUnit = sanitizeQuoteUnit(savedUnit || productUnit || masterUnit);
     CART.push(recalcLineItem({
       lineId: String(line.lineId || createLineId()),
       lineNo: String(line.lineNo || '').trim(),
@@ -2249,10 +3081,15 @@ function applyLoadedQuotationResponse(response, fallbackQuoteId) {
   if (specialDiscount) specialDiscount.value = CURRENT_QUOTE.specialDiscount;
   renderQuoteMeta();
   renderCart();
+  if (getCurrentRealQuotationNumber()) {
+    markQuotationSavedSnapshot();
+  } else {
+    clearQuotationSavedSnapshot();
+  }
 }
 
-function openQuotation(quoteId) {
-  return loadQuotation(quoteId);
+function openQuotation(quoteId, options) {
+  return loadQuotation(quoteId, options);
 }
 
 function quotePrintText(value, fallback) {
@@ -2304,7 +3141,10 @@ function escapeQuotationPrintHtml(value) {
 
 function getQuotationPrintId(data) {
   const quote = data && data.quote ? data.quote : {};
-  return quotePrintText(quote.quoteNo || quote.quoteId || CURRENT_QUOTE.quoteNo || CURRENT_QUOTE.quoteId, 'QT-PREVIEW');
+  return getRealQuotationNumber(quote.quoteNo)
+    || getRealQuotationNumber(quote.quoteId)
+    || getCurrentRealQuotationNumber()
+    || QUOTATION_UNSAVED_NUMBER_LABEL;
 }
 
 function getCurrentQuotationPrintData() {
@@ -2316,7 +3156,7 @@ function getCurrentQuotationPrintData() {
   const totals = calcCart();
   return {
     quote: Object.assign({}, quote, {
-      quoteNo: quote.quoteNo || quote.quoteId || 'QT-PREVIEW',
+      quoteNo: getCurrentRealQuotationNumber() || QUOTATION_UNSAVED_NUMBER_LABEL,
       quoteType: normalizeQuoteType(quote.quoteType || quote.businessUnit || CURRENT_QUOTE_TYPE),
       businessUnit: normalizeQuoteType(quote.quoteType || quote.businessUnit || CURRENT_QUOTE_TYPE),
       customerId: quote.customerId || customer.customerId || customer.customerCode || '',
@@ -2762,10 +3602,13 @@ async function prepareQuotationPrintPreview(quoteId, showPreview) {
   toast('กำลังจัดหน้าเอกสาร...');
   documentNode.innerHTML = buildQuotationPrintHtmlPaginated(printData || {});
   documentNode.dataset.quoteNo = getQuotationPrintId(printData || {});
+  const quoteForPreview = printData && printData.quote ? printData.quote : {};
+  documentNode.dataset.quoteId = quotePrintText(quoteForPreview.quoteId || quoteForPreview.quoteNo || CURRENT_QUOTE.quoteId || '', '');
   await waitForQuotationPrintImages(documentNode);
   preview.classList.toggle('hidden', !showPreview);
   preview.classList.toggle('is-open', Boolean(showPreview));
   document.body.classList.toggle('print-preview-open', Boolean(showPreview));
+  renderQuotationPreviewState();
   return { response: response || { ok: true, data: printData, message: '' }, preview, documentNode };
 }
 
@@ -2775,11 +3618,13 @@ async function printQuotation(quoteId) {
 }
 
 async function printQuotationSheet(quoteId) {
+  if (!assertQuotationCanExport(quoteId, 'print')) return null;
   const preview = document.getElementById('quotationPrintPreview');
   const currentDocument = document.getElementById('printQuotationSheet');
   const hasOpenPreview = preview && preview.classList.contains('is-open') && currentDocument && currentDocument.innerHTML.trim();
   const prepared = quoteId || !hasOpenPreview ? await prepareQuotationPrintPreview(quoteId, true) : { response: { ok: true }, preview, documentNode: currentDocument };
   if (!prepared) return null;
+  if (!assertPreparedQuotationCanExport(prepared, 'print')) return null;
   setTimeout(() => window.print(), 50);
   return prepared.response;
 }
@@ -2791,9 +3636,11 @@ function closeQuotationPrintPreview() {
     preview.classList.remove('is-open');
   }
   document.body.classList.remove('print-preview-open');
+  renderQuotationPreviewState();
 }
 
 async function exportQuotationPNG(quoteId) {
+  if (!assertQuotationCanExport(quoteId, 'png')) return null;
   const preview = document.getElementById('quotationPrintPreview');
   const currentDocument = document.getElementById('printQuotationSheet');
   const hasPreview = currentDocument && currentDocument.innerHTML.trim();
@@ -2802,6 +3649,7 @@ async function exportQuotationPNG(quoteId) {
   if (!prepared || !prepared.documentNode) {
     return null;
   }
+  if (!assertPreparedQuotationCanExport(prepared, 'png')) return null;
   if (typeof html2canvas !== 'function') {
     toast('ไม่พบ html2canvas สำหรับ Save PNG');
     return null;
@@ -2859,6 +3707,7 @@ async function saveQuotationPng(quoteId) {
 }
 
 async function saveQuotationPdf(quoteId) {
+  if (!assertQuotationCanExport(quoteId, 'pdf')) return null;
   const preview = document.getElementById('quotationPrintPreview');
   const currentDocument = document.getElementById('printQuotationSheet');
   const hasPreview = currentDocument && currentDocument.innerHTML.trim();
@@ -2867,6 +3716,7 @@ async function saveQuotationPdf(quoteId) {
   if (!prepared || !prepared.documentNode) {
     return null;
   }
+  if (!assertPreparedQuotationCanExport(prepared, 'pdf')) return null;
   if (typeof html2canvas !== 'function') {
     toast('ไม่พบ html2canvas สำหรับ Save PDF');
     return null;
@@ -2914,7 +3764,11 @@ function getQuotationShareText(printData, documentNode) {
   const data = printData || {};
   const quote = data.quote || {};
   const totals = data.totals || {};
-  const quoteNo = (documentNode && documentNode.dataset && documentNode.dataset.quoteNo) || quote.quoteNo || quote.quoteId || CURRENT_QUOTE.quoteNo || CURRENT_QUOTE.quoteId || 'QT-PREVIEW';
+  const quoteNo = getRealQuotationNumber(documentNode && documentNode.dataset && documentNode.dataset.quoteNo)
+    || getRealQuotationNumber(quote.quoteNo)
+    || getRealQuotationNumber(quote.quoteId)
+    || getCurrentRealQuotationNumber()
+    || QUOTATION_UNSAVED_NUMBER_LABEL;
   const customerName = quote.customerName || CURRENT_QUOTE.customerName || '-';
   const grandTotal = totals.grandTotal ?? quote.grandTotal ?? quote.total ?? calcCart().total ?? 0;
   return `ใบเสนอราคา: ${quoteNo}
@@ -2952,6 +3806,7 @@ async function copyQuotationShareText(text) {
 }
 
 async function shareQuote(quoteId) {
+  if (!assertQuotationCanExport(quoteId, 'share')) return null;
   const preview = document.getElementById('quotationPrintPreview');
   const currentDocument = document.getElementById('printQuotationSheet');
   const hasPreview = currentDocument && currentDocument.innerHTML.trim();
@@ -2962,6 +3817,7 @@ async function shareQuote(quoteId) {
   if (!prepared || !prepared.documentNode) {
     return null;
   }
+  if (!assertPreparedQuotationCanExport(prepared, 'share')) return null;
   if (typeof html2canvas !== 'function') {
     toast('ไม่พบ html2canvas สำหรับ Share');
     return null;
@@ -3007,9 +3863,10 @@ function getQuotationPrintPages(documentNode) {
 }
 
 function getQuotationExportBaseName(documentNode) {
-  const rawName = documentNode && documentNode.dataset ? documentNode.dataset.quoteNo || 'QT-PREVIEW' : 'QT-PREVIEW';
-  const safeName = String(rawName || 'QT-PREVIEW').replace(/[^A-Za-z0-9_-]/g, '-');
-  return safeName.indexOf('QT-') === 0 ? safeName : 'QT-' + safeName;
+  const rawName = getRealQuotationNumber(documentNode && documentNode.dataset && documentNode.dataset.quoteNo)
+    || getCurrentRealQuotationNumber()
+    || 'quotation';
+  return String(rawName || 'quotation').replace(/[^A-Za-z0-9_-]/g, '-');
 }
 
 function getQuotationExportFileName(documentNode, pageIndex, pageCount) {
@@ -3018,6 +3875,7 @@ function getQuotationExportFileName(documentNode, pageIndex, pageCount) {
 }
 
 async function exportQuotationPNG(quoteId) {
+  if (!assertQuotationCanExport(quoteId, 'png')) return null;
   const preview = document.getElementById('quotationPrintPreview');
   const currentDocument = document.getElementById('printQuotationSheet');
   const hasPreview = currentDocument && currentDocument.innerHTML.trim();
@@ -3026,6 +3884,7 @@ async function exportQuotationPNG(quoteId) {
   if (!prepared || !prepared.documentNode) {
     return null;
   }
+  if (!assertPreparedQuotationCanExport(prepared, 'png')) return null;
   if (typeof html2canvas !== 'function') {
     toast('ไม่พบ html2canvas สำหรับ Save PNG');
     return null;
@@ -3043,6 +3902,7 @@ async function exportQuotationPNG(quoteId) {
 }
 
 async function saveQuotationPdf(quoteId) {
+  if (!assertQuotationCanExport(quoteId, 'pdf')) return null;
   const preview = document.getElementById('quotationPrintPreview');
   const currentDocument = document.getElementById('printQuotationSheet');
   const hasPreview = currentDocument && currentDocument.innerHTML.trim();
@@ -3051,6 +3911,7 @@ async function saveQuotationPdf(quoteId) {
   if (!prepared || !prepared.documentNode) {
     return null;
   }
+  if (!assertPreparedQuotationCanExport(prepared, 'pdf')) return null;
   if (typeof html2canvas !== 'function') {
     toast('ไม่พบ html2canvas สำหรับ Save PDF');
     return null;
@@ -3076,6 +3937,7 @@ async function saveQuotationPdf(quoteId) {
 }
 
 async function shareQuote(quoteId) {
+  if (!assertQuotationCanExport(quoteId, 'share')) return null;
   const preview = document.getElementById('quotationPrintPreview');
   const currentDocument = document.getElementById('printQuotationSheet');
   const hasPreview = currentDocument && currentDocument.innerHTML.trim();
@@ -3086,6 +3948,7 @@ async function shareQuote(quoteId) {
   if (!prepared || !prepared.documentNode) {
     return null;
   }
+  if (!assertPreparedQuotationCanExport(prepared, 'share')) return null;
   if (typeof html2canvas !== 'function') {
     toast('ไม่พบ html2canvas สำหรับ Share');
     return null;
@@ -3136,7 +3999,11 @@ function getQuotationShareText(printData, documentNode) {
   const data = printData || {};
   const quote = data.quote || {};
   const totals = data.totals || {};
-  const quoteNo = (documentNode && documentNode.dataset && documentNode.dataset.quoteNo) || quote.quoteNo || quote.quoteId || CURRENT_QUOTE.quoteNo || CURRENT_QUOTE.quoteId || 'QT-PREVIEW';
+  const quoteNo = getRealQuotationNumber(documentNode && documentNode.dataset && documentNode.dataset.quoteNo)
+    || getRealQuotationNumber(quote.quoteNo)
+    || getRealQuotationNumber(quote.quoteId)
+    || getCurrentRealQuotationNumber()
+    || QUOTATION_UNSAVED_NUMBER_LABEL;
   const customerName = quote.customerName || CURRENT_QUOTE.customerName || '-';
   const grandTotal = totals.grandTotal ?? quote.grandTotal ?? quote.total ?? calcCart().total ?? 0;
   return `ใบเสนอราคา: ${quoteNo}
@@ -3207,6 +4074,10 @@ renderQuote = function () {
   renderQuoteMeta();
 };
 
+function getQuoteDeleteIconHtml() {
+  return '<svg class="quote-delete-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 4h6l1 2h4v2H4V6h4l1-2Z"></path><path d="M7 10h10l-.7 9.2A2 2 0 0 1 14.3 21H9.7a2 2 0 0 1-2-1.8L7 10Z"></path><path d="M10 12v6M14 12v6"></path></svg>';
+}
+
 function renderCart() {
   const cartList = document.getElementById('cartList');
   if (!cartList) {
@@ -3230,11 +4101,14 @@ function renderCart() {
     const freeBadge = it.isFree ? '<span class="pill yellow">FREE</span>' : '';
     const priceOverrideBadge = it.priceOverridden ? '<span class="quote-line-override-badge" title="ราคานี้ใช้เฉพาะใบเสนอราคานี้">แก้ไขแล้ว</span>' : '';
     const unitOverrideBadge = it.unitOverridden ? '<span class="quote-line-override-badge" title="หน่วยนี้ใช้เฉพาะใบเสนอราคานี้">แก้ไขแล้ว</span>' : '';
-    const unitOptions = getQuoteUnitOptionsForLine(it).map(unit => `<option value="${escapeQuotationPrintHtml(unit)}" ${sanitizeQuoteUnit(it.quotedUnit || it.unit) === unit ? 'selected' : ''}>${escapeQuotationPrintHtml(unit)}</option>`).join('');
+    const currentUnit = sanitizeQuoteUnit(it.quotedUnit || it.unit);
+    const unitPlaceholder = currentUnit ? '' : '<option value="" selected disabled>เลือกหน่วย</option>';
+    const unitOptions = unitPlaceholder + getQuoteUnitOptionsForLine(it).map(unit => `<option value="${escapeQuotationPrintHtml(unit)}" ${currentUnit === unit ? 'selected' : ''}>${escapeQuotationPrintHtml(unit)}</option>`).join('');
+    const invalidUnitClass = currentUnit ? '' : ' is-invalid-line';
     const productUnit = getProductBusinessUnitClient(it);
     const productBuBadge = productUnit ? `<span class="quote-product-bu ${getQuoteTypeClass(productUnit)}">${getQuoteTypeLabel(productUnit)}</span>` : '';
     const crossBuNote = productUnit && productUnit !== getCurrentQuoteBusinessUnit() ? '<small class="quote-cross-bu-note">สินค้าร่วมข้าม BU</small>' : '';
-    return `<div class="row item-card quote-line quote-item-card" data-line-id="${it.lineId}" role="listitem" tabindex="0" aria-label="กดค้างแล้วลากเพื่อเรียงสินค้า หรือกด Alt พร้อมลูกศรขึ้นลง" title="กดค้างแล้วลากเพื่อเรียงสินค้า">
+    return `<div class="row item-card quote-line quote-item-card${invalidUnitClass}" data-line-id="${it.lineId}" role="listitem" tabindex="0" aria-label="กดค้างแล้วลากเพื่อเรียงสินค้า หรือกด Alt พร้อมลูกศรขึ้นลง" title="กดค้างแล้วลากเพื่อเรียงสินค้า">
       <div class="quote-line-main">
         <div class="quote-product-title">${productBuBadge}<b>${it.productName || '-'} ${freeBadge}</b>${crossBuNote}</div>
         <small>${it.productId || ''}${it.unit ? ' · ' + it.unit : ''}</small>
@@ -3252,7 +4126,7 @@ function renderCart() {
         <input type="number" min="1" value="${Number(it.qty) || 1}" onchange="changeQty('${it.lineId}', this.value)">
         <button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button>
       </div>
-      <button class="ghost quote-item-delete" data-no-drag onclick="removeProduct('${it.lineId}')">ลบ</button>
+      <button class="ghost quote-item-delete" data-no-drag aria-label="ลบสินค้า" title="ลบสินค้า" onclick="removeProduct('${it.lineId}')">${getQuoteDeleteIconHtml()}</button>
     </div>`;
   }).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
   calcCart();
@@ -3745,6 +4619,36 @@ async function addProduct(productId, qty) {
   return requestAddProductToQuote(productId, QUOTE_PRODUCT_ADD_SOURCE.SEARCH, qty || 1);
 }
 
+const QUOTATION_SAVE_VALIDATION_CODES = [
+  'VALIDATION_ERROR',
+  'INVALID_QUOTATION_PAYLOAD',
+  'MISSING_CUSTOMER',
+  'EMPTY_QUOTATION_LINES',
+  'INVALID_PRODUCT_LINE',
+  'UNKNOWN_PRODUCT_BRAND',
+  'INVALID_QUOTATION_TYPE',
+  'QUOTE_LINE_PRICE_REQUIRED',
+  'QUOTE_LINE_UNIT_REQUIRED',
+  'PRODUCT_NOT_FOUND',
+  'DUPLICATE_LINE_ID',
+  'DUPLICATE_PAID_PRODUCT_LINE',
+  'DUPLICATE_FREE_PRODUCT_LINE',
+  'INVALID_FREE_ITEM_STATE'
+];
+
+function getQuotationSaveFailureMessage(status, response) {
+  const code = String(response && response.code || '').trim();
+  if (code === 'SAVE_RESULT_PENDING' || code === 'TIMEOUT') {
+    return 'การบันทึกใช้เวลานานกว่าปกติ ระบบกำลังตรวจสอบผลการบันทึก กรุณาอย่ากดบันทึกซ้ำ';
+  }
+  if (QUOTATION_SAVE_VALIDATION_CODES.indexOf(code) >= 0) {
+    return 'กรุณาตรวจสอบข้อมูลใบเสนอราคาให้ครบถ้วน';
+  }
+  return status === 'DRAFT'
+    ? 'ไม่สามารถบันทึกใบเสนอราคาได้ กรุณาลองใหม่อีกครั้ง'
+    : 'ไม่สามารถอัปเดตใบเสนอราคาได้ กรุณาลองใหม่อีกครั้ง';
+}
+
 async function saveQuotationWithStatus(status) {
   if (!CURRENT_QUOTE.customerId) {
     toast('กรุณาเลือกลูกค้าก่อนบันทึกใบเสนอราคา');
@@ -3759,6 +4663,13 @@ async function saveQuotationWithStatus(status) {
     return { ok: false, code: 'DUPLICATE_SUBMIT', message: 'Quotation save is already in progress' };
   }
   const payload = buildQuotationPayload(status);
+  logQuotationSavePayloadLines(payload);
+  const lineValidation = validateQuotationLinesBeforeSave(payload);
+  if (!lineValidation.ok) {
+    markQuoteLineUnitInvalid(lineValidation.lineId);
+    toast(lineValidation.message);
+    return lineValidation;
+  }
   const requestId = getQuotationSaveRequestIdForPayload(payload);
   QUOTE_SAVE_IN_PROGRESS = true;
   setQuotationSaveBusy(true);
@@ -3767,12 +4678,25 @@ async function saveQuotationWithStatus(status) {
     payload.clientRequestId = requestId;
     const response = await callApi(payload.quoteId ? 'updateQuotation' : 'saveQuotation', payload);
     if (!response.ok) {
-      toast(response.message || 'บันทึกใบเสนอราคาไม่สำเร็จ');
+      QUOTE_LAST_SAVE_SUCCEEDED = false;
+      renderQuotationActions();
+      renderQuotationPreviewState();
+      console.warn('Quotation save failed', {
+        code: response.code || '',
+        message: response.message || '',
+        quoteId: payload.quoteId || '',
+        quoteNo: payload.quoteNo || '',
+        clientRequestId: payload.clientRequestId || '',
+        hasQuotationNumber: Boolean(payload.quoteNo)
+      });
+      toast(getQuotationSaveFailureMessage(status, response));
       return response;
     }
     clearQuotationSaveRequestState();
     CURRENT_QUOTE.quoteId = response.data?.quoteId || CURRENT_QUOTE.quoteId;
-    CURRENT_QUOTE.quoteNo = response.data?.quoteNo || CURRENT_QUOTE.quoteNo || CURRENT_QUOTE.quoteId;
+    CURRENT_QUOTE.quoteNo = getRealQuotationNumber(response.data?.quoteNo)
+      || getRealQuotationNumber(CURRENT_QUOTE.quoteNo)
+      || '';
     CURRENT_QUOTE.quoteType = normalizeQuoteType(response.data?.quoteType || CURRENT_QUOTE.quoteType || CURRENT_QUOTE_TYPE);
     CURRENT_QUOTE.businessUnit = CURRENT_QUOTE.quoteType;
     CURRENT_QUOTE.status = response.data?.status || status || CURRENT_QUOTE.status;
@@ -3786,14 +4710,25 @@ async function saveQuotationWithStatus(status) {
     }
     renderQuoteMeta();
     renderCart();
+    markQuotationSavedSnapshot();
+    renderQuoteMeta();
     toast((status === 'DRAFT' ? 'บันทึกแบบร่างแล้ว' : 'อัปเดตใบเสนอราคาแล้ว') + (CURRENT_QUOTE.quoteNo ? ': ' + CURRENT_QUOTE.quoteNo : ''));
     if (typeof refreshQuotationHistory === 'function' && (typeof isQuotationHistoryLoaded !== 'function' || isQuotationHistoryLoaded())) {
       await refreshQuotationHistory({force:true});
     }
     return response;
+  } catch (error) {
+    QUOTE_LAST_SAVE_SUCCEEDED = false;
+    console.warn('Quotation save request failed', error);
+    renderQuotationActions();
+    renderQuotationPreviewState();
+    toast(status === 'DRAFT' ? 'ไม่สามารถบันทึกใบเสนอราคาได้ กรุณาลองใหม่อีกครั้ง' : 'ไม่สามารถอัปเดตใบเสนอราคาได้ กรุณาลองใหม่อีกครั้ง');
+    return { ok: false, code: 'QUOTE_SAVE_REQUEST_FAILED' };
   } finally {
     QUOTE_SAVE_IN_PROGRESS = false;
     setQuotationSaveBusy(false);
+    renderQuotationActions();
+    renderQuotationPreviewState();
   }
 }
 
@@ -3822,12 +4757,20 @@ if (typeof window !== 'undefined') {
   window.refreshQuotation = refreshQuotation;
   window.loadQuotation = loadQuotation;
   window.openQuotation = openQuotation;
+  window.navigateToQuotationEdit = navigateToQuotationEdit;
+  window.editQuotationFromHistory = navigateToQuotationEdit;
   window.printQuotation = printQuotation;
   window.printQuotationSheet = printQuotationSheet;
   window.exportQuotationPNG = exportQuotationPNG;
   window.saveQuotationPng = saveQuotationPng;
   window.saveQuotationPdf = saveQuotationPdf;
   window.closeQuotationPrintPreview = closeQuotationPrintPreview;
+  window.openQuotationExportMenu = openQuotationExportMenu;
+  window.openQuotationMoreMenu = openQuotationMoreMenu;
+  window.closeQuotationActionSheet = closeQuotationActionSheet;
+  window.closeCurrentQuotation = closeCurrentQuotation;
+  window.renderQuotationActions = renderQuotationActions;
+  window.getQuotationWorkflowState = getQuotationWorkflowState;
   window.duplicateQuotation = duplicateQuotation;
   window.cancelQuotation = cancelQuotation;
   window.duplicateCurrentQuotation = duplicateCurrentQuotation;
