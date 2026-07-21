@@ -72,6 +72,9 @@
 .product-promo-button:hover,.product-promo-button:focus-visible{background:#fff6c4;outline:3px solid rgba(255,210,0,.35);outline-offset:2px}
 .product-promo-badge{display:inline-flex;align-items:center;width:max-content;max-width:100%;border-radius:999px;background:#fff4a8;color:#514400;font-size:12px;font-weight:900;padding:4px 9px;line-height:1.2}
 .product-promo-summary{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:#5b4a00;font-size:13px;line-height:1.35;overflow-wrap:anywhere;word-break:normal}
+.product-promo-list{display:grid;gap:3px;margin:0;color:#5b4a00;font-size:13px;line-height:1.35;overflow-wrap:anywhere;word-break:normal}
+.product-promo-line{display:block;min-width:0}
+.product-promo-line::before{content:'• ';font-weight:900;color:#8a6d00}
 .product-promo-detail-link{color:var(--blue);font-size:12px;font-weight:900;line-height:1.2}
 .quote-product-pref-main .product-promo-teaser{max-width:100%;margin-top:8px}
 .quote-product-pref-main .product-promo-button{border-radius:14px;box-shadow:none}
