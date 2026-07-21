@@ -7,7 +7,12 @@ let PRODUCT_CALC_PRODUCT=null;
 let PRODUCT_CALC_STATE={selectedProduct:null,originalUnitPrice:0,editedUnitPrice:0,discountPercent:0,quantity:1,recordKey:'',sourceListIndex:null};
 let PRODUCT_CALC_RECORDS=new Map(), PRODUCT_CALC_RENDER_SEQUENCE=0, PRODUCT_CALC_RECORD_SEQUENCE=0;
 let PRODUCT_SELECTION_RECORDS=new Map(), PRODUCT_SELECTION_RECORD_SEQUENCE=0;
-let PROFILE_IMAGE_DATA='';
+let PROFILE_IMAGE_DATA='', PROFILE_IMAGE_OBJECT_URL='', PROFILE_IMAGE_PROCESSING_PROMISE=null, PROFILE_IMAGE_SELECTION_SEQUENCE=0;
+const PROFILE_IMAGE_MAX_SOURCE_BYTES=25*1024*1024;
+const PROFILE_IMAGE_UPLOAD_TARGET_BYTES=1700*1024;
+const PROFILE_IMAGE_MAX_EDGE=960;
+const PROFILE_IMAGE_MIN_EDGE=320;
+const PROFILE_IMAGE_QUALITY_STEPS=[0.82,0.74,0.66,0.58,0.5];
 let bootstrapLoaded=false, bootstrapPromise=null;
 let quoteHistoryLoaded=false, quoteHistoryPromise=null;
 let customersLoaded=false, productsLoaded=false, customersPromise=null, customersPromiseForce=false, customersQueuedForce=false, customersRequestSeq=0, customerRefreshPromise=null, productsPromise=null;
@@ -781,6 +786,16 @@ function updateSidebarToggleButton(){
 function enhanceSidebarNavItems(){
   document.querySelectorAll('.nav button').forEach(button=>{
     if(button.dataset.sidebarReady==='true')return;
+    const existingLabel=button.querySelector('.nav-label');
+    if(existingLabel){
+      const label=String(existingLabel.textContent||button.textContent||'').trim();
+      if(label){
+        button.title=label;
+        button.setAttribute('aria-label',label);
+      }
+      button.dataset.sidebarReady='true';
+      return;
+    }
     const raw=String(button.textContent||'').trim();
     const parts=raw.split(/\s+/);
     const icon=parts.shift()||raw.slice(0,2)||'•';
@@ -903,10 +918,67 @@ function go(page,btn){document.querySelectorAll('.page').forEach(p=>p.classList.
 function renderAll(){renderBrand();renderProfile();renderHome();renderPromos();renderSettings();}
 function renderBrand(){applySystemIdentityToUI(getSystemIdentitySettingsForUi());}
 function greeting(){const personal=String(USER?.greetingText||'').trim(); if(personal)return personal; let h=new Date().getHours(),s=DB.settings||{}; if(h<12)return s.greetingMorning||'สวัสดีตอนเช้า'; if(h<17)return s.greetingAfternoon||'สวัสดีตอนบ่าย'; if(h<21)return s.greetingEvening||'สวัสดีตอนเย็น'; return s.greetingNight||'สวัสดีตอนดึก';}
-function currentProfileImage(){return USER&&(USER.profileImageUrl||USER.photoUrl)||''}
+function getRawProfileImageUrl(user){const data=user&&typeof user==='object'?user:{};return String(data.profileImageUrl||data.profilePhotoUrl||data.avatarUrl||data.photoUrl||data.profileImage||'').trim()}
+function extractGoogleDriveProfileImageId(value){
+  const raw=String(value||'').trim();
+  if(!raw)return '';
+  try{
+    const url=new URL(raw,window.location.href);
+    const host=String(url.hostname||'').toLowerCase();
+    if(host.indexOf('drive.google.com')<0&&host.indexOf('googleusercontent.com')<0)return '';
+    const queryId=url.searchParams.get('id');
+    if(queryId)return queryId;
+    const fileMatch=url.pathname.match(/\/file\/d\/([^/]+)/);
+    if(fileMatch&&fileMatch[1])return fileMatch[1];
+  }catch(error){
+    const match=raw.match(/[?&]id=([^&]+)/)||raw.match(/\/file\/d\/([^/]+)/);
+    return match&&match[1]?decodeURIComponent(match[1]):'';
+  }
+  return '';
+}
+function appendProfileImageCacheBust(url,user){
+  const version=String(user&&(user.profileImageUpdatedAt||user.updatedAt)||'').trim();
+  if(!url||!version||url.indexOf('data:')===0||url.indexOf('blob:')===0)return url;
+  return url+(url.indexOf('?')>=0?'&':'?')+'v='+encodeURIComponent(version);
+}
+function getProfileImageDisplayUrl(value,user){
+  const raw=String(value||'').trim();
+  if(!raw)return '';
+  if(raw.indexOf('data:')===0||raw.indexOf('blob:')===0)return raw;
+  const driveId=extractGoogleDriveProfileImageId(raw);
+  const displayUrl=driveId?'https://drive.google.com/thumbnail?id='+encodeURIComponent(driveId)+'&sz=w800':raw;
+  return appendProfileImageCacheBust(displayUrl,user);
+}
+function renderProfileImageElement(container,rawSrc,user){
+  if(!container)return;
+  container.textContent='';
+  const displaySrc=getProfileImageDisplayUrl(rawSrc,user);
+  if(!displaySrc){
+    container.textContent='👤';
+    return;
+  }
+  const img=document.createElement('img');
+  img.src=displaySrc;
+  img.alt='';
+  img.loading='eager';
+  img.decoding='async';
+  img.onerror=function(){
+    img.onerror=null;
+    if(window.console&&typeof console.warn==='function')console.warn('[PROFILE_IMAGE] Image failed to load; showing fallback avatar');
+    container.textContent='👤';
+  };
+  container.appendChild(img);
+}
+function normalizeUserProfileImageState(user){
+  if(!user||typeof user!=='object')return user;
+  const raw=getRawProfileImageUrl(user);
+  if(raw&&!user.profileImageUrl)user.profileImageUrl=raw;
+  return user;
+}
+function currentProfileImage(){return getRawProfileImageUrl(USER)}
 function currentDisplayName(){return USER&&(USER.displayName||USER.fullName||USER.username)||'-'}
 function currentJobTitle(){return USER&&(USER.jobTitle||USER.position||USER.area||USER.branch)||'-'}
-function renderProfile(){if(!USER)return; const displayName=currentDisplayName(); const jobTitle=currentJobTitle(); const photo=currentProfileImage(); const setAvatar=el=>{if(!el)return; el.innerHTML=photo?`<img src="${photo}" onerror="this.parentNode.textContent='👤'">`:'👤';}; const sideName=$('sideName'),sidePosition=$('sidePosition'),sideAvatar=$('sideAvatar'),topName=$('topName'),topPosition=$('topPosition'),topAvatar=$('topAvatar'); if(sideName)sideName.textContent=displayName; if(sidePosition)sidePosition.textContent=jobTitle; if(topName)topName.textContent=displayName; if(topPosition)topPosition.textContent=jobTitle; setAvatar(sideAvatar); setAvatar(topAvatar);}
+function renderProfile(){if(!USER)return; normalizeUserProfileImageState(USER); const displayName=currentDisplayName(); const jobTitle=currentJobTitle(); const photo=currentProfileImage(); const sideName=$('sideName'),sidePosition=$('sidePosition'),sideAvatar=$('sideAvatar'),topName=$('topName'),topPosition=$('topPosition'),topAvatar=$('topAvatar'); if(sideName)sideName.textContent=displayName; if(sidePosition)sidePosition.textContent=jobTitle; if(topName)topName.textContent=displayName; if(topPosition)topPosition.textContent=jobTitle; renderProfileImageElement(sideAvatar,photo,USER); renderProfileImageElement(topAvatar,photo,USER);}
 function renderHome(){let name=(currentDisplayName()||'-').split(' ')[0];const customerCount=DB.customers.length||parseClientNumber(DB.counts?.customers);const productCount=DB.products.length||parseClientNumber(DB.counts?.products); document.getElementById('greetingText').textContent=`${greeting()}, ${name} 👋`; document.getElementById('welcomeText').textContent=DB.settings?.welcomeText||'-'; document.getElementById('statQuotes').textContent=DB.quotes.length; document.getElementById('statSales').textContent=Number(DB.quotes.reduce((s,q)=>s+Number(q.total||0),0)).toLocaleString('th-TH'); document.getElementById('statCustomers').textContent=customerCount; document.getElementById('statPending').textContent=DB.quotes.filter(q=>q.status==='รออนุมัติ').length; document.getElementById('latestCustomers').innerHTML=DB.customers.slice(0,4).map(c=>`<div class="row">🏪 <b>${c.customerName||'-'}</b><span style="margin-left:auto;color:var(--muted)">${c.province||''}</span></div>`).join(''); document.getElementById('activePromos').innerHTML=DB.promotions.slice(0,4).map(p=>`<div class="row"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${p.brand||'-'}</span><div><b>${p.productName||'-'}</b><br><small>${p.description||p.discountText||''}</small></div></div>`).join(''); document.getElementById('bestProducts').innerHTML=DB.products.slice(0,3).map((p,i)=>`<div><div class="product-img">${p.brand==='Weber'?'🟨':'🟦'}</div><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${i+1}</span><h3>${p.productName||'-'}</h3><p style="color:var(--muted)">${p.brand||''}</p></div>`).join(''); document.getElementById('rProducts').textContent=productCount; document.getElementById('rCustomers').textContent=customerCount; document.getElementById('rPromos').textContent=DB.promotions.length; document.getElementById('rQuotes').textContent=DB.quotes.length;}
 function ensureCustomerCrmUi(){
   const page=document.getElementById('page-customers');
@@ -2046,7 +2118,7 @@ renderSettings=function(){
   const phoneLink=$('setPhoneLink');
   if(phoneLink)phoneLink.innerHTML=renderPhoneLink(USER.phone);
   set('setEmail',USER.email);
-  set('setPhoto',USER.profileImageUrl||USER.photoUrl);
+  set('setPhoto',currentProfileImage());
   set('setPersonalGreeting',USER.greetingText||'');
   set('setCompany',identity.companyName);
   set('setAppName',identity.systemName);
@@ -2056,53 +2128,149 @@ renderSettings=function(){
   set('setEvening',s.greetingEvening);
   set('setNight',s.greetingNight);
   applySettingsPermissionUi();
+  PROFILE_IMAGE_SELECTION_SEQUENCE+=1;
   PROFILE_IMAGE_DATA='';
-  updateProfilePreview(USER.profileImageUrl||USER.photoUrl||'');
+  PROFILE_IMAGE_PROCESSING_PROMISE=null;
+  revokeProfileImageObjectUrl();
+  updateProfilePreview(currentProfileImage());
 };
 
 updateProfilePreview=function(src){
   let box=$('profilePreview');
   if(!box)return;
-  box.innerHTML=src?`<img src="${src}" onerror="this.parentNode.textContent='👤'">`:'👤';
+  renderProfileImageElement(box,src,USER);
 };
+
+function estimateProfileImageBytes(dataUrl){
+  const text=String(dataUrl||'');
+  const comma=text.indexOf(',');
+  const base64=comma>=0?text.slice(comma+1):text;
+  return Math.ceil(base64.length*3/4);
+}
+
+function revokeProfileImageObjectUrl(){
+  if(PROFILE_IMAGE_OBJECT_URL&&window.URL&&typeof window.URL.revokeObjectURL==='function'){
+    try{window.URL.revokeObjectURL(PROFILE_IMAGE_OBJECT_URL);}catch(error){}
+  }
+  PROFILE_IMAGE_OBJECT_URL='';
+}
+
+function drawProfileImageToCanvas(img,maxEdge){
+  const sourceWidth=Number(img.naturalWidth||img.width||0);
+  const sourceHeight=Number(img.naturalHeight||img.height||0);
+  if(!sourceWidth||!sourceHeight)throw new Error('Invalid image dimensions');
+  const scale=Math.min(maxEdge/sourceWidth,maxEdge/sourceHeight,1);
+  const width=Math.max(1,Math.round(sourceWidth*scale));
+  const height=Math.max(1,Math.round(sourceHeight*scale));
+  const canvas=document.createElement('canvas');
+  canvas.width=width;
+  canvas.height=height;
+  const ctx=canvas.getContext('2d');
+  if(!ctx)throw new Error('Canvas is not supported');
+  ctx.fillStyle='#fff';
+  ctx.fillRect(0,0,width,height);
+  ctx.drawImage(img,0,0,width,height);
+  return canvas;
+}
+
+function compressProfileImageForUpload(img){
+  let bestData='';
+  let bestBytes=Infinity;
+  for(let edge=PROFILE_IMAGE_MAX_EDGE;edge>=PROFILE_IMAGE_MIN_EDGE;edge=Math.floor(edge*0.75)){
+    const canvas=drawProfileImageToCanvas(img,edge);
+    for(let i=0;i<PROFILE_IMAGE_QUALITY_STEPS.length;i++){
+      const dataUrl=canvas.toDataURL('image/jpeg',PROFILE_IMAGE_QUALITY_STEPS[i]);
+      const bytes=estimateProfileImageBytes(dataUrl);
+      if(bytes<bestBytes){
+        bestBytes=bytes;
+        bestData=dataUrl;
+      }
+      if(bytes<=PROFILE_IMAGE_UPLOAD_TARGET_BYTES)return dataUrl;
+    }
+  }
+  if(bestData&&bestBytes<=2*1024*1024)return bestData;
+  throw new Error('Compressed profile image is too large');
+}
+
+function loadProfileImageFromObjectUrl(url){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    img.onload=()=>resolve(img);
+    img.onerror=()=>reject(new Error('Unable to read selected image'));
+    img.src=url;
+  });
+}
+
+async function processProfileImageFile(file,sequence){
+  if(!file)return '';
+  const fileType=String(file.type||'').trim();
+  if(fileType&&!/^image\//i.test(fileType))throw new Error('ไฟล์ต้องเป็นรูปภาพ');
+  if(file.size>PROFILE_IMAGE_MAX_SOURCE_BYTES)throw new Error('ไฟล์รูปใหญ่เกินไป กรุณาเลือกรูปไม่เกิน 25MB');
+  if(!window.URL||typeof window.URL.createObjectURL!=='function')throw new Error('Browser ไม่รองรับการอ่านรูปจากไฟล์นี้');
+  revokeProfileImageObjectUrl();
+  PROFILE_IMAGE_OBJECT_URL=window.URL.createObjectURL(file);
+  updateProfilePreview(PROFILE_IMAGE_OBJECT_URL);
+  const img=await loadProfileImageFromObjectUrl(PROFILE_IMAGE_OBJECT_URL);
+  if(sequence!==PROFILE_IMAGE_SELECTION_SEQUENCE)throw new Error('PROFILE_IMAGE_SELECTION_CANCELLED');
+  const dataUrl=compressProfileImageForUpload(img);
+  if(sequence!==PROFILE_IMAGE_SELECTION_SEQUENCE)throw new Error('PROFILE_IMAGE_SELECTION_CANCELLED');
+  PROFILE_IMAGE_DATA=dataUrl;
+  const photoInput=$('setPhoto');
+  if(photoInput)photoInput.value='';
+  updateProfilePreview(dataUrl);
+  revokeProfileImageObjectUrl();
+  return dataUrl;
+}
+
+function processProfileImageSelection(file,input){
+  const sequence=++PROFILE_IMAGE_SELECTION_SEQUENCE;
+  PROFILE_IMAGE_DATA='';
+  PROFILE_IMAGE_PROCESSING_PROMISE=processProfileImageFile(file,sequence);
+  PROFILE_IMAGE_PROCESSING_PROMISE.then(()=>{
+    if(sequence!==PROFILE_IMAGE_SELECTION_SEQUENCE)return;
+    if(input)input.value='';
+    toast('เตรียมรูปแล้ว กดบันทึกโปรไฟล์เพื่อใช้งาน');
+  }).catch(error=>{
+    if(sequence!==PROFILE_IMAGE_SELECTION_SEQUENCE||error&&error.message==='PROFILE_IMAGE_SELECTION_CANCELLED')return;
+    PROFILE_IMAGE_DATA='';
+    revokeProfileImageObjectUrl();
+    updateProfilePreview(currentProfileImage());
+    toast(error&&error.message?error.message:'ไม่สามารถอ่านรูปภาพได้');
+    if(input)input.value='';
+  }).finally(()=>{
+    if(sequence===PROFILE_IMAGE_SELECTION_SEQUENCE)PROFILE_IMAGE_PROCESSING_PROMISE=null;
+  });
+}
 
 handleProfileImage=function(ev){
   let file=ev.target.files&&ev.target.files[0];
   if(!file)return;
-  if(!/^image\/(png|jpe?g|webp)$/i.test(file.type||'')){toast('ไฟล์ต้องเป็น JPG, PNG หรือ WEBP');return;}
-  if(file.size>5*1024*1024){toast('ไฟล์รูปใหญ่เกินไป');return;}
-  let reader=new FileReader();
-  reader.onload=e=>{
-    let img=new Image();
-    img.onload=()=>{
-      let canvas=document.createElement('canvas');
-      let max=960,scale=Math.min(max/img.width,max/img.height,1);
-      canvas.width=Math.round(img.width*scale);
-      canvas.height=Math.round(img.height*scale);
-      let ctx=canvas.getContext('2d');
-      ctx.drawImage(img,0,0,canvas.width,canvas.height);
-      PROFILE_IMAGE_DATA=canvas.toDataURL(file.type==='image/png'?'image/png':'image/jpeg',0.82);
-      let photoInput=$('setPhoto');
-      if(photoInput)photoInput.value='';
-      updateProfilePreview(PROFILE_IMAGE_DATA);
-      toast('อัพโหลดรูปแล้ว กดบันทึกโปรไฟล์เพื่อใช้งาน');
-    };
-    img.onerror=()=>toast('ไม่สามารถอ่านรูปภาพได้');
-    img.src=e.target.result;
-  };
-  reader.readAsDataURL(file);
+  processProfileImageSelection(file,ev.target);
 };
 
 saveProfile=async function(){
   const btn=$('saveProfileBtn');
+  const previousProfileImage=currentProfileImage();
+  const restorePreviousProfileImage=()=>{
+    const photoInput=$('setPhoto');
+    if(photoInput)photoInput.value=previousProfileImage;
+    PROFILE_IMAGE_DATA='';
+    updateProfilePreview(previousProfileImage);
+    renderProfile();
+  };
   try{
     if(btn){btn.disabled=true;btn.textContent='กำลังบันทึก...';}
+    if(PROFILE_IMAGE_PROCESSING_PROMISE){
+      toast('กำลังเตรียมรูป...');
+      await PROFILE_IMAGE_PROCESSING_PROMISE;
+    }
     let profileImageUrl=$('setPhoto')?.value||'';
     if(PROFILE_IMAGE_DATA){
       toast('กำลังอัพโหลดรูป...');
       const uploadResponse=await gas('uploadProfileImage',{profileImageData:PROFILE_IMAGE_DATA});
       if(!uploadResponse.ok){
         toast(uploadResponse.message||'Upload failed');
+        restorePreviousProfileImage();
         return;
       }
       profileImageUrl=uploadResponse.data?.profileImageUrl||uploadResponse.data?.photoUrl||'';
@@ -2118,13 +2286,22 @@ saveProfile=async function(){
       greetingText: USER?.greetingText||''
     };
     let r=await gas('updateProfile',p);
+    if(!r.ok){
+      toast(r.message||'Profile save failed');
+      restorePreviousProfileImage();
+      return r;
+    }
     toast(r.message||'Profile saved');
     if(r.ok){
       USER=Object.assign({},USER||{},r.data||{});
+      normalizeUserProfileImageState(USER);
+      if(profileImageUrl&&currentProfileImage()===profileImageUrl)USER.profileImageUpdatedAt=new Date().toISOString();
       PROFILE_IMAGE_DATA='';
+      revokeProfileImageObjectUrl();
       localStorage.setItem('currentUser',JSON.stringify(USER));
       localStorage.setItem('sg_user',JSON.stringify(USER));
-      if(typeof clearCache==='function')clearCache('sg_bootstrap_cache');
+      if(typeof invalidateBootstrapApiCache==='function')invalidateBootstrapApiCache();
+      else if(typeof clearCache==='function')clearCache('sg_bootstrap_cache');
       renderProfile();
       renderHome();
       renderSettings();
@@ -2841,6 +3018,7 @@ normalizeDb=function(data){
   db.permissions=data&&data.permissions?data.permissions:{};
   if(data&&data.user){
     USER=Object.assign({}, USER||{}, data.user, {displayName:data.user.displayName||data.user.fullName||data.user.username});
+    normalizeUserProfileImageState(USER);
     try{localStorage.setItem('sg_user',JSON.stringify(USER));localStorage.setItem('currentUser',JSON.stringify(USER));localStorage.setItem('sg_role',USER.role||'');localStorage.setItem('sg_userId',USER.userId||'')}catch(error){}
   }
   return db;

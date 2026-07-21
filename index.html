@@ -16,7 +16,7 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/main.css?v=0.5.18">
+<link rel="stylesheet" href="css/main.css?v=0.5.21">
 </head>
 <body>
 <div id="loginView" class="login">
@@ -66,7 +66,7 @@
       </button>
     </div>
     <nav class="nav">
-      <button class="active" data-page="home" onclick="go('home',this)">🏠 หน้าหลัก</button><button data-page="quote" onclick="go('quote',this)">📄 ออกใบเสนอราคา</button><button data-page="customers" onclick="go('customers',this)">🏪 ร้านค้า</button><button data-page="products" onclick="go('products',this)">📦 สินค้า</button><button data-page="promos" onclick="go('promos',this)">🎁 โปรโมชั่น</button><button data-page="quotes" onclick="go('quotes',this)">📋 ใบเสนอราคา</button><button data-page="users" onclick="go('users',this)">👥 Users</button><button data-page="report" onclick="go('report',this)">📊 รายงาน</button><button data-page="settings" onclick="go('settings',this)">⚙️ ตั้งค่า</button>
+      <button class="active" data-page="home" onclick="go('home',this)" title="หน้าหลัก" aria-label="หน้าหลัก"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/home.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">หน้าหลัก</span></button><button data-page="quote" onclick="go('quote',this)" title="ออกใบเสนอราคา" aria-label="ออกใบเสนอราคา"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/create-quotation.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">ออกใบเสนอราคา</span></button><button data-page="customers" onclick="go('customers',this)" title="ร้านค้า" aria-label="ร้านค้า"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/customer.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">ร้านค้า</span></button><button data-page="products" onclick="go('products',this)" title="สินค้า" aria-label="สินค้า"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/product.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">สินค้า</span></button><button data-page="promos" onclick="go('promos',this)" title="โปรโมชั่น" aria-label="โปรโมชั่น"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/promotion.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">โปรโมชั่น</span></button><button data-page="quotes" onclick="go('quotes',this)" title="ประวัติใบเสนอราคา" aria-label="ประวัติใบเสนอราคา"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/quotation-history.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">ประวัติใบเสนอราคา</span></button><button data-page="users" onclick="go('users',this)" title="Users" aria-label="Users"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/users.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">Users</span></button><button data-page="report" onclick="go('report',this)" title="รายงาน" aria-label="รายงาน"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/reports.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">รายงาน</span></button><button data-page="settings" onclick="go('settings',this)" title="ตั้งค่า" aria-label="ตั้งค่า"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/settings.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">ตั้งค่า</span></button>
     </nav>
   </aside>
   <main class="main">
@@ -236,10 +236,10 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   });
 }
 </script>
-<script src="js/config.js?v=0.5.18"></script>
+<script src="js/config.js?v=0.5.22"></script>
 <script src="js/api.js?v=0.5.17"></script>
 <script src="js/auth.js?v=0.5.3"></script>
-<script src="js/app.js?v=0.5.16"></script>
+<script src="js/app.js?v=0.5.22"></script>
 <script src="js/quotation.js?v=0.5.18"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>

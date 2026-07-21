@@ -1,5 +1,5 @@
 window.APP_NAME = "Saint-Gobain Sales System";
-window.APP_VERSION = "0.5.18";
+window.APP_VERSION = "0.5.22";
 window.APP_ENV = "production";
 
 window.CACHE_VERSION = "20260720";
