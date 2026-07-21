@@ -9,6 +9,10 @@ function sanitizeUserInputText(value, maxLength) {
   return text.length > limit ? text.slice(0, limit) : text;
 }
 
+const PROFILE_IMAGE_FOLDER_PROPERTY_KEY = 'PROFILE_IMAGE_FOLDER_ID';
+const PROFILE_IMAGE_UPLOAD_FOLDER_NAME = 'Saint-Gobain Sales System Profile Images';
+const PROFILE_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
+
 // Phone numbers are identifiers, not quantities. Keep them as text end-to-end.
 function normalizePhone(value) {
   const raw = String(value === null || value === undefined ? '' : value).trim();
@@ -80,7 +84,7 @@ function normalizeUserAccount(user) {
   const displayName = sanitizeUserText(source.displayName || fullName || source.username);
   const area = sanitizeUserInputText(source.area || source.Area || source.branch || source.Branch, 80);
   const jobTitle = sanitizeUserText(source.jobTitle || source.position || source.title || area || source.branch);
-  const profileImageUrl = sanitizeUserText(source.profileImageUrl || source.photoUrl || source.imageUrl);
+  const profileImageUrl = sanitizeUserText(source.profileImageUrl || source.profilePhotoUrl || source.avatarUrl || source.photoUrl || source.imageUrl);
   const quoteDisplayName = sanitizeUserInputText(source.quoteDisplayName || fullName || displayName || source.username, 150);
   const status = normalizeUserStatus(source.status, source.active);
   const role = normalizeUserRole(source.role);
@@ -341,8 +345,8 @@ function createUser(payload) {
       email: email,
       phone: phone,
       jobTitle: sanitizeUserText(data.jobTitle || data.position),
-      profileImageUrl: sanitizeUserText(data.profileImageUrl || data.photoUrl),
-      photoUrl: sanitizeUserText(data.profileImageUrl || data.photoUrl),
+      profileImageUrl: sanitizeUserText(data.profileImageUrl || data.profilePhotoUrl || data.avatarUrl || data.photoUrl),
+      photoUrl: sanitizeUserText(data.profileImageUrl || data.profilePhotoUrl || data.avatarUrl || data.photoUrl),
       quoteDisplayName: sanitizeUserInputText(data.quoteDisplayName || fullNameCheck.data, 150),
       companyName: sanitizeUserText(data.companyName),
       greetingText: sanitizeUserText(data.greetingText),
@@ -423,8 +427,8 @@ function updateUser(payload) {
       email: email,
       phone: phone,
       jobTitle: sanitizeUserText(data.jobTitle || data.position || current.jobTitle),
-      profileImageUrl: sanitizeUserText(data.profileImageUrl || data.photoUrl || current.profileImageUrl),
-      photoUrl: sanitizeUserText(data.profileImageUrl || data.photoUrl || current.profileImageUrl),
+      profileImageUrl: sanitizeUserText(data.profileImageUrl || data.profilePhotoUrl || data.avatarUrl || data.photoUrl || current.profileImageUrl),
+      photoUrl: sanitizeUserText(data.profileImageUrl || data.profilePhotoUrl || data.avatarUrl || data.photoUrl || current.profileImageUrl),
       quoteDisplayName: nextQuoteDisplayName,
       companyName: sanitizeUserText(data.companyName || current.companyName),
       greetingText: sanitizeUserText(data.greetingText || current.greetingText),
@@ -521,7 +525,10 @@ function updateProfile(payload) {
     };
     const displayName = sanitizeUserText(hasOwn('displayName') ? body.displayName : (auth.data.displayName || auth.data.fullName || auth.data.username));
     const jobTitle = sanitizeUserText((hasOwn('jobTitle') || hasOwn('position')) ? (body.jobTitle || body.position) : (auth.data.jobTitle || auth.data.position));
-    const profileImageUrl = sanitizeUserText((hasOwn('profileImageUrl') || hasOwn('photoUrl')) ? (body.profileImageUrl || body.photoUrl) : (auth.data.profileImageUrl || auth.data.photoUrl));
+    const hasProfileImageField = hasOwn('profileImageUrl') || hasOwn('profilePhotoUrl') || hasOwn('avatarUrl') || hasOwn('photoUrl');
+    const profileImageUrl = sanitizeUserText(hasProfileImageField
+      ? (body.profileImageUrl || body.profilePhotoUrl || body.avatarUrl || body.photoUrl)
+      : (auth.data.profileImageUrl || auth.data.profilePhotoUrl || auth.data.avatarUrl || auth.data.photoUrl));
     const greetingText = body.greetingText !== undefined
       ? sanitizeUserInputText(body.greetingText, 200)
       : sanitizeUserInputText(auth.data.greetingText, 200);
@@ -541,6 +548,7 @@ function updateProfile(payload) {
     };
     const updateResult = updateRowById(getUsersSheetName(), 'userId', userId, updateObject);
     if (!updateResult.ok) return updateResult;
+    clearUserBootstrapCache_(auth.data);
     const refreshed = getUserById(userId);
     return success(refreshed.ok ? sanitizeUser(refreshed.data) : Object.assign({ userId: userId }, updateObject), 'Profile updated');
   } catch (error) {
@@ -566,14 +574,41 @@ function uploadProfileImage(payload) {
   }
 }
 
+function clearUserBootstrapCache_(user) {
+  try {
+    if (typeof clearServerCache !== 'function') {
+      return;
+    }
+    const data = user && typeof user === 'object' ? user : {};
+    const scope = String(data.userId || data.username || 'anon').trim() || 'anon';
+    const settings = typeof getSystemSettings === 'function' ? getSystemSettings() : {};
+    const cacheVersion = String(settings.cacheVersion || settings.identityUpdatedAt || '');
+    clearServerCache('bootstrap:dashboard:v3:' + scope + ':' + cacheVersion);
+    clearServerCache('bootstrap:lightweight');
+  } catch (error) {
+    logWarning('clearUserBootstrapCache_', 'Unable to clear user bootstrap cache');
+  }
+}
+
+function getProfileImageUploadFolder_() {
+  const props = PropertiesService.getScriptProperties();
+  const folderId = sanitizeUserText(props.getProperty(PROFILE_IMAGE_FOLDER_PROPERTY_KEY));
+  if (folderId) {
+    try {
+      return DriveApp.getFolderById(folderId);
+    } catch (error) {
+      logWarning('getProfileImageUploadFolder_', 'Invalid profile image folder id; creating replacement');
+    }
+  }
+  const folder = DriveApp.createFolder(PROFILE_IMAGE_UPLOAD_FOLDER_NAME);
+  props.setProperty(PROFILE_IMAGE_FOLDER_PROPERTY_KEY, folder.getId());
+  return folder;
+}
+
 function saveProfileImageIfNeeded_(value, userId) {
   const text = String(value || '').trim();
   if (!text || text.indexOf('data:image/') !== 0) {
     return sanitizeUserText(text);
-  }
-  const folderId = getScriptProperty('PROFILE_IMAGE_FOLDER_ID', '');
-  if (!folderId) {
-    throw new Error('PROFILE_IMAGE_FOLDER_ID is required for profile image upload.');
   }
   const match = text.match(/^data:(image\/(?:png|jpeg|jpg|webp));base64,(.+)$/i);
   if (!match) {
@@ -582,10 +617,10 @@ function saveProfileImageIfNeeded_(value, userId) {
   const mimeType = match[1].toLowerCase() === 'image/jpg' ? 'image/jpeg' : match[1].toLowerCase();
   const extension = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg';
   const bytes = Utilities.base64Decode(match[2]);
-  if (bytes.length > 2 * 1024 * 1024) {
+  if (bytes.length > PROFILE_IMAGE_MAX_BYTES) {
     throw new Error('Profile image is too large.');
   }
-  const folder = DriveApp.getFolderById(folderId);
+  const folder = getProfileImageUploadFolder_();
   const fileName = 'profile-' + sanitizeUserText(userId || 'user') + '-' + new Date().getTime() + '.' + extension;
   const blob = Utilities.newBlob(bytes, mimeType, fileName);
   const file = folder.createFile(blob);
