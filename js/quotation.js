@@ -3193,7 +3193,10 @@ function buildQuotationPrintHtml(data) {
     const unit = getProductBusinessUnitClient(line);
     if (unit && lineBusinessUnits.indexOf(unit) < 0) lineBusinessUnits.push(unit);
   });
-  const businessUnitsHtml = lineBusinessUnits.length > 1 ? `<p class="quote-business-units">Business Units: ${escapeQuotationPrintHtml(lineBusinessUnits.map(getQuoteTypeLabel).join(' / '))}</p>` : '';
+ const businessUnitsHtml =
+  lineBusinessUnits.length > 1
+    ? `<p class="quote-business-units">${escapeQuotationPrintHtml(lineBusinessUnits.map(getQuoteTypeLabel).join(' / '))}</p>`
+    : '';
   const rows = lines.length ? lines.map((line, index) => {
     const qty = quotePrintNumber(line.qty);
     const listPrice = quotePrintNumber(line.quotedListPrice !== undefined ? line.quotedListPrice : line.listPrice);
@@ -3346,7 +3349,9 @@ function buildQuotationPrintTableHtml(rowsHtml) {
 }
 
 function buildQuotationFullHeaderHtml(ctx) {
-  const businessUnitsHtml = ctx.businessUnitsLabel ? `<p class="quote-business-units">Business Units: ${escapeQuotationPrintHtml(ctx.businessUnitsLabel)}</p>` : '';
+  const businessUnitsHtml = ctx.businessUnitsLabel
+  ? `<p class="quote-business-units">${escapeQuotationPrintHtml(ctx.businessUnitsLabel)}</p>`
+  : '';
   return `<header class="print-doc-header">
     <div class="print-doc-title">
       <h1>ใบเสนอราคา</h1>
@@ -3378,7 +3383,7 @@ function buildQuotationContinuedHeaderHtml(ctx) {
   return `<header class="print-doc-header print-doc-header--continued">
     <div class="print-doc-title">
       <h2>ใบเสนอราคา</h2>
-      <p>ต่อหน้า</p>
+      <p>ต่อ</p>
     </div>
     <div class="print-doc-meta">
       <div><span>เลขที่ใบเสนอราคา</span><b>${escapeQuotationPrintHtml(ctx.quoteNo)}</b></div>
