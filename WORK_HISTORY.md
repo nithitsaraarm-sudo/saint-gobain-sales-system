@@ -199,7 +199,7 @@
 - Product picker และ cart แสดง badge Weber/Gyproc
 - ถ้าสินค้าคนละ BU แสดง note “สินค้าร่วมข้าม BU”
 - ไม่ block การเพิ่มสินค้าข้าม BU แล้ว
-- เอกสารแสดง `Business Units: Weber / Gyproc` ถ้ามีสินค้าหลาย BU
+- เอกสารแสดง `Weber / Gyproc` ถ้ามีสินค้าหลาย BU
 - discount cache ฝั่ง browser แยกด้วย:
   - `customerId | productBusinessUnit | groupCode`
 
