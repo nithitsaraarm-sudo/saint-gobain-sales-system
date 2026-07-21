@@ -72,6 +72,9 @@
 .product-promo-button:hover,.product-promo-button:focus-visible{background:#fff6c4;outline:3px solid rgba(255,210,0,.35);outline-offset:2px}
 .product-promo-badge{display:inline-flex;align-items:center;width:max-content;max-width:100%;border-radius:999px;background:#fff4a8;color:#514400;font-size:12px;font-weight:900;padding:4px 9px;line-height:1.2}
 .product-promo-summary{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:#5b4a00;font-size:13px;line-height:1.35;overflow-wrap:anywhere;word-break:normal}
+.product-promo-list{display:grid;gap:3px;margin:0;color:#5b4a00;font-size:13px;line-height:1.35;overflow-wrap:anywhere;word-break:normal}
+.product-promo-line{display:block;min-width:0}
+.product-promo-line::before{content:'• ';font-weight:900;color:#8a6d00}
 .product-promo-detail-link{color:var(--blue);font-size:12px;font-weight:900;line-height:1.2}
 .quote-product-pref-main .product-promo-teaser{max-width:100%;margin-top:8px}
 .quote-product-pref-main .product-promo-button{border-radius:14px;box-shadow:none}
@@ -472,3 +475,102 @@ body.quotation-action-sheet-open{overflow:hidden;touch-action:none}
   .quotation-action-sheet{width:calc(100vw - 16px);border-radius:22px}
 }
 .file-input{display:block;position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);border:0;white-space:nowrap;opacity:0}
+
+/* Quotation totals flexible columns */
+.quotation-summary.print-totals,
+.quotation-page .quotation-summary.print-totals{
+    display:block!important;
+    width:46%!important;
+    min-width:86mm!important;
+    max-width:96mm!important;
+    margin-left:auto!important;
+    margin-right:0!important;
+    border:0!important;
+    border-radius:0!important;
+    overflow:visible!important;
+}
+
+.print-total-row{
+    display:grid!important;
+    grid-template-columns:minmax(0,1fr) max-content!important;
+    gap:12px!important;
+    align-items:center!important;
+}
+
+.print-total-row span{
+    min-width:0!important;
+    white-space:nowrap!important;
+}
+
+.print-total-row b{
+    min-width:max-content!important;
+    text-align:right!important;
+    white-space:nowrap!important;
+    font-variant-numeric:tabular-nums;
+}
+
+/* Quotation table responsive percentage columns */
+.print-table,
+.quotation-page .print-table{
+    width:100%!important;
+    table-layout:fixed!important;
+}
+
+/* Total = 100% */
+.print-table th:nth-child(1),
+.print-table td:nth-child(1){
+    width:4%!important;
+}
+
+.print-table th:nth-child(2),
+.print-table td:nth-child(2){
+    width:34%!important;
+}
+
+.print-table th:nth-child(3),
+.print-table td:nth-child(3){
+    width:9%!important;
+}
+
+.print-table th:nth-child(4),
+.print-table td:nth-child(4){
+    width:7%!important;
+}
+
+.print-table th:nth-child(5),
+.print-table td:nth-child(5){
+    width:10%!important;
+}
+
+.print-table th:nth-child(6),
+.print-table td:nth-child(6){
+    width:11%!important;
+    white-space:nowrap!important;
+}
+
+.print-table th:nth-child(7),
+.print-table td:nth-child(7){
+    width:7%!important;
+    white-space:nowrap!important;
+    padding-left:3px!important;
+    padding-right:3px!important;
+}
+
+.print-table th:nth-child(8),
+.print-table td:nth-child(8){
+    width:18%!important;
+    white-space:nowrap!important;
+}
+
+/* Keep numeric headers and values aligned */
+.print-table th:nth-child(n+3),
+.print-table td:nth-child(n+3){
+    min-width:0!important;
+}
+
+.print-table th:nth-child(6),
+.print-table td:nth-child(6),
+.print-table th:nth-child(8),
+.print-table td:nth-child(8){
+    font-variant-numeric:tabular-nums;
+}

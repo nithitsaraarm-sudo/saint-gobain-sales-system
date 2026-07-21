@@ -1047,8 +1047,14 @@ let PRODUCT_PROMO_LAST_FOCUS=null, productPromoEscapeBound=false;
 function getProductPromoText(product){
   return normalizeProductPromoText(product&&product.promoText);
 }
+function getProductPromoLines(product){
+  return String(getProductPromoText(product)||'')
+    .split(';')
+    .map(line=>line.trim())
+    .filter(Boolean);
+}
 function hasProductPromotion(product){
-  return !!getProductPromoText(product);
+  return getProductPromoLines(product).length>0;
 }
 function getProductPromoRecord(productReference){
   if(productReference&&typeof productReference==='object'&&!Array.isArray(productReference)){
@@ -1071,12 +1077,16 @@ function getProductPromoRecord(productReference){
 }
 function renderProductPromotionTeaser(product,recordKey,context){
   const promoText=getProductPromoText(product);
-  if(!promoText)return '';
+  const promoLines=getProductPromoLines(product);
+  if(!promoLines.length)return '';
   const jsRecordKey=escapeHtml(JSON.stringify(String(recordKey||'')));
   const contextAttr=htmlAttr(context||'product');
   const productName=String(product&&product.productName||product&&product.name||'สินค้า').trim()||'สินค้า';
   const ariaLabel=htmlAttr('ดูโปรโมชั่นของสินค้า '+productName);
-  return `<div class="product-promo-teaser" data-no-drag data-context="${contextAttr}"><button type="button" class="product-promo-button" data-no-drag onclick='openProductPromotionDetail(${jsRecordKey},event)' aria-label="${ariaLabel}"><span class="product-promo-badge" aria-hidden="true">🎁 มีโปรโมชั่น</span><span class="product-promo-summary">${escapeHtml(promoText)}</span><span class="product-promo-detail-link">ดูรายละเอียด</span></button></div>`;
+  const promoSummary=context==='product-list'
+    ? `<span class="product-promo-list" role="list">${promoLines.map(line=>`<span class="product-promo-line" role="listitem">${escapeHtml(line)}</span>`).join('')}</span>`
+    : `<span class="product-promo-summary">${escapeHtml(promoText)}</span>`;
+  return `<div class="product-promo-teaser" data-no-drag data-context="${contextAttr}"><button type="button" class="product-promo-button" data-no-drag onclick='openProductPromotionDetail(${jsRecordKey},event)' aria-label="${ariaLabel}"><span class="product-promo-badge" aria-hidden="true">🎁 มีโปรโมชั่น</span>${promoSummary}<span class="product-promo-detail-link">ดูรายละเอียด</span></button></div>`;
 }
 function ensureProductPromoEscapeHandler(){
   if(productPromoEscapeBound)return;

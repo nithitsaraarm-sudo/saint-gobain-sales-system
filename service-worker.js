@@ -1,4 +1,4 @@
-const CACHE_NAME = 'sales-system-v5-0.5.22';
+const CACHE_NAME = 'sales-system-v5-0.5.23';
 const ASSETS = [
   './',
   './index.html',
@@ -7,13 +7,13 @@ const ASSETS = [
   './manifest.json',
   './manifest.json?v=0.5.7',
   './css/main.css',
-  './css/main.css?v=0.5.21',
+  './css/main.css?v=0.5.23',
   './js/config.js',
-  './js/config.js?v=0.5.22',
+  './js/config.js?v=0.5.23',
   './js/api.js',
   './js/api.js?v=0.5.17',
   './js/app.js',
-  './js/app.js?v=0.5.22',
+  './js/app.js?v=0.5.23',
   './js/auth.js',
   './js/auth.js?v=0.5.3',
   './js/quotation.js',
