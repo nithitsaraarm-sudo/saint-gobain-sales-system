@@ -48,6 +48,7 @@ Run these after deployment to Apps Script / static hosting:
 - Profile image upload/display/refresh/logout-login/PWA reopen.
 - PWA install/reopen/cache refresh.
 - Mobile smoke tests from `ACCESSIBILITY_CHECKLIST.md`.
+- Full production execution should follow `TEST_CASES.md`; runtime, browser/PWA, and production smoke tests remain required and are not marked passed by this readiness report.
 
 ## Remaining risks
 
