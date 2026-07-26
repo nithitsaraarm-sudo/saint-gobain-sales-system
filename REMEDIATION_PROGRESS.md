@@ -25,7 +25,7 @@ If remaining weekly usage is shown as 30% or lower in the product UI, stop after
 | Phase 6 — Apps Script Performance and Data Safety | Completed | `fb7e3e4cb59ebab9ebf50ed0a2c9608d652524c3` |
 | Phase 7 — Frontend Cache and State Reliability | Completed | `2caeaca4fecec848dc7ef771a8d6080a50a6d79f` |
 | Phase 8 — Controlled Maintainability Refactor | Completed | `f6981df33420d545e271ed49ff9f8715b655dc77` |
-| Phase 9 — UX Reliability and Accessibility | Pending | - |
+| Phase 9 — UX Reliability and Accessibility | Completed | `0b54ca266866f8cd05cf90aede2ff6a2e9526156` |
 | Phase 10 — Documentation Synchronization | Pending | - |
 | Phase 11 — Test and Release Readiness | Pending | - |
 
@@ -301,6 +301,36 @@ Validation results:
 - Static search confirmed the expected single declarations remain for `renderHome()`, `renderCustomers()`, `renderProducts()`, `renderQuoteCustomerPicker()`, and `renderQuoteProductPicker()`.
 - No backend/API contract, permission logic, or database schema was changed.
 - `where.exe node`, `where.exe deno`, and `where.exe bun` were previously confirmed unavailable; browser/runtime smoke tests must be run manually.
+
+## Phase 9 Completion Notes
+
+Completed commit: `0b54ca266866f8cd05cf90aede2ff6a2e9526156`
+
+Files changed:
+
+- `ACCESSIBILITY_CHECKLIST.md`
+- `css/main.css`
+- `index.html`
+- `js/app.js`
+- `js/quotation.js`
+
+Implemented fixes:
+
+- Added a manual accessibility and UX smoke-test checklist for desktop, Android Chrome, iPhone Safari, and PWA standalone mode.
+- Added `type="button"` to static and generated UI buttons that did not already declare a type, preventing accidental submit behavior in current or future form contexts.
+- Added dialog semantics to quotation print preview, product price calculator, quotation detail modal, quote type modal, and the shared data modal.
+- Added accessible labels or labelled headings for modal/dialog close controls and dialog titles.
+- Added polite live-region semantics to the toast container.
+- Added visible focus styling for core button classes and settings tiles.
+- Preserved all existing click handlers, route behavior, quotation logic, permissions, API contracts, and database schema.
+
+Validation results:
+
+- `git diff --check` passed; only expected Windows LF/CRLF warnings were reported.
+- `rg --pcre2 "<button(?![^>]*\\btype=)" index.html js/app.js js/quotation.js` confirmed no remaining static/generated buttons without `type`.
+- Static marker check confirmed 5 dialog roles, 5 `aria-modal="true"` attributes, one toast status live region, and one title id each for quote detail and quote type dialogs.
+- No backend/API contract, permission logic, quotation save logic, or database schema was changed.
+- No local JavaScript runtime or browser automation stack is installed; manual browser/PWA checks should follow `ACCESSIBILITY_CHECKLIST.md`.
 
 ## Rollback Notes
 
