@@ -19,7 +19,7 @@ If remaining weekly usage is shown as 30% or lower in the product UI, stop after
 | Phase 0 — Initial repository check and audit baseline | Completed | `0cb62334d62341a78ba6f3b1194ca42c985c1c47` |
 | Phase 1 — Critical Security Fixes | Completed | `4ed7abba5628b1f3b4dae490a2ae823e5586a7a3` |
 | Phase 2 — Canonical RBAC and Permission Alignment | Completed | `064bdcf243e2fc26c6cbefa8a73964aa9d517071` |
-| Phase 3 — Incomplete and Misleading Features | Pending | - |
+| Phase 3 — Incomplete and Misleading Features | Completed | `8f306fdf9e67136332e0a5446852b158babd08c2` |
 | Phase 4 — Version, Environment, and Deployment Configuration | Pending | - |
 | Phase 5 — External Script and Frontend Security Hardening | Pending | - |
 | Phase 6 — Apps Script Performance and Data Safety | Pending | - |
@@ -120,6 +120,42 @@ Validation results:
 - Static searches confirmed frontend edit/cancel/duplicate/export/settings/data-entry visibility and direct-action guards use the same permission flags.
 - Static searches confirmed the RBAC audit no longer contains outdated drift labels for the implemented MANAGER quotation policy.
 - `where.exe node` failed because Node.js is not installed in this local environment; no JavaScript runtime test runner was available.
+
+## Phase 3 Completion Notes
+
+Completed commit: `8f306fdf9e67136332e0a5446852b158babd08c2`
+
+Files changed:
+
+- `appscript/Api.gs`
+- `appscript/Code.gs`
+- `appscript/Database.gs`
+- `index.html`
+- `js/api.js`
+- `js/app.js`
+- `js/auth.js`
+- `js/config.js`
+
+Implemented fixes:
+
+- Replaced the `savePromotion()` stub with real Promotions sheet persistence using the existing Promotions schema.
+- Added promotion normalization, validation, duplicate detection, active filtering, and audit logging.
+- Kept promotion duplicate check and write inside one `ScriptLock` to avoid concurrent exact duplicates.
+- Added authenticated `promotions` / `getPromotions` API actions and included viewable promotions in bootstrap data.
+- Made forced bootstrap refresh bypass the server cache so a post-save refresh can show newly saved promotion data.
+- Added Promotions sheet data cache key support and promotion cache clearing after writes.
+- Hid Demo Login in production behind explicit `ENABLE_DEMO_LOGIN = false`; development mock demo remains possible only when explicitly enabled.
+- Added `data-permission` UI guards so customer/product/promotion action buttons use backend-aligned permission flags instead of a broad admin-only `.main-action` rule.
+- Prevented modal save success UI from closing/toasting success when the API returns failure.
+
+Validation results:
+
+- `git diff --check` passed; only expected Windows LF/CRLF warnings were reported.
+- Static search confirmed the old `return success(payload || {}, 'Promotion saved')` stub is gone.
+- Static search confirmed `savePromotion()` and `getPromotions()` are permission-gated and wired through `appscript/Api.gs`.
+- Static search confirmed production Demo Login is hidden by `data-demo-login` plus `ENABLE_DEMO_LOGIN = false`, and `startTestMode()` rejects when not explicitly enabled.
+- Static search confirmed add-data buttons now declare `data-permission` and `applyRolePermissions()` reads those flags.
+- `where.exe node`, `where.exe deno`, and `where.exe bun` all failed because no local JavaScript runtime is installed; browser/runtime smoke tests must be run manually.
 
 ## Rollback Notes
 
