@@ -34,9 +34,16 @@ function applyDemoLoginVisibility() {
 
 function saveSession(user, sessionToken) {
   try {
-    ['sg_bootstrap_cache', 'sg_quotation_history_cache', 'sg_quotation_cache'].forEach(function (key) {
-      localStorage.removeItem(key);
-    });
+    if (typeof clearPrivateApiCaches === 'function') {
+      clearPrivateApiCaches();
+    } else {
+      ['sg_bootstrap_cache', 'sg_products_cache', 'sg_customers_cache', 'sg_quotation_history_cache', 'sg_quotation_cache', 'sg_discount_cache'].forEach(function (key) {
+        localStorage.removeItem(key);
+      });
+    }
+    if (typeof resetAuthenticatedFrontendState === 'function') {
+      resetAuthenticatedFrontendState();
+    }
   } catch (error) {}
   if (user) {
     const normalizedUser = Object.assign({}, user, {
@@ -56,6 +63,14 @@ function saveSession(user, sessionToken) {
 }
 
 function clearSession() {
+  try {
+    if (typeof clearPrivateApiCaches === 'function') {
+      clearPrivateApiCaches();
+    }
+    if (typeof resetAuthenticatedFrontendState === 'function') {
+      resetAuthenticatedFrontendState();
+    }
+  } catch (error) {}
   localStorage.removeItem('sg_user');
   localStorage.removeItem('sg_token');
   localStorage.removeItem('sg_role');

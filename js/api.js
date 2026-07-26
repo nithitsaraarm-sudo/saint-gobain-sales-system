@@ -14,6 +14,16 @@ const CACHE_KEYS = {
   quotation: 'sg_quotation_cache',
   quotationHistory: 'sg_quotation_history_cache'
 };
+const PUBLIC_CACHE_KEY_SET = {};
+PUBLIC_CACHE_KEY_SET[CACHE_KEYS.publicSettings] = true;
+const PRIVATE_CACHE_PREFIXES = [
+  CACHE_KEYS.customers,
+  CACHE_KEYS.products,
+  CACHE_KEYS.bootstrap,
+  CACHE_KEYS.discount,
+  CACHE_KEYS.quotation,
+  CACHE_KEYS.quotationHistory
+];
 const API_TIMEOUT_MS = 30000;
 const API_RESPONSE_PREVIEW_LIMIT = 500;
 const QUOTATION_SAVE_RECONCILE_ACTIONS = ['saveQuotation', 'updateQuotation', 'quotation'];
@@ -237,9 +247,11 @@ function reconcileQuotationSaveResponse(action, payload, postFailure) {
 
 function setCache(key, data, ttlMinutes) {
   try {
+    const cacheKey = String(key);
     const ttl = Math.max(1, Number(ttlMinutes || 1)) * 60 * 1000;
-    localStorage.setItem(String(key), JSON.stringify({
+    localStorage.setItem(cacheKey, JSON.stringify({
       expiresAt: Date.now() + ttl,
+      scope: getCacheScope(cacheKey),
       data: data
     }));
     return true;
@@ -250,13 +262,19 @@ function setCache(key, data, ttlMinutes) {
 
 function getCache(key) {
   try {
-    const raw = localStorage.getItem(String(key));
+    const cacheKey = String(key);
+    const raw = localStorage.getItem(cacheKey);
     if (!raw) {
       return null;
     }
     const cached = JSON.parse(raw);
     if (!cached || !cached.expiresAt || cached.expiresAt <= Date.now()) {
-      clearCache(key);
+      clearCache(cacheKey);
+      return null;
+    }
+    const expectedScope = getCacheScope(cacheKey);
+    if (expectedScope && cached.scope !== expectedScope) {
+      clearCache(cacheKey);
       return null;
     }
     return cached.data;
@@ -271,6 +289,62 @@ function clearCache(key) {
     localStorage.removeItem(String(key));
   } catch (error) {
     // Cache is best-effort only.
+  }
+}
+
+function isPrivateCacheKey(key) {
+  const cacheKey = String(key || '');
+  if (!cacheKey || PUBLIC_CACHE_KEY_SET[cacheKey]) {
+    return false;
+  }
+  return PRIVATE_CACHE_PREFIXES.some(function (prefix) {
+    return cacheKey === prefix || cacheKey.indexOf(prefix + ':') === 0;
+  });
+}
+
+function getStoredCacheUser_() {
+  try {
+    const raw = localStorage.getItem('sg_user') || localStorage.getItem('currentUser') || '';
+    return raw ? JSON.parse(raw) || {} : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function getCacheScope(key) {
+  if (!isPrivateCacheKey(key)) {
+    return '';
+  }
+  const user = getStoredCacheUser_();
+  const userId = String(localStorage.getItem('sg_userId') || user.userId || user.username || 'anonymous').trim();
+  const role = String(localStorage.getItem('sg_role') || user.role || '').trim();
+  const area = String(user.area || user.branch || '').trim();
+  const token = String(localStorage.getItem('sg_token') || localStorage.getItem('sessionToken') || '').trim();
+  return [
+    String(window.APP_VERSION || '0.5.25').trim(),
+    userId || 'anonymous',
+    role || 'role-unknown',
+    area || 'area-unknown',
+    token ? token.slice(-12) : 'no-token'
+  ].join(':');
+}
+
+function clearPrivateApiCaches() {
+  try {
+    const keys = [];
+    for (var i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (isPrivateCacheKey(key)) {
+        keys.push(key);
+      }
+    }
+    keys.forEach(function (key) {
+      clearCache(key);
+    });
+    bootstrapApiCache = null;
+    bootstrapApiPromise = null;
+  } catch (error) {
+    // Cache clearing is best-effort only.
   }
 }
 
@@ -861,6 +935,7 @@ window.jsonpApi = apiJsonpGet;
 window.setCache = setCache;
 window.getCache = getCache;
 window.clearCache = clearCache;
+window.clearPrivateApiCaches = clearPrivateApiCaches;
 window.invalidateBootstrapApiCache = invalidateBootstrapApiCache;
 window.CACHE_KEYS = CACHE_KEYS;
 window.clearQuotationCache = clearQuotationCache;
