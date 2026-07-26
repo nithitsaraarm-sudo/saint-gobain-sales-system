@@ -914,7 +914,7 @@ async function loadData(options){
   return bootstrapPromise;
 }
 function toggleMenu(open){placeSidebarToggleButton();if(isMobileSidebar()){const sidebar=document.getElementById('sidebar');const next=typeof open==='boolean'?open:!sidebar?.classList.contains('open');setSidebarDrawer(next);return;}if(open===false)return;setSidebarMini(!isSidebarMini())}
-function go(page,btn){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active')); document.getElementById('page-'+page).classList.add('active'); document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('active')); if(btn)btn.classList.add('active'); if(isMobileSidebar())toggleMenu(false); window.scrollTo({top:0,behavior:'smooth'}); ensurePageData(page); if(page==='quotes')ensureQuotationHistoryLoaded();}
+function go(page,btn){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active')); document.getElementById('page-'+page).classList.add('active'); document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('active')); if(btn)btn.classList.add('active'); if(isMobileSidebar())toggleMenu(false); window.scrollTo({top:0,behavior:'smooth'}); const pageData=ensurePageData(page); if(page==='quotes')ensureQuotationHistoryLoaded(); return pageData;}
 function renderAll(){renderBrand();renderProfile();renderHome();renderPromos();renderSettings();}
 function renderBrand(){applySystemIdentityToUI(getSystemIdentitySettingsForUi());}
 function greeting(){const personal=String(USER?.greetingText||'').trim(); if(personal)return personal; let h=new Date().getHours(),s=DB.settings||{}; if(h<12)return s.greetingMorning||'สวัสดีตอนเช้า'; if(h<17)return s.greetingAfternoon||'สวัสดีตอนบ่าย'; if(h<21)return s.greetingEvening||'สวัสดีตอนเย็น'; return s.greetingNight||'สวัสดีตอนดึก';}
@@ -3038,9 +3038,9 @@ showApp=function(){baseShowAppForAuth();applyRolePermissions();};
 const baseRenderAllForAuth=renderAll;
 renderAll=function(){baseRenderAllForAuth();renderUsers();applyRolePermissions();};
 const baseGoForAuth=go;
-go=function(page,btn){if(!canAccessPage(page)){toast('ไม่มีสิทธิ์เข้าใช้งานหน้านี้');return;}baseGoForAuth(page,btn);applyRolePermissions();};
+go=function(page,btn){if(!canAccessPage(page)){toast('ไม่มีสิทธิ์เข้าใช้งานหน้านี้');return;}const result=baseGoForAuth(page,btn);applyRolePermissions();return result;};
 const baseEnsurePageDataForAuth=ensurePageData;
-ensurePageData=function(page){if(page==='users'){return loadUsers();}if(page==='customers'){return baseEnsurePageDataForAuth(page).then(response=>{scheduleFavoriteCustomersLoad();return response;});}if(page==='quote'){return Promise.all([baseEnsurePageDataForAuth(page),loadProductPreferences()]);}return baseEnsurePageDataForAuth(page);};
+ensurePageData=function(page){if(page==='users'){return loadUsers();}if(page==='customers'){return baseEnsurePageDataForAuth(page).then(response=>{scheduleFavoriteCustomersLoad();return response;});}if(page==='quote'){return Promise.all([baseEnsurePageDataForAuth(page),loadProductPreferences()]).then(async responses=>{if(typeof window.initializePendingQuotationContext==='function'){const pending=await window.initializePendingQuotationContext();if(pending&&pending.ok===false)return pending;}return {ok:true,data:responses};});}return baseEnsurePageDataForAuth(page);};
 async function loadUsers(){
   if(['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0)return {ok:false,message:'Insufficient permission'};
   const response=await callApi('loadUsers',{});

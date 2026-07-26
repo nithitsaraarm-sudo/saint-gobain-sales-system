@@ -179,6 +179,9 @@ body.product-promo-scroll-locked{overflow:hidden;touch-action:none}
 .quote-type-option.gyproc,.quote-type-option.weber{background:#fff;align-items:center;justify-items:center;text-align:center;min-height:82px}
 .quote-type-option.gyproc{border-color:#c7ddf5;color:var(--blue)}
 .quote-type-option.weber{border-color:#f3df64;color:#514400}
+.quote-type-option.is-disabled,.quote-type-option:disabled{opacity:.48;cursor:not-allowed}
+.quote-type-modal-status{margin:12px 0 0;color:var(--blue);font-size:13px;font-weight:900}
+.quote-type-modal-status[hidden]{display:none}
 .quote-type-option-logo{display:block;width:auto;max-width:100%;height:24px;max-height:28px;object-fit:contain}
 .quote-type-badge{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:5px 10px;font-size:12px;font-weight:900}
 .quote-type-badge.gyproc{background:#e8f3ff;color:var(--blue)}
@@ -190,6 +193,8 @@ body.product-promo-scroll-locked{overflow:hidden;touch-action:none}
 .quote-product-bu.weber{background:#fff4a8;color:#514400}
 .quote-cross-bu-note{color:var(--muted);font-weight:800}
 .quote-type-switch{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 12px;font-weight:900;color:var(--blue);box-shadow:0 6px 18px rgba(15,42,82,.05);display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;min-width:0;max-width:min(240px,100%);box-sizing:border-box;line-height:1;flex:0 1 auto}
+.quote-new-button{height:44px;min-height:44px;box-sizing:border-box;border-radius:999px;padding:6px 12px;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:inherit;line-height:1;font-weight:900;color:var(--blue);background:#fff;white-space:nowrap}
+.quote-new-button:disabled{opacity:.55;cursor:not-allowed}
 .quote-brand-logo-wrap{display:inline-flex;align-items:center;justify-content:center;min-width:0;min-height:36px;max-width:100%;flex:0 1 auto}
 .quote-brand-logo{display:none;width:auto;max-width:136px;max-width:min(136px,100%);height:34px;object-fit:contain;flex:0 1 auto}
 .quote-brand-fallback{display:inline}
@@ -232,6 +237,7 @@ body.product-promo-scroll-locked{overflow:hidden;touch-action:none}
   #page-quote .quote-meta>.quote-type-switch .quote-brand-fallback{min-width:0;white-space:normal;overflow-wrap:anywhere;text-align:left}
   #page-quote .quote-meta>.quote-type-switch .quote-type-caret{margin-left:auto}
   #page-quote .quote-meta>span{width:100%;box-sizing:border-box;border-radius:16px}
+  #page-quote .quote-meta>.quote-new-button{width:100%;border-radius:16px}
 }
 
 @media(max-width:360px){

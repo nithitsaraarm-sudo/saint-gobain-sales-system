@@ -20,6 +20,16 @@ let QUOTE_PRODUCT_SEARCH_HIGHLIGHT_TIMER = null;
 let QUOTE_SAVE_IN_PROGRESS = false;
 let QUOTE_SAVE_REQUEST_ID = '';
 let QUOTE_SAVE_REQUEST_SIGNATURE = '';
+const PENDING_QUOTATION_CONTEXT_KEY = 'sg_pending_quotation_context_v1';
+const QUOTATION_DRAFT_STORAGE_KEYS = [
+  'sg_quotation_draft_v1',
+  'sg_quote_draft_v1',
+  'sg_quotation_autosave_v1',
+  'sg_quote_autosave_v1'
+];
+let QUOTE_PENDING_CUSTOMER_CONTEXT = null;
+let QUOTE_PENDING_NAVIGATION_LOCK = false;
+let QUOTE_PENDING_INIT_PROMISE = null;
 
 function normalizeQuoteType(value) {
   const text = String(value || '').trim().toUpperCase();
@@ -121,6 +131,68 @@ function getQuotationSaveRequestIdForPayload(payload) {
 function clearQuotationSaveRequestState() {
   QUOTE_SAVE_REQUEST_ID = '';
   QUOTE_SAVE_REQUEST_SIGNATURE = '';
+}
+
+function getStrictQuoteType(value) {
+  const text = String(value || '').trim().toUpperCase();
+  if (text === 'GYPROC') return 'GYPROC';
+  if (text === 'WEBER') return 'WEBER';
+  return '';
+}
+
+function removeQuotationStorageKey(storage, key) {
+  try {
+    if (storage && key) storage.removeItem(key);
+  } catch (error) {
+    console.warn('[Quotation] Unable to clear draft storage key', key, error);
+  }
+}
+
+function clearPendingQuotationContext() {
+  removeQuotationStorageKey(typeof sessionStorage !== 'undefined' ? sessionStorage : null, PENDING_QUOTATION_CONTEXT_KEY);
+}
+
+function clearQuotationDraftStorage(options) {
+  const opts = options || {};
+  QUOTATION_DRAFT_STORAGE_KEYS.forEach(key => {
+    removeQuotationStorageKey(typeof sessionStorage !== 'undefined' ? sessionStorage : null, key);
+    removeQuotationStorageKey(typeof localStorage !== 'undefined' ? localStorage : null, key);
+  });
+  if (!opts.preservePendingContext) {
+    clearPendingQuotationContext();
+  }
+}
+
+function readPendingQuotationContext() {
+  try {
+    if (typeof sessionStorage === 'undefined') return null;
+    const raw = sessionStorage.getItem(PENDING_QUOTATION_CONTEXT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (error) {
+    console.warn('[QuotationPending] invalid pending context', error);
+    clearPendingQuotationContext();
+    return null;
+  }
+}
+
+function writePendingQuotationContext(context) {
+  try {
+    if (typeof sessionStorage === 'undefined') {
+      return { ok: false, message: 'Session storage is not available' };
+    }
+    sessionStorage.setItem(PENDING_QUOTATION_CONTEXT_KEY, JSON.stringify(context));
+    return { ok: true };
+  } catch (error) {
+    console.warn('[QuotationPending] unable to store pending context', {
+      customerId: context && context.customerId || '',
+      businessUnit: context && (context.quoteType || context.businessUnit) || '',
+      route: context && context.route || 'quote',
+      error: error && error.message || String(error || '')
+    });
+    return { ok: false, message: 'Unable to prepare quotation navigation' };
+  }
 }
 
 const QUOTATION_UNSAVED_NUMBER_LABEL = 'ยังไม่มีเลขที่ใบเสนอราคา';
@@ -321,6 +393,247 @@ function getQuotationWorkflowStatusLabel(state) {
   if (workflow.isDirty) return 'มีการแก้ไขที่ยังไม่ได้บันทึก';
   if (workflow.lastSaveSucceeded) return 'UPDATED / SAVED';
   return 'ERROR';
+}
+
+function normalizeQuotationCustomerId(value) {
+  return String(value || '').trim();
+}
+
+function getQuotationCustomerId(customer) {
+  const source = customer && typeof customer === 'object' ? customer : {};
+  return normalizeQuotationCustomerId(source.customerId || source.customerCode || source.id);
+}
+
+function findQuoteCustomerById(customerId) {
+  const id = normalizeQuotationCustomerId(customerId);
+  if (!id || !Array.isArray(DB && DB.customers)) return null;
+  const target = id.toLowerCase();
+  return DB.customers.find(customer => {
+    return [customer.customerId, customer.customerCode, customer.id]
+      .map(normalizeQuotationCustomerId)
+      .some(value => value && value.toLowerCase() === target);
+  }) || null;
+}
+
+function parseQuotationCustomerBoolean(value) {
+  if (value === true) return true;
+  if (value === false) return false;
+  const text = String(value === undefined || value === null ? '' : value).trim().toLowerCase();
+  if (!text) return null;
+  if (['true', 'yes', 'y', '1', 'active', 'ใช้งาน'].indexOf(text) >= 0) return true;
+  if (['false', 'no', 'n', '0', 'inactive', 'disabled', 'ไม่ใช้งาน'].indexOf(text) >= 0) return false;
+  return null;
+}
+
+function readCustomerBooleanField(customer, fields) {
+  const source = customer && typeof customer === 'object' ? customer : {};
+  for (let i = 0; i < fields.length; i += 1) {
+    const field = fields[i];
+    if (Object.prototype.hasOwnProperty.call(source, field)) {
+      const parsed = parseQuotationCustomerBoolean(source[field]);
+      if (parsed !== null) return parsed;
+    }
+  }
+  return null;
+}
+
+function getCustomerQuoteBusinessUnitSupport(customer) {
+  const source = customer && typeof customer === 'object' ? customer : {};
+  let sellsWeber = readCustomerBooleanField(source, ['sellsWeber', 'sellWeber', 'hasWeber', 'weber', 'WEBER']);
+  let sellsGyproc = readCustomerBooleanField(source, ['sellsGyproc', 'sellGyproc', 'hasGyproc', 'gyproc', 'GYPROC']);
+  const defaultWeberDiscount = String(source.defaultWeberDiscount || '').trim();
+  const defaultGyprocDiscount = String(source.defaultGyprocDiscount || '').trim();
+  if (sellsWeber === null && defaultWeberDiscount) sellsWeber = true;
+  if (sellsGyproc === null && defaultGyprocDiscount) sellsGyproc = true;
+  const text = [
+    source.customerType,
+    source.businessUnit,
+    source.businessUnits,
+    source.brand,
+    source.brands
+  ].map(value => String(value || '').toUpperCase()).join(' ');
+  if (sellsWeber === null && text.indexOf('WEBER') >= 0) sellsWeber = true;
+  if (sellsGyproc === null && text.indexOf('GYPROC') >= 0) sellsGyproc = true;
+  const hasBrandText = text.indexOf('WEBER') >= 0 || text.indexOf('GYPROC') >= 0;
+  const hasAnySignal = sellsWeber !== null || sellsGyproc !== null || Boolean(defaultWeberDiscount || defaultGyprocDiscount || hasBrandText);
+  if (!hasAnySignal) {
+    return { WEBER: true, GYPROC: true, legacy: true };
+  }
+  return {
+    WEBER: sellsWeber === true,
+    GYPROC: sellsGyproc === true,
+    legacy: false
+  };
+}
+
+function getAvailableQuoteTypesForCustomer(customer) {
+  const support = getCustomerQuoteBusinessUnitSupport(customer);
+  return ['WEBER', 'GYPROC'].filter(type => support[type]);
+}
+
+function isCustomerActiveForQuotation(customer) {
+  const source = customer && typeof customer === 'object' ? customer : {};
+  const active = parseQuotationCustomerBoolean(source.active);
+  if (active === false) return false;
+  const status = parseQuotationCustomerBoolean(source.status);
+  return status !== false;
+}
+
+function canCurrentUserAccessQuotationCustomer(customer) {
+  if (!customer) return false;
+  if (typeof canViewAllCustomerAreasUi === 'function' && canViewAllCustomerAreasUi()) return true;
+  const role = typeof currentRole === 'function' ? currentRole() : String(USER && USER.role || '').trim().toUpperCase();
+  if (role === 'SUPER_ADMIN') return true;
+  const userArea = typeof getUserArea === 'function'
+    ? normalizeQuotationWorkflowKey(getUserArea(USER))
+    : normalizeQuotationWorkflowKey(USER && (USER.area || USER.branch));
+  const customerArea = normalizeQuotationWorkflowKey(customer.salesArea || customer.area || customer.branch);
+  if (userArea && customerArea && userArea === customerArea) return true;
+  const userId = normalizeQuotationWorkflowKey(USER && USER.userId);
+  const username = normalizeQuotationWorkflowKey(USER && USER.username);
+  const assignedUserId = normalizeQuotationWorkflowKey(customer.assignedSalesUserId || customer.salesUserId || customer.ownerUserId);
+  const assignedUsername = normalizeQuotationWorkflowKey(customer.assignedSalesUsername || customer.salesUsername || customer.ownerUsername);
+  if ((userId && assignedUserId === userId) || (username && assignedUsername === username)) return true;
+  return !customerArea && role !== 'SALES';
+}
+
+function validateCustomerForQuotation(customer, quoteType) {
+  const id = getQuotationCustomerId(customer);
+  const type = getStrictQuoteType(quoteType);
+  if (!customer || !id) {
+    return { ok: false, code: 'CUSTOMER_NOT_FOUND', message: 'ไม่พบข้อมูลร้านค้านี้ กรุณารีเฟรชข้อมูลร้านค้า' };
+  }
+  if (!isCustomerActiveForQuotation(customer)) {
+    return { ok: false, code: 'CUSTOMER_INACTIVE', message: 'ร้านค้านี้ถูกปิดการใช้งาน' };
+  }
+  if (!canCurrentUserAccessQuotationCustomer(customer)) {
+    return { ok: false, code: 'CUSTOMER_OUTSIDE_ASSIGNED_AREA', message: 'คุณไม่มีสิทธิ์ออกใบเสนอราคาให้ร้านค้านี้' };
+  }
+  if (type) {
+    const support = getCustomerQuoteBusinessUnitSupport(customer);
+    if (!support[type]) {
+      return { ok: false, code: 'CUSTOMER_BU_NOT_ENABLED', message: 'ร้านค้านี้ยังไม่ได้เปิดใช้งาน BU ที่เลือก' };
+    }
+  }
+  return { ok: true };
+}
+
+function logPendingQuotationError(stage, context, error) {
+  try {
+    console.warn('[QuotationPending]', stage, {
+      customerId: context && context.customerId || '',
+      businessUnit: context && (context.quoteType || context.businessUnit) || '',
+      route: context && context.route || 'quote',
+      error: error && error.message || String(error || '')
+    });
+  } catch (ignore) {}
+}
+
+function applyQuotationCustomerSelection(customer) {
+  const id = getQuotationCustomerId(customer);
+  CURRENT_QUOTE.customerId = id;
+  CURRENT_QUOTE.customerName = String(customer && customer.customerName || '').trim();
+  if (typeof setSelectedQuoteCustomer === 'function') {
+    setSelectedQuoteCustomer(id, true);
+  } else {
+    const hidden = document.getElementById('quoteCustomer');
+    if (hidden) hidden.value = id;
+    try {
+      selectedCustomerId = id;
+      window.selectedCustomerId = id;
+    } catch (ignore) {}
+    const input = document.getElementById('quoteCustomerSearch');
+    if (input) input.value = CURRENT_QUOTE.customerName || id;
+  }
+  const picker = document.getElementById('quoteCustomerPicker');
+  if (picker) {
+    picker.classList.remove('show');
+    picker.innerHTML = '';
+  }
+}
+
+function clearQuotationFormFields() {
+  const fieldValues = {
+    quoteCustomer: '',
+    quoteCustomerSearch: '',
+    productSearch: '',
+    shipping: '0',
+    specialDiscount: '0'
+  };
+  Object.keys(fieldValues).forEach(id => {
+    const element = document.getElementById(id);
+    if (element) element.value = fieldValues[id];
+  });
+  const customerPicker = document.getElementById('quoteCustomerPicker');
+  if (customerPicker) {
+    customerPicker.classList.remove('show');
+    customerPicker.innerHTML = '';
+  }
+  const errors = document.querySelectorAll('.quote-modal-error');
+  errors.forEach(element => {
+    element.textContent = '';
+    element.classList.remove('show');
+  });
+  document.querySelectorAll('.is-invalid-line').forEach(element => element.classList.remove('is-invalid-line'));
+}
+
+function getBlankQuotationState(quoteType) {
+  const type = getStrictQuoteType(quoteType) || normalizeQuoteType(quoteType || CURRENT_QUOTE_TYPE);
+  return {
+    quoteId: '',
+    quoteNo: '',
+    customerId: '',
+    customerName: '',
+    quoteType: type,
+    businessUnit: type,
+    shipping: 0,
+    specialDiscount: 0,
+    notes: '',
+    remark: '',
+    remarks: '',
+    status: 'DRAFT'
+  };
+}
+
+function resetQuotationForNewQuote(options) {
+  const opts = options || {};
+  closeQuotationActionSheet();
+  closeQuotationPrintPreview();
+  clearQuotationSaveRequestState();
+  clearQuotationSavedSnapshot();
+  clearQuotationDraftStorage({ preservePendingContext: opts.preservePendingContext });
+  CURRENT_QUOTE = getBlankQuotationState(opts.quoteType || opts.businessUnit);
+  CURRENT_QUOTE_TYPE = normalizeQuoteType(CURRENT_QUOTE.quoteType);
+  QUOTE_TYPE_SELECTED = Boolean(opts.quoteType || opts.businessUnit);
+  CART.length = 0;
+  try {
+    selectedCustomerId = '';
+    window.selectedCustomerId = '';
+  } catch (ignore) {}
+  clearQuotationFormFields();
+  clearLoadedQuotationCache('');
+  renderQuote();
+  renderQuoteMeta();
+  renderCart();
+  if (typeof renderQuoteProductPreferenceSections === 'function') renderQuoteProductPreferenceSections();
+  if (typeof renderProductPicker === 'function') renderProductPicker();
+  return { ok: true, state: getQuotationWorkflowState() };
+}
+
+function requestNewQuotation(event) {
+  if (event && typeof event.preventDefault === 'function') event.preventDefault();
+  if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+  if (QUOTE_SAVE_IN_PROGRESS) {
+    toast('กำลังบันทึกใบเสนอราคาอยู่ กรุณารอสักครู่');
+    return false;
+  }
+  const confirmed = typeof window === 'undefined' || typeof window.confirm !== 'function'
+    ? true
+    : window.confirm('Start a new quotation? Unsaved changes in the current quotation will be cleared. Previously saved quotations will not be deleted.');
+  if (!confirmed) return false;
+  resetQuotationForNewQuote();
+  toast('เริ่มใบเสนอราคาใหม่แล้ว');
+  return true;
 }
 
 function scheduleQuotationWorkflowRender() {
@@ -788,6 +1101,9 @@ async function navigateToQuotationEdit(reference, eventOrOptions, maybeOptions) 
   setQuotationEditButtonBusy(button, true);
   QUOTE_EDIT_NAVIGATION_PROMISE = (async () => {
     try {
+      clearPendingQuotationContext();
+      QUOTE_PENDING_CUSTOMER_CONTEXT = null;
+      QUOTE_PENDING_NAVIGATION_LOCK = false;
       closeQuotationEditSurfaces();
       if (typeof go === 'function') go('quote');
       showQuotationEditLoadingState(quotationReference);
@@ -843,7 +1159,8 @@ function getQuotationSaveActionButtons() {
     'button[onclick="openQuotationExportMenu()"]',
     'button[onclick="openQuotationMoreMenu()"]',
     'button[onclick="printQuotationSheet()"]',
-    'button[onclick="printQuotation()"]'
+    'button[onclick="printQuotation()"]',
+    'button[data-quotation-new-button]'
   ].join(',')));
   return Array.from(new Set(buttons.concat(Array.from(document.querySelectorAll('#quoteActionBar button,.quotation-action-sheet button,.quotation-print-actions button')))));
 }
@@ -920,16 +1237,97 @@ function setCurrentQuoteType(value, explicit) {
   return CURRENT_QUOTE_TYPE;
 }
 
-function openQuoteTypeModal() {
+function getQuoteTypeModalOptionButtons() {
   const modal = document.getElementById('quoteTypeModal');
-  if (modal) modal.classList.add('show');
+  return modal ? Array.from(modal.querySelectorAll('.quote-type-option')) : [];
+}
+
+function getQuoteTypeFromOptionButton(button) {
+  const text = String(button && button.getAttribute('onclick') || '').toUpperCase();
+  if (text.indexOf('GYPROC') >= 0) return 'GYPROC';
+  if (text.indexOf('WEBER') >= 0) return 'WEBER';
+  return '';
+}
+
+function getQuoteTypeModalStatusElement() {
+  const modal = document.getElementById('quoteTypeModal');
+  if (!modal) return null;
+  let status = modal.querySelector('.quote-type-modal-status');
+  if (!status) {
+    status = document.createElement('p');
+    status.className = 'quote-type-modal-status';
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    const options = modal.querySelector('.quote-type-options');
+    if (options && options.parentNode) {
+      options.parentNode.insertBefore(status, options.nextSibling);
+    }
+  }
+  return status;
+}
+
+function setQuoteTypeModalBusy(isBusy, message) {
+  const modal = document.getElementById('quoteTypeModal');
+  if (!modal) return;
+  modal.classList.toggle('is-busy', Boolean(isBusy));
+  const status = getQuoteTypeModalStatusElement();
+  if (status) {
+    status.textContent = message || '';
+    status.hidden = !message;
+  }
+  getQuoteTypeModalOptionButtons().forEach(button => {
+    button.disabled = Boolean(isBusy);
+    button.classList.toggle('is-disabled', Boolean(isBusy));
+    if (isBusy) button.setAttribute('aria-busy', 'true');
+    else button.removeAttribute('aria-busy');
+  });
+  modal.querySelectorAll('.actions button').forEach(button => {
+    button.disabled = Boolean(isBusy);
+  });
+}
+
+function applyQuoteTypeModalCustomerOptions(customer) {
+  const support = customer ? getCustomerQuoteBusinessUnitSupport(customer) : { WEBER: true, GYPROC: true };
+  getQuoteTypeModalOptionButtons().forEach(button => {
+    const type = getQuoteTypeFromOptionButton(button);
+    const enabled = !type || support[type];
+    button.disabled = !enabled;
+    button.classList.toggle('is-disabled', !enabled);
+    button.setAttribute('aria-disabled', String(!enabled));
+    button.title = enabled ? '' : 'BU นี้ยังไม่เปิดใช้งานสำหรับร้านค้านี้';
+  });
+}
+
+function openQuoteTypeModal(options) {
+  const opts = options || {};
+  const modal = document.getElementById('quoteTypeModal');
+  QUOTE_PENDING_CUSTOMER_CONTEXT = opts.customerContext || null;
+  if (modal) {
+    setQuoteTypeModalBusy(false, '');
+    applyQuoteTypeModalCustomerOptions(QUOTE_PENDING_CUSTOMER_CONTEXT && QUOTE_PENDING_CUSTOMER_CONTEXT.customer);
+    modal.classList.add('show');
+  }
   return new Promise(resolve => {
     QUOTE_TYPE_RESOLVE = resolve;
   });
 }
 
-function selectQuoteType(value) {
-  const type = setCurrentQuoteType(value, true);
+async function selectQuoteType(value) {
+  const type = getStrictQuoteType(value);
+  if (!type) {
+    toast('ประเภทใบเสนอราคาไม่ถูกต้อง');
+    return '';
+  }
+  if (QUOTE_PENDING_CUSTOMER_CONTEXT) {
+    const result = await openPendingQuotationFromCustomer(QUOTE_PENDING_CUSTOMER_CONTEXT.customer, type);
+    if (QUOTE_TYPE_RESOLVE) {
+      const resolve = QUOTE_TYPE_RESOLVE;
+      QUOTE_TYPE_RESOLVE = null;
+      resolve(result || '');
+    }
+    return result;
+  }
+  setCurrentQuoteType(type, true);
   const modal = document.getElementById('quoteTypeModal');
   if (modal) modal.classList.remove('show');
   if (QUOTE_TYPE_RESOLVE) {
@@ -943,6 +1341,8 @@ function selectQuoteType(value) {
 function closeQuoteTypeModal() {
   const modal = document.getElementById('quoteTypeModal');
   if (modal) modal.classList.remove('show');
+  setQuoteTypeModalBusy(false, '');
+  QUOTE_PENDING_CUSTOMER_CONTEXT = null;
   if (QUOTE_TYPE_RESOLVE) {
     const resolve = QUOTE_TYPE_RESOLVE;
     QUOTE_TYPE_RESOLVE = null;
@@ -952,8 +1352,182 @@ function closeQuoteTypeModal() {
 
 async function requestQuoteTypeSelection(force) {
   if (!force && QUOTE_TYPE_SELECTED) return CURRENT_QUOTE_TYPE;
-  const selected = await openQuoteTypeModal();
+  const selected = await openQuoteTypeModal({ customerContext: null });
   return selected || '';
+}
+
+async function ensureQuotationCustomersReady() {
+  if (Array.isArray(DB && DB.customers) && DB.customers.length) return { ok: true };
+  if (typeof loadCustomers === 'function') {
+    const response = await loadCustomers();
+    return response && response.ok ? { ok: true } : (response || { ok: false, message: 'Unable to load customers' });
+  }
+  return { ok: false, message: 'Customer data is not ready' };
+}
+
+async function ensureQuotationProductsReady() {
+  if (Array.isArray(DB && DB.products) && DB.products.length) return { ok: true };
+  if (typeof loadProducts === 'function') {
+    const response = await loadProducts();
+    return response && response.ok ? { ok: true } : (response || { ok: false, message: 'Unable to load products' });
+  }
+  return { ok: false, message: 'Product data is not ready' };
+}
+
+function buildPendingQuotationContext(customer, quoteType) {
+  const type = getStrictQuoteType(quoteType);
+  return {
+    version: 1,
+    route: 'quote',
+    source: 'customer',
+    customerId: getQuotationCustomerId(customer),
+    quoteType: type,
+    businessUnit: type,
+    createdAt: Date.now()
+  };
+}
+
+function validatePendingQuotationContext(context) {
+  const ctx = context && typeof context === 'object' ? context : {};
+  const type = getStrictQuoteType(ctx.quoteType || ctx.businessUnit);
+  const customerId = normalizeQuotationCustomerId(ctx.customerId);
+  if (Number(ctx.version || 0) !== 1 || !customerId || !type) {
+    return { ok: false, code: 'INVALID_PENDING_CONTEXT', message: 'ข้อมูลเปิดใบเสนอราคาไม่สมบูรณ์' };
+  }
+  return {
+    ok: true,
+    data: {
+      version: 1,
+      route: 'quote',
+      customerId: customerId,
+      quoteType: type,
+      businessUnit: type,
+      createdAt: Number(ctx.createdAt || Date.now())
+    }
+  };
+}
+
+function getQuotationNavButton() {
+  return document.querySelector('.nav button[data-page="quote"]') || null;
+}
+
+async function openPendingQuotationFromCustomer(customer, quoteType) {
+  const type = getStrictQuoteType(quoteType);
+  const context = buildPendingQuotationContext(customer, type);
+  if (QUOTE_PENDING_NAVIGATION_LOCK) {
+    toast('Opening quotation...');
+    return type;
+  }
+  const validation = validateCustomerForQuotation(customer, type);
+  if (!validation.ok) {
+    logPendingQuotationError('customer_validation_failed', context, validation.code || validation.message);
+    toast(validation.message || 'ไม่สามารถเปิดใบเสนอราคาให้ร้านค้านี้ได้');
+    setQuoteTypeModalBusy(false, '');
+    return '';
+  }
+  const storeResult = writePendingQuotationContext(context);
+  if (!storeResult.ok) {
+    toast('ไม่สามารถเตรียมข้อมูลใบเสนอราคาได้ กรุณาลองใหม่');
+    setQuoteTypeModalBusy(false, '');
+    return '';
+  }
+  QUOTE_PENDING_NAVIGATION_LOCK = true;
+  setQuoteTypeModalBusy(true, 'Opening quotation...');
+  toast('Opening quotation...');
+  const modal = document.getElementById('quoteTypeModal');
+  if (modal) modal.classList.remove('show');
+  try {
+    let navigationResult = null;
+    if (typeof go === 'function') {
+      navigationResult = await Promise.resolve(go('quote', getQuotationNavButton()));
+    } else {
+      throw new Error('Router is not available');
+    }
+    if (navigationResult && navigationResult.ok === false) {
+      throw new Error(navigationResult.message || navigationResult.code || 'Quotation initialization failed');
+    }
+    const quotePage = typeof document !== 'undefined' ? document.getElementById('page-quote') : null;
+    if (quotePage && !quotePage.classList.contains('active')) {
+      throw new Error('Quotation route did not open');
+    }
+    return type;
+  } catch (error) {
+    QUOTE_PENDING_NAVIGATION_LOCK = false;
+    logPendingQuotationError('navigation_failed', context, error);
+    setQuoteTypeModalBusy(false, '');
+    const activeQuotePage = typeof document !== 'undefined' ? document.getElementById('page-quote') : null;
+    if (modal && (!activeQuotePage || !activeQuotePage.classList.contains('active'))) {
+      applyQuoteTypeModalCustomerOptions(customer);
+      modal.classList.add('show');
+    }
+    toast('เปิดหน้าใบเสนอราคาไม่สำเร็จ กรุณาลองอีกครั้ง');
+    return '';
+  }
+}
+
+async function initializePendingQuotationContext() {
+  if (QUOTE_PENDING_INIT_PROMISE) return QUOTE_PENDING_INIT_PROMISE;
+  const rawContext = readPendingQuotationContext();
+  if (!rawContext) {
+    QUOTE_PENDING_NAVIGATION_LOCK = false;
+    return { ok: true, skipped: true };
+  }
+  QUOTE_PENDING_INIT_PROMISE = (async () => {
+    const pendingCheck = validatePendingQuotationContext(rawContext);
+    if (!pendingCheck.ok) {
+      logPendingQuotationError('invalid_context', rawContext, pendingCheck.code || pendingCheck.message);
+      clearPendingQuotationContext();
+      QUOTE_PENDING_NAVIGATION_LOCK = false;
+      toast(pendingCheck.message || 'ข้อมูลเปิดใบเสนอราคาไม่สมบูรณ์');
+      return pendingCheck;
+    }
+    const context = pendingCheck.data;
+    try {
+      const customersReady = await ensureQuotationCustomersReady();
+      if (!customersReady.ok) {
+        logPendingQuotationError('customers_not_ready', context, customersReady.message || customersReady.code);
+        QUOTE_PENDING_NAVIGATION_LOCK = false;
+        toast('โหลดข้อมูลร้านค้าไม่สำเร็จ กรุณาลองอีกครั้ง');
+        return { ok: false, code: 'CUSTOMERS_NOT_READY', message: customersReady.message || 'Unable to load customers' };
+      }
+      const customer = findQuoteCustomerById(context.customerId);
+      const customerValidation = validateCustomerForQuotation(customer, context.quoteType);
+      if (!customerValidation.ok) {
+        logPendingQuotationError('customer_validation_failed', context, customerValidation.code || customerValidation.message);
+        QUOTE_PENDING_NAVIGATION_LOCK = false;
+        toast(customerValidation.message || 'ไม่สามารถเปิดใบเสนอราคาให้ร้านค้านี้ได้');
+        return customerValidation;
+      }
+      resetQuotationForNewQuote({ quoteType: context.quoteType, preservePendingContext: true });
+      setCurrentQuoteType(context.quoteType, true);
+      applyQuotationCustomerSelection(customer);
+      const productsReady = await ensureQuotationProductsReady();
+      renderQuote();
+      renderQuoteMeta();
+      renderCart();
+      if (typeof renderProductPicker === 'function') renderProductPicker();
+      if (!productsReady.ok) {
+        logPendingQuotationError('products_not_ready', context, productsReady.message || productsReady.code);
+        QUOTE_PENDING_NAVIGATION_LOCK = false;
+        toast('โหลดสินค้าไม่สำเร็จ กรุณาลองอีกครั้ง');
+        return { ok: false, code: 'PRODUCTS_NOT_READY', message: productsReady.message || 'Unable to load products' };
+      }
+      clearPendingQuotationContext();
+      QUOTE_PENDING_CUSTOMER_CONTEXT = null;
+      QUOTE_PENDING_NAVIGATION_LOCK = false;
+      toast('พร้อมออกใบเสนอราคาใหม่');
+      return { ok: true, data: context };
+    } catch (error) {
+      logPendingQuotationError('initialization_failed', context, error);
+      QUOTE_PENDING_NAVIGATION_LOCK = false;
+      toast('เปิดใบเสนอราคาไม่สำเร็จ กรุณาลองอีกครั้ง');
+      return { ok: false, code: 'PENDING_QUOTATION_INIT_FAILED', message: error && error.message || 'Quotation initialization failed' };
+    }
+  })().finally(() => {
+    QUOTE_PENDING_INIT_PROMISE = null;
+    setQuoteTypeModalBusy(false, '');
+  });
+  return QUOTE_PENDING_INIT_PROMISE;
 }
 
 function getQuotationCacheId(quoteId) {
@@ -2180,59 +2754,79 @@ async function shareQuote() {
 }
 
 function selectCustomer(customerId) {
-  const select = document.getElementById('quoteCustomer');
-  if (select && customerId) {
-    select.value = customerId;
-  }
-  return newQuotation(customerId);
+  return startCustomerQuotationFlow(customerId);
 }
 
-async function newQuotation(customerId) {
+async function startCustomerQuotationFlow(customerId) {
+  const selectedCustomerId = normalizeQuotationCustomerId(customerId);
+  if (!selectedCustomerId) {
+    toast('กรุณาเลือกลูกค้าก่อนสร้างใบเสนอราคา');
+    return { ok: false, code: 'CUSTOMER_REQUIRED' };
+  }
+  if (QUOTE_PENDING_NAVIGATION_LOCK) {
+    toast('Opening quotation...');
+    return { ok: false, code: 'NAVIGATION_IN_PROGRESS' };
+  }
+  const customersReady = await ensureQuotationCustomersReady();
+  if (!customersReady.ok) {
+    toast('โหลดข้อมูลร้านค้าไม่สำเร็จ กรุณาลองอีกครั้ง');
+    return customersReady;
+  }
+  const customer = findQuoteCustomerById(selectedCustomerId);
+  const customerValidation = validateCustomerForQuotation(customer, '');
+  if (!customerValidation.ok) {
+    logPendingQuotationError('customer_selection_failed', { customerId: selectedCustomerId, route: 'customers' }, customerValidation.code || customerValidation.message);
+    toast(customerValidation.message || 'ไม่สามารถเปิดใบเสนอราคาให้ร้านค้านี้ได้');
+    return customerValidation;
+  }
+  const availableTypes = getAvailableQuoteTypesForCustomer(customer);
+  if (!availableTypes.length) {
+    const result = { ok: false, code: 'CUSTOMER_BU_NOT_ENABLED', message: 'ร้านค้านี้ยังไม่ได้เปิดใช้งาน Weber หรือ Gyproc' };
+    logPendingQuotationError('no_business_unit_enabled', { customerId: selectedCustomerId, route: 'customers' }, result.code);
+    toast(result.message);
+    return result;
+  }
+  if (availableTypes.length === 1) {
+    const selected = await openPendingQuotationFromCustomer(customer, availableTypes[0]);
+    return selected
+      ? { ok: true, quoteType: selected, autoSelected: true }
+      : { ok: false, code: 'QUOTE_NAVIGATION_FAILED' };
+  }
+  QUOTE_PENDING_CUSTOMER_CONTEXT = {
+    customerId: getQuotationCustomerId(customer),
+    customer: customer,
+    route: 'customers'
+  };
+  const selected = await openQuoteTypeModal({ customerContext: QUOTE_PENDING_CUSTOMER_CONTEXT });
+  return selected
+    ? { ok: true, quoteType: selected, awaitingBusinessUnit: false }
+    : { ok: false, code: 'QUOTE_TYPE_CANCELLED', cancelled: true };
+}
+
+async function newQuotation(customerId, options) {
+  const opts = options || {};
   const selectedCustomerId = String(customerId || document.getElementById('quoteCustomer')?.value || '').trim();
   if (!selectedCustomerId) {
     toast('กรุณาเลือกลูกค้าก่อนสร้างใบเสนอราคา');
-    return;
+    return { ok: false, code: 'CUSTOMER_REQUIRED' };
   }
-  const selectedQuoteType = await requestQuoteTypeSelection(true);
+  const customer = findQuoteCustomerById(selectedCustomerId);
+  const selectedQuoteType = getStrictQuoteType(opts.quoteType || opts.businessUnit) || await requestQuoteTypeSelection(true);
   if (!selectedQuoteType) {
     toast('กรุณาเลือกประเภทใบเสนอราคา');
-    return;
+    return { ok: false, code: 'QUOTE_TYPE_REQUIRED' };
   }
-  const customer = DB.customers.find(c => String(c.customerId || '').trim() === selectedCustomerId) || {};
-  const response = await callApi('createQuotation', { customerId: selectedCustomerId, quoteType: selectedQuoteType, businessUnit: selectedQuoteType });
-  if (response.ok && response.data) {
-    CURRENT_QUOTE = {
-      quoteId: response.data.quoteId || '',
-      quoteNo: getRealQuotationNumber(response.data.quoteNo) || '',
-      customerId: selectedCustomerId,
-      customerName: customer.customerName || '',
-      quoteType: normalizeQuoteType(response.data.quoteType || selectedQuoteType),
-      businessUnit: normalizeQuoteType(response.data.quoteType || selectedQuoteType),
-      shipping: 0,
-      specialDiscount: 0,
-      status: 'DRAFT'
-    };
-  } else {
-    CURRENT_QUOTE = {
-      quoteId: '',
-      quoteNo: '',
-      customerId: selectedCustomerId,
-      customerName: customer.customerName || '',
-      quoteType: selectedQuoteType,
-      businessUnit: selectedQuoteType,
-      shipping: 0,
-      specialDiscount: 0,
-      status: 'DRAFT'
-    };
+  const validation = validateCustomerForQuotation(customer, selectedQuoteType);
+  if (!validation.ok) {
+    toast(validation.message || 'ไม่สามารถเปิดใบเสนอราคาให้ร้านค้านี้ได้');
+    return validation;
   }
-  CART.length = 0;
-  const select = document.getElementById('quoteCustomer');
-  if (select) select.value = selectedCustomerId;
-  document.getElementById('shipping').value = 0;
-  document.getElementById('specialDiscount').value = 0;
+  resetQuotationForNewQuote({ quoteType: selectedQuoteType, preservePendingContext: opts.preservePendingContext });
+  setCurrentQuoteType(selectedQuoteType, true);
+  applyQuotationCustomerSelection(customer);
   await refreshQuotation();
-  clearQuotationSavedSnapshot();
   toast('เริ่มต้นใบเสนอราคาใหม่');
+  return { ok: true, quoteType: selectedQuoteType, customerId: selectedCustomerId };
 }
 
 async function addProduct(productId, qty) {
@@ -2788,7 +3382,8 @@ function renderQuoteMeta() {
   const status = getQuotationWorkflowStatusLabel(workflow);
   const quoteType = normalizeQuoteType(CURRENT_QUOTE.quoteType || CURRENT_QUOTE.businessUnit || CURRENT_QUOTE_TYPE);
   const typeContent = renderQuoteBrandSwitchContent(quoteType);
-  meta.innerHTML = `<button type="button" class="quote-type-switch ${getQuoteTypeClass(quoteType)}" onclick="openQuoteTypeModal()" aria-label="เลือกแบรนด์ ${escapeQuotationPrintHtml(getQuoteTypeLabel(quoteType))}">${typeContent}</button><span>เลขที่ใบเสนอราคา: <b>${escapeQuotationPrintHtml(quoteNo)}</b></span><span class="quote-workflow-status quote-status-${workflow.state.toLowerCase()}">สถานะ: <b>${escapeQuotationPrintHtml(status)}</b></span>`;
+  const newButtonDisabled = workflow.isBusy ? ' disabled aria-disabled="true" aria-busy="true"' : '';
+  meta.innerHTML = `<button type="button" class="quote-type-switch ${getQuoteTypeClass(quoteType)}" onclick="openQuoteTypeModal()" aria-label="เลือกแบรนด์ ${escapeQuotationPrintHtml(getQuoteTypeLabel(quoteType))}">${typeContent}</button><span>เลขที่ใบเสนอราคา: <b>${escapeQuotationPrintHtml(quoteNo)}</b></span><span class="quote-workflow-status quote-status-${workflow.state.toLowerCase()}">สถานะ: <b>${escapeQuotationPrintHtml(status)}</b></span><button type="button" class="ghost quote-new-button" data-quotation-new-button onclick="requestNewQuotation(event)" aria-label="New Quotation" title="New Quotation"${newButtonDisabled}>+ New Quotation</button>`;
   renderQuotationActions();
   renderQuotationPreviewState();
 }
@@ -4781,6 +5376,9 @@ if (typeof window !== 'undefined') {
   window.duplicateCurrentQuotation = duplicateCurrentQuotation;
   window.cancelCurrentQuotation = cancelCurrentQuotation;
   window.renderQuoteMeta = renderQuoteMeta;
+  window.resetQuotationForNewQuote = resetQuotationForNewQuote;
+  window.requestNewQuotation = requestNewQuotation;
+  window.initializePendingQuotationContext = initializePendingQuotationContext;
   window.openQuoteTypeModal = openQuoteTypeModal;
   window.closeQuoteTypeModal = closeQuoteTypeModal;
   window.selectQuoteType = selectQuoteType;
