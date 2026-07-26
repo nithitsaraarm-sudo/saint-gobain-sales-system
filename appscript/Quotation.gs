@@ -868,17 +868,25 @@ function deleteQuotationHeaderLocked_(quoteId, quoteNo) {
     const targetQuoteId = normalizeString(quoteId);
     const targetQuoteNo = normalizeString(quoteNo);
     const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), headers.length)).getDisplayValues();
-    var deleted = 0;
+    const rowsToDelete = [];
     for (var i = values.length - 1; i >= 0; i--) {
       const rowQuoteId = normalizeString(values[i][quoteIdIndex]);
       const rowQuoteNo = quoteNoIndex >= 0 ? normalizeString(values[i][quoteNoIndex]) : '';
       const quoteNoMatches = !targetQuoteNo || quoteNoIndex < 0 || rowQuoteNo === targetQuoteNo;
       if (targetQuoteId && rowQuoteId === targetQuoteId && quoteNoMatches) {
-        sheet.deleteRow(i + 2);
-        deleted += 1;
+        rowsToDelete.push(i + 2);
       }
     }
-    return success({ deleted: deleted });
+    const deleteResult = typeof deleteSheetRowsByRowNumbers_ === 'function'
+      ? deleteSheetRowsByRowNumbers_(sheet, rowsToDelete)
+      : null;
+    if (deleteResult) {
+      return deleteResult;
+    }
+    rowsToDelete.forEach(function (rowNumber) {
+      sheet.deleteRow(rowNumber);
+    });
+    return success({ deleted: rowsToDelete.length });
   } catch (error) {
     logError('deleteQuotationHeaderLocked_', error);
     return fail(error && error.message ? error.message : 'Failed to delete quotation header');
@@ -1364,12 +1372,20 @@ function updateQuotationObject(sheetName, headers, idColumn, idValue, object) {
       return fail('Record not found');
     }
     const actualRowIndex = targetRowIndex + 2;
-    activeHeaders.forEach(function (header, index) {
-      if (object[header] !== undefined) {
-        sheet.getRange(actualRowIndex, index + 1).setValue(object[header]);
-      }
-    });
-    return success({ sheetName: sheetName, idColumn: idColumn, idValue: idValue });
+    const updateResult = typeof applyRowObjectUpdate_ === 'function'
+      ? applyRowObjectUpdate_(sheet, actualRowIndex, activeHeaders, object)
+      : null;
+    if (updateResult && !updateResult.ok) {
+      return updateResult;
+    }
+    if (!updateResult) {
+      activeHeaders.forEach(function (header, index) {
+        if (object[header] !== undefined) {
+          sheet.getRange(actualRowIndex, index + 1).setValue(object[header]);
+        }
+      });
+    }
+    return success({ sheetName: sheetName, idColumn: idColumn, idValue: idValue, updatedRuns: updateResult && updateResult.data && updateResult.data.updatedRuns || 0 });
   } catch (error) {
     logError('updateQuotationObject', error);
     return fail(error && error.message ? error.message : 'Failed to update quotation row');
@@ -1392,14 +1408,22 @@ function deleteQuotationLines(quoteId) {
       return success({ deleted: 0 });
     }
     const values = sheet.getRange(2, 1, lastRow - 1, Math.max(sheet.getLastColumn(), headers.length)).getDisplayValues();
-    var deleted = 0;
+    const rowsToDelete = [];
     for (var i = values.length - 1; i >= 0; i--) {
       if (normalizeString(values[i][quoteIdIndex]) === normalizeString(quoteId)) {
-        sheet.deleteRow(i + 2);
-        deleted += 1;
+        rowsToDelete.push(i + 2);
       }
     }
-    return success({ deleted: deleted });
+    const deleteResult = typeof deleteSheetRowsByRowNumbers_ === 'function'
+      ? deleteSheetRowsByRowNumbers_(sheet, rowsToDelete)
+      : null;
+    if (deleteResult) {
+      return deleteResult;
+    }
+    rowsToDelete.forEach(function (rowNumber) {
+      sheet.deleteRow(rowNumber);
+    });
+    return success({ deleted: rowsToDelete.length });
   } catch (error) {
     logError('deleteQuotationLines', error);
     return fail(error && error.message ? error.message : 'Failed to replace quotation lines');

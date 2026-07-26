@@ -238,10 +238,17 @@ function removeFavoriteProduct(payload) {
     const headers = rows[0] || [];
     const userIndex = headers.indexOf('userId');
     const productIndex = headers.indexOf('productId');
+    const rowsToDelete = [];
     for (var i = rows.length - 1; i >= 1; i--) {
       if (String(rows[i][userIndex] || '').trim() === userId && productPreferenceReferenceMatches_(rows[i][productIndex], productId, productMap)) {
-        sheet.deleteRow(i + 1);
+        rowsToDelete.push(i + 1);
       }
+    }
+    if (typeof deleteSheetRowsByRowNumbers_ === 'function') {
+      const deleteResult = deleteSheetRowsByRowNumbers_(sheet, rowsToDelete);
+      if (!deleteResult.ok) return deleteResult;
+    } else {
+      rowsToDelete.forEach(function (rowNumber) { sheet.deleteRow(rowNumber); });
     }
     logActivity(userId, 'FAVORITE_PRODUCT_REMOVED', 'productId=' + productId);
     return success({ productId: productId }, 'นำสินค้าออกจากรายการโปรดแล้ว');
@@ -308,10 +315,17 @@ function removePinnedProduct(payload) {
     const headers = rows[0] || [];
     const userIndex = headers.indexOf('userId');
     const productIndex = headers.indexOf('productId');
+    const rowsToDelete = [];
     for (var i = rows.length - 1; i >= 1; i--) {
       if (String(rows[i][userIndex] || '').trim() === userId && productPreferenceReferenceMatches_(rows[i][productIndex], productId, productMap)) {
-        sheet.deleteRow(i + 1);
+        rowsToDelete.push(i + 1);
       }
+    }
+    if (typeof deleteSheetRowsByRowNumbers_ === 'function') {
+      const deleteResult = deleteSheetRowsByRowNumbers_(sheet, rowsToDelete);
+      if (!deleteResult.ok) return deleteResult;
+    } else {
+      rowsToDelete.forEach(function (rowNumber) { sheet.deleteRow(rowNumber); });
     }
     normalizePinnedProductOrder_(userId);
     logActivity(userId, 'PINNED_PRODUCT_REMOVED', 'productId=' + productId);
@@ -373,8 +387,14 @@ function removeProductFromAllPreferences_(productId) {
     if (!sheet || sheet.getLastRow() < 2) return;
     const rows = sheet.getDataRange().getDisplayValues();
     const productIndex = (rows[0] || []).indexOf('productId');
+    const rowsToDelete = [];
     for (var i = rows.length - 1; i >= 1; i--) {
-      if (productPreferenceReferenceMatches_(rows[i][productIndex], productId, productMap)) sheet.deleteRow(i + 1);
+      if (productPreferenceReferenceMatches_(rows[i][productIndex], productId, productMap)) rowsToDelete.push(i + 1);
+    }
+    if (typeof deleteSheetRowsByRowNumbers_ === 'function') {
+      deleteSheetRowsByRowNumbers_(sheet, rowsToDelete);
+    } else {
+      rowsToDelete.forEach(function (rowNumber) { sheet.deleteRow(rowNumber); });
     }
   });
 }
