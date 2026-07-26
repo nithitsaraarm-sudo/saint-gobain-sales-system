@@ -34,11 +34,27 @@ function canManageUsers(user) {
 }
 
 function canCreateQuotation(user) {
-  return hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES]);
+  return hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.SALES]);
+}
+
+function canEditQuotation(user) {
+  return hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.SALES]);
+}
+
+function canViewQuotation(user) {
+  return hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES, USER_ROLES.VIEWER]);
 }
 
 function canViewDashboard(user) {
   return hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES, USER_ROLES.VIEWER]);
+}
+
+function canViewProducts(user) {
+  return hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.SALES]);
+}
+
+function canViewReports(user) {
+  return hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.VIEWER]);
 }
 
 function getPayloadSessionToken(payload) {
@@ -83,19 +99,41 @@ function getUserPermissions(user) {
   const isManager = role === USER_ROLES.MANAGER;
   const isSales = role === USER_ROLES.SALES;
   const isViewer = role === USER_ROLES.VIEWER;
+  const canCreateQuotes = isSuperAdmin || isAdmin || isSales;
+  const canEditQuotes = isSuperAdmin || isAdmin || isSales;
+  const canViewQuotes = isSuperAdmin || isAdmin || isManager || isSales || isViewer;
+  const canViewProductData = isSuperAdmin || isAdmin || isSales;
+  const canViewReportData = isSuperAdmin || isAdmin || isManager || isViewer;
   return {
     role: role,
     isSuperAdmin: isSuperAdmin,
+    isAdmin: isAdmin,
+    isManager: isManager,
+    isSales: isSales,
+    isViewer: isViewer,
     canManageUsers: isSuperAdmin || isAdmin,
     canManageProducts: isSuperAdmin || isAdmin,
     canManageCustomers: isSuperAdmin || isAdmin,
     canManagePromotions: isSuperAdmin || isAdmin,
     canManageSettings: isSuperAdmin,
     canViewLogs: isSuperAdmin || isAdmin,
-    canManageQuotations: isSuperAdmin || isAdmin || isSales,
-    canCreateQuotations: isSuperAdmin || isAdmin || isManager || isSales,
-    canEditQuotations: isSuperAdmin || isAdmin || isSales,
-    canViewQuotations: isSuperAdmin || isAdmin || isManager || isSales || isViewer,
-    canViewDashboard: isSuperAdmin || isAdmin || isManager || isSales || isViewer
+    canManageQuotations: canEditQuotes,
+    canCreateQuotations: canCreateQuotes,
+    canEditQuotations: canEditQuotes,
+    canCancelQuotations: canEditQuotes,
+    canDuplicateQuotations: canCreateQuotes,
+    canViewQuotations: canViewQuotes,
+    canExportQuotations: canViewQuotes,
+    canPrintQuotations: canViewQuotes,
+    canShareQuotations: canViewQuotes,
+    canViewAllQuotationHistory: isSuperAdmin || isAdmin || isManager || isViewer,
+    canViewDashboard: isSuperAdmin || isAdmin || isManager || isSales || isViewer,
+    canViewProducts: canViewProductData,
+    canViewPromotions: isSuperAdmin || isAdmin || isSales,
+    canViewReports: canViewReportData,
+    canViewCustomerFormOptions: isSuperAdmin || isAdmin || isManager || isSales || isViewer,
+    canViewCustomerAssignmentOptions: isSuperAdmin || isAdmin,
+    canManageCustomerAssignments: isSuperAdmin || isAdmin,
+    canManageSystemIdentitySettings: isSuperAdmin
   };
 }

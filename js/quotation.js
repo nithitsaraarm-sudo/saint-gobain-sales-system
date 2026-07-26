@@ -358,6 +358,12 @@ function getQuotationWorkflowState() {
   const status = normalizeQuotationWorkflowKey(CURRENT_QUOTE && CURRENT_QUOTE.status || 'DRAFT');
   const isBusy = Boolean(QUOTE_SAVE_IN_PROGRESS);
   const isCancelled = status === 'CANCELLED';
+  const canEdit = typeof window !== 'undefined' && typeof window.canEditQuotationsUi === 'function'
+    ? window.canEditQuotationsUi()
+    : ['SUPER_ADMIN', 'ADMIN', 'SALES'].indexOf(String(USER && USER.role || '').trim().toUpperCase()) >= 0;
+  const canExport = typeof window !== 'undefined' && typeof window.canExportQuotationsUi === 'function'
+    ? window.canExportQuotationsUi()
+    : true;
   const hasQuotationNumber = Boolean(quoteNo);
   const isDirty = Boolean(hasQuotationNumber && !isCancelled && isQuotationDirty());
   const lastSaveSucceeded = Boolean(hasQuotationNumber && QUOTE_LAST_SAVE_SUCCEEDED && QUOTE_LAST_SAVED_SIGNATURE);
@@ -380,8 +386,8 @@ function getQuotationWorkflowState() {
     lastSaveSucceeded: lastSaveSucceeded,
     isCancelled: isCancelled,
     canPreview: !isBusy,
-    canExport: Boolean(hasQuotationNumber && !isDirty && !isBusy && lastSaveSucceeded && !isCancelled),
-    canCancel: Boolean(hasQuotationNumber && !isBusy && !isCancelled)
+    canExport: Boolean(canExport && hasQuotationNumber && !isDirty && !isBusy && lastSaveSucceeded && !isCancelled),
+    canCancel: Boolean(canEdit && hasQuotationNumber && !isBusy && !isCancelled)
   };
 }
 
@@ -1087,6 +1093,14 @@ async function navigateToQuotationEdit(reference, eventOrOptions, maybeOptions) 
   const button = getQuotationEditButtonFromEvent(event);
   const source = String(options.source || (button && button.dataset && button.dataset.quoteEditSource) || 'quotation').trim();
   const quotationReference = getQuotationEditReference(reference || (button && button.dataset));
+  const canEdit = typeof window !== 'undefined' && typeof window.canEditQuotationsUi === 'function'
+    ? window.canEditQuotationsUi()
+    : ['SUPER_ADMIN', 'ADMIN', 'SALES'].indexOf(String(USER && USER.role || '').trim().toUpperCase()) >= 0;
+  if (!canEdit) {
+    toast('ไม่มีสิทธิ์แก้ไขใบเสนอราคา');
+    logQuotationEditNavigation('warn', { reference: quotationReference, source: source, code: 'FORBIDDEN', message: 'Insufficient permission' });
+    return { ok: false, code: 'FORBIDDEN', message: 'Insufficient permission' };
+  }
   if (!quotationReference) {
     toast(QUOTATION_EDIT_OPEN_ERROR_MESSAGE);
     logQuotationEditNavigation('warn', { reference: '', source: source, code: 'INVALID_REFERENCE', message: 'quotation reference is required' });
@@ -2398,8 +2412,10 @@ function syncQuoteLineSnapshot(item) {
 
 function canEditQuoteLineSnapshots() {
   const status = String(CURRENT_QUOTE && CURRENT_QUOTE.status || 'DRAFT').trim().toUpperCase();
-  const role = String(USER && USER.role || '').trim().toUpperCase();
-  if (status === 'CANCELLED' || role === 'VIEWER') {
+  const canEdit = typeof window !== 'undefined' && typeof window.canCreateQuotationsUi === 'function'
+    ? window.canCreateQuotationsUi()
+    : ['SUPER_ADMIN', 'ADMIN', 'SALES'].indexOf(String(USER && USER.role || '').trim().toUpperCase()) >= 0;
+  if (status === 'CANCELLED' || !canEdit) {
     return false;
   }
   return true;

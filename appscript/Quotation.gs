@@ -88,6 +88,9 @@ function createQuotation(customerId) {
     if (!auth.ok) {
       return auth;
     }
+    if (!canCreateQuotation(auth.data)) {
+      return forbidden('Insufficient permission');
+    }
     const idCheck = requireValue(targetCustomerId, 'customerId');
     if (!idCheck.ok) {
       return idCheck;
@@ -413,7 +416,7 @@ function saveQuotationPayload(payload) {
   try {
     const data = payload || {};
     const requestId = getQuotationSaveRequestId_(data);
-    const auth = requireApiUser(data);
+    const auth = data.currentUser ? success(data.currentUser) : requireApiUser(data);
     if (!auth.ok) {
       return auth;
     }
@@ -973,7 +976,8 @@ function isValidQuotationLinePrice_(value) {
 }
 
 function canEditQuotationLineSnapshots_(user) {
-  return !hasRole(user, [USER_ROLES.VIEWER]);
+  const permissions = getUserPermissions(user);
+  return permissions.canCreateQuotations || permissions.canEditQuotations;
 }
 
 function logQuotationAuditAction_(actorId, action, detail) {
@@ -1672,6 +1676,8 @@ function duplicateQuotation(payload) {
     const quote = original.quote || {};
     const totals = original.totals || {};
     const duplicatePayload = {
+      sessionToken: String(payload && (payload.sessionToken || payload.sg_token || payload.token) || '').trim(),
+      currentUser: payload && payload.currentUser,
       customerId: String(quote.customerId || '').trim(),
       customerName: String(quote.customerName || '').trim(),
       quoteType: normalizeQuoteType(quote.quoteType || quote.businessUnit),
@@ -1892,7 +1898,7 @@ function canAccessQuotationRecord(user, quote) {
   if (!user) {
     return success(true);
   }
-  if (hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.VIEWER])) {
+  if (hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.VIEWER])) {
     return success(true);
   }
   if (hasRole(user, [USER_ROLES.SALES])) {

@@ -92,7 +92,7 @@
           <button class="setting-tile" onclick="openSettingPage('greeting')"><span class="icon">💬</span><span><h3>คำทักทายส่วนตัว</h3><p>ตั้งข้อความทักทายที่แสดงเฉพาะบัญชีของคุณ</p></span><span class="arrow">›</span></button>
           <button class="setting-tile" data-super-admin-only="true" onclick="openSettingPage('identity')"><span class="icon">🏢</span><span><h3>ชื่อบริษัทและชื่อระบบ</h3><p>ตั้งชื่อบริษัทและชื่อระบบที่แสดงบน Login และ Sidebar</p></span><span class="arrow">›</span></button>
           <button class="setting-tile" data-super-admin-only="true" onclick="openSettingPage('systemGreeting')"><span class="icon">📣</span><span><h3>คำทักทายจากระบบ / ข่าวสาร</h3><p>ตั้งข้อความต้อนรับและคำทักทายตามช่วงเวลา</p></span><span class="arrow">›</span></button>
-          <button class="setting-tile" onclick="openSettingPage('data')"><span class="icon">＋</span><span><h3>เพิ่มข้อมูล</h3><p>เพิ่มร้านค้า สินค้า และโปรโมชั่น</p></span><span class="arrow">›</span></button>
+          <button class="setting-tile" data-manage-data-only="true" onclick="openSettingPage('data')"><span class="icon">＋</span><span><h3>เพิ่มข้อมูล</h3><p>เพิ่มร้านค้า สินค้า และโปรโมชั่น</p></span><span class="arrow">›</span></button>
           <button class="setting-tile" onclick="openSettingPage('account')"><span class="icon">🔐</span><span><h3>บัญชีและความปลอดภัย</h3><p>ออกจากระบบ และข้อมูลสำหรับรีเซ็ตรหัสผ่าน</p></span><span class="arrow">›</span></button>
           <button class="setting-tile" onclick="openSettingPage('password')"><span class="icon">🔑</span><span><h3>Change Password</h3><p>เปลี่ยนรหัสผ่านของบัญชีปัจจุบัน</p></span><span class="arrow">›</span></button>
         </div>
@@ -142,7 +142,7 @@
         </div>
       </div>
 
-      <div id="settingData" class="setting-sub">
+      <div id="settingData" class="setting-sub" data-manage-data-only="true">
         <button class="ghost" onclick="openSettingPage('home')">← กลับ</button>
         <div class="card" style="margin-top:16px"><h2>เพิ่มข้อมูล</h2><p style="color:var(--muted)">ปุ่มเพิ่มร้านค้า / สินค้า / โปรโมชั่น อยู่ในหน้านี้เท่านั้น ไม่ลอยติดหน้าจอ</p><div class="fab-group"><button class="primary" onclick="openModal('customer')">+ เพิ่มร้านค้า</button><button class="yellow" onclick="openModal('product')">+ เพิ่มสินค้า</button><button class="yellow" onclick="openModal('promo')">+ เพิ่มโปรโมชั่น</button></div></div>
       </div>

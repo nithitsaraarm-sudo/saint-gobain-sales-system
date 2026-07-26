@@ -101,38 +101,38 @@ Legend:
 | Customer Assignment | ✓ | ✓ | ✗ | ✗ | ✗ |
 | Customer Import | Not found | Not found | Not found | Not found | Not found |
 | Customer Export | Not found | Not found | Not found | Not found | Not found |
-| View Products | ✓ | ✓ | Drift | ✓ | ✗ |
-| Search Products | ✓ | ✓ | Drift | ✓ | ✗ |
-| Product Detail | ✓ | ✓ | Drift | ✓ | ✗ |
-| Product Price | ✓ | ✓ | Drift | ✓ | ✗ |
-| Product Promotion | ✓ | ✓ | Drift | ✓ | ✗ |
-| Favorite/Pinned Products | ✓ | ✓ | Drift | ✓ | ✗ |
+| View Products | ✓ | ✓ | ✗ | ✓ | ✗ |
+| Search Products | ✓ | ✓ | ✗ | ✓ | ✗ |
+| Product Detail | ✓ | ✓ | ✗ | ✓ | ✗ |
+| Product Price | ✓ | ✓ | ✗ | ✓ | ✗ |
+| Product Promotion | ✓ | ✓ | ✗ | ✓ | ✗ |
+| Favorite/Pinned Products | ✓ | ✓ | ✗ | ✓ | ✗ |
 | Edit Product | ✓ | ✓ | ✗ | ✗ | ✗ |
 | Delete Product | Not found | Not found | Not found | Not found | Not found |
 | Import Products | Not found | Not found | Not found | Not found | Not found |
-| View Promotions | ✓ | ✓ | Hidden/Drift | ✓ | ✗ |
-| Search Promotions | ✓ | ✓ | Hidden/Drift | ✓ | ✗ |
-| Promotion Detail | ✓ | ✓ | Hidden/Drift | ✓ | ✗ |
+| View Promotions | ✓ | ✓ | ✗ | ✓ | ✗ |
+| Search Promotions | ✓ | ✓ | ✗ | ✓ | ✗ |
+| Promotion Detail | ✓ | ✓ | ✗ | ✓ | ✗ |
 | Create/Edit Promotion | ✓ | ✓ | ✗ | ✗ | ✗ |
 | Delete Promotion | Not found | Not found | Not found | Not found | Not found |
-| Create Quotation | ✓ | ✓ | Backend ✓ / UI ✗ | ✓ | ✗ |
-| New Quotation | ✓ | ✓ | Backend ✓ / UI ✗ | ✓ | ✗ |
-| Select Customer | ✓ | ✓ | Backend ✓ / UI ✗ | Scoped | ✗ |
-| Select BU | ✓ | ✓ | Backend ✓ / UI ✗ | ✓ | ✗ |
-| Add Product to Quote | ✓ | ✓ | Backend ✓ / UI ✗ | ✓ | ✗ |
-| Edit Quantity | ✓ | ✓ | Backend ✓ / UI ✗ | ✓ | ✗ |
-| Edit Unit | ✓ | ✓ | Backend ✓ / UI ✗ | ✓ | ✗ |
-| Edit Discount | ✓ | ✓ | Backend ✓ / UI ✗ | ✓ | ✗ |
-| Free Item | ✓ | ✓ | Backend ✓ / UI ✗ | ✓ | ✗ |
-| Save Quotation | ✓ | ✓ | Backend ✓ / UI ✗ | ✓ | ✗ |
+| Create Quotation | ✓ | ✓ | ✗ | ✓ | ✗ |
+| New Quotation | ✓ | ✓ | ✗ | ✓ | ✗ |
+| Select Customer | ✓ | ✓ | ✗ | Scoped | ✗ |
+| Select BU | ✓ | ✓ | ✗ | ✓ | ✗ |
+| Add Product to Quote | ✓ | ✓ | ✗ | ✓ | ✗ |
+| Edit Quantity | ✓ | ✓ | ✗ | ✓ | ✗ |
+| Edit Unit | ✓ | ✓ | ✗ | ✓ | ✗ |
+| Edit Discount | ✓ | ✓ | ✗ | ✓ | ✗ |
+| Free Item | ✓ | ✓ | ✗ | ✓ | ✗ |
+| Save Quotation | ✓ | ✓ | ✗ | ✓ | ✗ |
 | Update Quotation | ✓ | ✓ | ✗ | Scoped/Own | ✗ |
-| View Quotation | ✓ | ✓ | Drift | Scoped/Own | ✓ |
-| View History | ✓ | ✓ | Drift | Scoped/Own | ✓ |
-| Search History | ✓ | ✓ | Drift | Scoped/Own | ✓ |
-| Print Quotation | ✓ | ✓ | Drift | Potential UI access | Potential UI access |
-| Export PDF/PNG | ✓ | ✓ | Drift | Potential UI access | Potential UI access |
-| Share Quotation | ✓ | ✓ | Drift | Potential UI access | Potential UI access |
-| Duplicate Quotation | ✓ | ✓ | Backend ✓ but likely bug | ✓ but likely bug | ✗ |
+| View Quotation | ✓ | ✓ | ✓ | Scoped/Own | ✓ |
+| View History | ✓ | ✓ | ✓ | Scoped/Own | ✓ |
+| Search History | ✓ | ✓ | ✓ | Scoped/Own | ✓ |
+| Print Quotation | ✓ | ✓ | ✓ | Scoped/Own | ✓ |
+| Export PDF/PNG | ✓ | ✓ | ✓ | Scoped/Own | ✓ |
+| Share Quotation | ✓ | ✓ | ✓ | Scoped/Own | ✓ |
+| Duplicate Quotation | ✓ | ✓ | ✗ | Scoped/Own | ✗ |
 | Cancel Quotation | ✓ | ✓ | ✗ | Scoped/Own | ✗ |
 | View Reports | ✓ | ✓ | ✓ | ✗ | ✓ |
 | Export Reports | Not confirmed | Not confirmed | Not confirmed | Not confirmed | Not confirmed |
@@ -157,11 +157,11 @@ Frontend route guard found in `js/app.js` via `canAccessPage(page)`.
 | Route/Page | Current Frontend Protection | Notes |
 |---|---|---|
 | `home` | All roles | Dashboard/home visible to all |
-| `quote` | SUPER_ADMIN, ADMIN, SALES | Backend also allows MANAGER create/save quote, causing drift |
+| `quote` | SUPER_ADMIN, ADMIN, SALES | Aligned with backend `canCreateQuotations` |
 | `customers` | All roles | Backend applies customer scope |
-| `products` | SUPER_ADMIN, ADMIN, SALES | Backend allows MANAGER but UI hides route |
-| `promos` | SUPER_ADMIN, ADMIN, SALES | Backend product/promo behavior should be clarified |
-| `quotes` | SUPER_ADMIN, ADMIN, MANAGER, SALES, VIEWER | Backend history/load behavior inconsistent for MANAGER/VIEWER |
+| `products` | SUPER_ADMIN, ADMIN, SALES | Aligned with backend `canViewProducts` |
+| `promos` | SUPER_ADMIN, ADMIN, SALES | Aligned with backend `canViewPromotions` |
+| `quotes` | SUPER_ADMIN, ADMIN, MANAGER, SALES, VIEWER | Aligned with backend `canViewQuotations` |
 | `users` | SUPER_ADMIN, ADMIN | Backend also restricts |
 | `report` | SUPER_ADMIN, ADMIN, MANAGER, VIEWER | SALES hidden |
 | `settings` | All roles | Some admin-looking tiles visible; backend blocks writes |
@@ -184,7 +184,7 @@ All other actions require session authentication through `requireApiUser(payload
 | `customers` / `customer` / `searchCustomers` | Auth + backend customer scope | Low |
 | `saveCustomer` / `updateCustomer` | Auth + `canManageCustomers` + customer validation | Low |
 | `customerFormOptions` / `getCustomerFormOptions` | Auth only | Medium: exposes users/areas to VIEWER |
-| `products` / `product` / product search | Role gate excludes VIEWER | Medium: MANAGER allowed backend but hidden frontend |
+| `products` / `product` / product search | Canonical role gate excludes MANAGER and VIEWER | Low |
 | Product favorite/pinned mutation | `canCreateQuotations` | Medium: MANAGER allowed backend but hidden frontend |
 | `discount` | Auth only | High: missing customer/area/ownership validation |
 | `quotation` / `saveQuotation` | `canCreateQuotations`, save validates customer scope | Medium: MANAGER drift |
@@ -203,11 +203,11 @@ Sidebar menu source observed in `index.html`; visibility controlled by `js/app.j
 | Menu | Visible Roles | Notes |
 |---|---|---|
 | Home | All roles | OK |
-| ออกใบเสนอราคา / Quote | SUPER_ADMIN, ADMIN, SALES | Backend allows MANAGER too |
+| ออกใบเสนอราคา / Quote | SUPER_ADMIN, ADMIN, SALES | Aligned with backend |
 | Customers | All roles | Backend customer scope important and present |
-| Products | SUPER_ADMIN, ADMIN, SALES | Backend allows MANAGER too |
+| Products | SUPER_ADMIN, ADMIN, SALES | Aligned with backend |
 | Promotions | SUPER_ADMIN, ADMIN, SALES | Verify intended MANAGER access |
-| Quote History | SUPER_ADMIN, ADMIN, MANAGER, SALES, VIEWER | Backend inconsistent for MANAGER/VIEWER |
+| Quote History | SUPER_ADMIN, ADMIN, MANAGER, SALES, VIEWER | Aligned with backend |
 | Users | SUPER_ADMIN, ADMIN | OK |
 | Reports | SUPER_ADMIN, ADMIN, MANAGER, VIEWER | OK if intended |
 | Settings | All roles | Data management tile needs UI hardening |
@@ -300,6 +300,8 @@ Recommended fix:
 
 #### 8.5 VIEWER may see print/export/share actions in quotation detail modal
 
+Status: Mitigated in Phase 2. Edit/cancel controls are now hidden for read-only roles. Print/export/share remain visible by policy because they are read/presentation actions for users who can view quotations.
+
 Location: `js/app.js`
 
 Issue:
@@ -316,15 +318,17 @@ Recommended fix:
 
 #### 8.6 MANAGER frontend/backend permission drift
 
+Status: Fixed in Phase 2. `MANAGER` is now an oversight/read role and cannot create quotations or access product/promotion working pages.
+
 Locations:
 
 - `appscript/Permission.gs`
 - `appscript/Api.gs`
 - `js/app.js`
 
-Issue:
+Original issue:
 
-- Backend allows MANAGER to create quotations and use products.
+- Before Phase 2, backend allowed MANAGER to create quotations and use products.
 - Frontend hides Quote and Products pages from MANAGER.
 
 Risk:
@@ -336,6 +340,8 @@ Recommended fix:
 - Decide whether MANAGER should create quotes/view products, then align frontend/backend.
 
 #### 8.7 Settings page shows admin-looking data management UI to all roles
+
+Status: Fixed in Phase 2 for Settings > Data Entry visibility and direct modal/save guards. System identity controls were already SUPER_ADMIN-only.
 
 Location: `index.html`, `js/app.js`
 
@@ -353,6 +359,8 @@ Recommended fix:
 - Hide/disable admin-only settings UI based on permissions.
 
 #### 8.8 `getCustomerFormOptions` exposes assignable sales/area data
+
+Status: Fixed in Phase 2. Lower roles receive reduced options without `salesUsers` / `assignableSalesUsers`; full assignment options require `SUPER_ADMIN` or `ADMIN`.
 
 Location: `appscript/Customer.gs`, `appscript/Api.gs`
 
@@ -494,3 +502,58 @@ git checkout -- js/app.js index.html
 - No backend/API/database code was modified by this audit file.
 - Customer area-based permission logic was not changed.
 - Existing dirty working tree files before this audit file were observed separately and are not part of this audit document.
+
+## 14. Phase 2 Implemented Canonical RBAC Policy
+
+Status: Implemented on branch `audit/full-remediation` during Phase 2.
+
+Canonical policy decision:
+
+- Backend permission helpers in `appscript/Permission.gs` are the source of truth.
+- `MANAGER` is an oversight/read role: dashboard, scoped customers, quotation history/detail, reports, and settings profile; no quotation create/edit/cancel and no product/promotion working pages.
+- `VIEWER` remains read-only: dashboard, scoped customers, quotation history/detail, reports, and settings profile; no create/edit/cancel.
+- `SALES` can create and edit quotations only through existing ownership/customer-scope checks.
+- Quote print/export/share are read/presentation actions and are allowed for roles that can view quotations.
+- Customer assignment metadata (`salesUsers` / `assignableSalesUsers`) is returned only to roles that can manage customer assignments: `SUPER_ADMIN` and `ADMIN`.
+
+Implemented permission matrix:
+
+| Feature | SUPER_ADMIN | ADMIN | MANAGER | SALES | VIEWER |
+|---|---:|---:|---:|---:|---:|
+| View Dashboard | ✓ | ✓ | ✓ | ✓ | ✓ |
+| View Customers | ✓ | ✓ | ✓ scoped | ✓ scoped/assigned | ✓ scoped |
+| Manage Customers | ✓ | ✓ | ✗ | ✗ | ✗ |
+| View Customer Form Options | ✓ | ✓ | Reduced | Reduced | Reduced |
+| View Customer Assignment Options | ✓ | ✓ | ✗ | ✗ | ✗ |
+| View Products Page/API | ✓ | ✓ | ✗ | ✓ | ✗ |
+| Manage Products | ✓ | ✓ | ✗ | ✗ | ✗ |
+| View Promotions Page | ✓ | ✓ | ✗ | ✓ | ✗ |
+| Manage Promotions | ✓ | ✓ | ✗ | ✗ | ✗ |
+| Create Quotation | ✓ | ✓ | ✗ | ✓ | ✗ |
+| Edit/Update Quotation | ✓ | ✓ | ✗ | ✓ scoped/own | ✗ |
+| Cancel Quotation | ✓ | ✓ | ✗ | ✓ scoped/own | ✗ |
+| Duplicate Quotation | ✓ | ✓ | ✗ | ✓ scoped/own | ✗ |
+| View Quotation | ✓ | ✓ | ✓ | ✓ scoped/own | ✓ |
+| View Quotation History | ✓ | ✓ | ✓ | ✓ scoped/own | ✓ |
+| Print/Export/Share Quotation | ✓ | ✓ | ✓ | ✓ scoped/own | ✓ |
+| View Reports | ✓ | ✓ | ✓ | ✗ | ✓ |
+| Manage Users | ✓ | ✓ with hierarchy | ✗ | ✗ | ✗ |
+| Manage System Identity Settings | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Personal Profile / Password Settings | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+Phase 2 code alignment:
+
+- `appscript/Permission.gs`: expanded canonical permission object.
+- `appscript/Api.gs`: dispatcher uses canonical permission flags for products, quotation view/history, quotation create/edit, and customer assignment options.
+- `appscript/Code.gs`: bootstrap quote filtering reuses `canAccessQuotationRecord()` instead of a separate role policy.
+- `appscript/Quotation.gs`: `MANAGER` can view quotation records but cannot create/edit; duplicate quotation preserves authenticated context.
+- `appscript/Customer.gs`: lower roles receive reduced customer form option metadata.
+- `js/app.js`: route/menu/action visibility follows backend permission flags with safe fallback defaults.
+- `js/quotation.js`: quotation edit navigation and line snapshot editing use the same frontend permission policy.
+- `index.html`: Settings data-entry tile is marked for permission-driven hiding.
+
+Remaining deferred permission-related work:
+
+- Phase 3 will address the `savePromotion()` persistence stub and production demo-login visibility.
+- Phase 5 will continue dynamic HTML / inline handler hardening.
+- Phase 7 will complete broader frontend cache lifecycle cleanup.

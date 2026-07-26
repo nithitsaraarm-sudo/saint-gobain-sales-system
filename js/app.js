@@ -1372,18 +1372,20 @@ function addProductCardToQuote(productId,event){
 }
 function getProductDiscount(customerId, product){
   const groupCode=String(product&&product.groupCode||'').trim();
-  const cacheKey=String(customerId||'').trim()+'|'+groupCode;
-  if(typeof getCache==='function'&&cacheKey!=='|'){
-    const cachedDiscounts=getCache('sg_discount_cache')||{};
+  const userScope=String(USER&&USER.userId||USER&&USER.username||localStorage.getItem('sg_userId')||'anonymous').trim().replace(/[^A-Za-z0-9_-]/g,'_')||'anonymous';
+  const storageKey='sg_discount_cache:'+userScope;
+  const cacheKey=userScope+'|'+String(customerId||'').trim()+'|'+groupCode;
+  if(typeof getCache==='function'&&String(customerId||'').trim()&&groupCode){
+    const cachedDiscounts=getCache(storageKey)||{};
     if(cachedDiscounts[cacheKey]!==undefined){
       return Promise.resolve({ok:true,data:{customerId:customerId,groupCode:groupCode,discountPercent:Number(cachedDiscounts[cacheKey]||0),source:'local_cache'}});
     }
   }
   return callApi('discount',{customerId:customerId,groupCode:groupCode}).then(function(response){
     if(response&&response.ok&&typeof getCache==='function'&&typeof setCache==='function'){
-      const cachedDiscounts=getCache('sg_discount_cache')||{};
+      const cachedDiscounts=getCache(storageKey)||{};
       cachedDiscounts[cacheKey]=Number(response.data&&response.data.discountPercent||0);
-      setCache('sg_discount_cache',cachedDiscounts,60);
+      setCache(storageKey,cachedDiscounts,60);
     }
     return response;
   });
@@ -1913,7 +1915,13 @@ function renderHistory(){
   }
   const keyword=$('quoteHistorySearch')?.value||'';
   const quotes=(Array.isArray(DB.quotes)?DB.quotes:[]).map(normalizeQuoteRecord).filter(q=>smartMatch(q,keyword,getQuoteSearchFields())).sort((a,b)=>new Date(b.createdAt||b.updatedAt||0)-new Date(a.createdAt||a.updatedAt||0));
-  history.innerHTML=quotes.length?quotes.map(q=>`<div class="row quote-history-row"><div><b>${q.quoteNo||'-'}</b><br><small>${q.customerName||'-'} · ${q.customerId||'-'}</small></div><span class="quote-type-badge ${quoteTypeClassForUi(q.quoteType)}">${quoteTypeLabelForUi(q.quoteType)}</span><span class="pill ${q.status==='CANCELLED'?'yellow':'blue'}">${q.status||'-'}</span><span>${formatDateTime(q.createdAt)}</span><b style="margin-left:auto">${money(q.grandTotal||q.total)}</b><button class="tiny" onclick="openQuotationDetail('${htmlAttr(q.quoteId||q.quoteNo||'')}')">เปิดดู</button><button class="tiny" data-quote-edit-button data-quote-edit-source="quotation-history" data-quote-id="${htmlAttr(q.quoteId||'')}" data-quote-no="${htmlAttr(q.quoteNo||'')}" onclick="navigateToQuotationEdit('${htmlAttr(q.quoteId||q.quoteNo||'')}',event,{source:'quotation-history'})">แก้ไข</button></div>`).join(''):'<p style="color:var(--muted)">ยังไม่มีใบเสนอราคา</p>';
+  const canEdit=canEditQuotationsUi();
+  history.innerHTML=quotes.length?quotes.map(q=>{
+    const ref=htmlAttr(q.quoteId||q.quoteNo||'');
+    const quoteNo=htmlAttr(q.quoteNo||'');
+    const editAction=canEdit?`<button class="tiny" data-quote-edit-button data-quote-edit-source="quotation-history" data-quote-id="${ref}" data-quote-no="${quoteNo}" onclick="navigateToQuotationEdit('${ref}',event,{source:'quotation-history'})">แก้ไข</button>`:'';
+    return `<div class="row quote-history-row"><div><b>${q.quoteNo||'-'}</b><br><small>${q.customerName||'-'} · ${q.customerId||'-'}</small></div><span class="quote-type-badge ${quoteTypeClassForUi(q.quoteType)}">${quoteTypeLabelForUi(q.quoteType)}</span><span class="pill ${q.status==='CANCELLED'?'yellow':'blue'}">${q.status||'-'}</span><span>${formatDateTime(q.createdAt)}</span><b style="margin-left:auto">${money(q.grandTotal||q.total)}</b><button class="tiny" onclick="openQuotationDetail('${ref}')">เปิดดู</button>${editAction}</div>`;
+  }).join(''):'<p style="color:var(--muted)">ยังไม่มีใบเสนอราคา</p>';
 }
 async function refreshQuotationHistory(options){
   const force=!!(options&&options.force);
@@ -1969,7 +1977,17 @@ function buildQuotationDetailHtml(data){
   const totals=data.totals||{};
   const quoteIdAttr=htmlAttr(quote.quoteId||quote.quoteNo||'');
   const quoteNoAttr=htmlAttr(quote.quoteNo||'');
-  return `<div class="section-title"><div><h2>${quote.quoteNo||quote.quoteId||'-'}</h2><p style="color:var(--muted);margin:4px 0 0">${quote.customerName||'-'} · ${quote.customerId||'-'}</p></div><span class="pill ${quote.status==='CANCELLED'?'yellow':'blue'}">${quote.status||'-'}</span></div><div class="quote-detail-meta"><span>วันที่: ${formatDateTime(quote.createdAt)}</span><span>ยอดสุทธิ: ${money(totals.grandTotal||quote.grandTotal)}</span></div><div class="list quote-detail-lines">${lines.length?lines.map((line,index)=>`<div class="row"><div><b>${line.productName||'-'}</b><br><small>${line.productId||'-'} · ${line.unit||'-'}</small></div><span>จำนวน ${line.qty||0}</span><span>ราคา ${money(line.listPrice)}</span><span>ส่วนลด ${line.discountPercent||0}%</span><b style="margin-left:auto">${money(line.grandTotal||line.lineTotal)}</b></div>`).join(''):'<p style="color:var(--muted)">ไม่มีรายการสินค้า</p>'}</div><div class="quote-total-box"><p>Subtotal <b>${money(totals.subtotal||quote.subtotal)}</b></p><p>VAT <b>${money(totals.vat||quote.vat)}</b></p><p>Grand Total <b>${money(totals.grandTotal||quote.grandTotal)}</b></p></div><div class="actions no-print"><button class="primary" onclick="printQuotation('${quoteIdAttr}')">Print</button><button class="yellow" onclick="exportQuotationPNG('${quoteIdAttr}')">Save PNG</button><button class="yellow" onclick="shareQuote('${quoteIdAttr}')">Share</button><button class="ghost" data-quote-edit-button data-quote-edit-source="quotation-detail" data-quote-id="${quoteIdAttr}" data-quote-no="${quoteNoAttr}" onclick="navigateToQuotationEdit('${quoteIdAttr}',event,{source:'quotation-detail'})">แก้ไข</button><button class="yellow" onclick="cancelQuotationFromHistory('${quoteIdAttr}')">Cancel</button></div>`;
+  const exportActions=canExportQuotationsUi()?[
+    `<button class="primary" onclick="printQuotation('${quoteIdAttr}')">Print</button>`,
+    `<button class="yellow" onclick="exportQuotationPNG('${quoteIdAttr}')">Save PNG</button>`,
+    `<button class="yellow" onclick="shareQuote('${quoteIdAttr}')">Share</button>`
+  ].join(''):'';
+  const editActions=canEditQuotationsUi()?[
+    `<button class="ghost" data-quote-edit-button data-quote-edit-source="quotation-detail" data-quote-id="${quoteIdAttr}" data-quote-no="${quoteNoAttr}" onclick="navigateToQuotationEdit('${quoteIdAttr}',event,{source:'quotation-detail'})">แก้ไข</button>`,
+    `<button class="yellow" onclick="cancelQuotationFromHistory('${quoteIdAttr}')">Cancel</button>`
+  ].join(''):'';
+  const actionsHtml=(exportActions||editActions)?`<div class="actions no-print">${exportActions}${editActions}</div>`:'';
+  return `<div class="section-title"><div><h2>${quote.quoteNo||quote.quoteId||'-'}</h2><p style="color:var(--muted);margin:4px 0 0">${quote.customerName||'-'} · ${quote.customerId||'-'}</p></div><span class="pill ${quote.status==='CANCELLED'?'yellow':'blue'}">${quote.status||'-'}</span></div><div class="quote-detail-meta"><span>วันที่: ${formatDateTime(quote.createdAt)}</span><span>ยอดสุทธิ: ${money(totals.grandTotal||quote.grandTotal)}</span></div><div class="list quote-detail-lines">${lines.length?lines.map((line,index)=>`<div class="row"><div><b>${line.productName||'-'}</b><br><small>${line.productId||'-'} · ${line.unit||'-'}</small></div><span>จำนวน ${line.qty||0}</span><span>ราคา ${money(line.listPrice)}</span><span>ส่วนลด ${line.discountPercent||0}%</span><b style="margin-left:auto">${money(line.grandTotal||line.lineTotal)}</b></div>`).join(''):'<p style="color:var(--muted)">ไม่มีรายการสินค้า</p>'}</div><div class="quote-total-box"><p>Subtotal <b>${money(totals.subtotal||quote.subtotal)}</b></p><p>VAT <b>${money(totals.vat||quote.vat)}</b></p><p>Grand Total <b>${money(totals.grandTotal||quote.grandTotal)}</b></p></div>${actionsHtml}`;
 }
 function renderQuotationDetail(data){
   const box=$('quoteDetail');
@@ -2029,6 +2047,10 @@ async function openQuotationDetail(quoteId){
   return openQuotationDetailPromises[id];
 }
 async function duplicateQuotationFromHistory(quoteId){
+  if(!canCreateQuotationsUi()){
+    toast('ไม่มีสิทธิ์สร้างสำเนาใบเสนอราคา');
+    return {ok:false,code:'FORBIDDEN',message:'Insufficient permission'};
+  }
   try{
     const response=await callApi('duplicateQuotation',{quoteId});
     if(!response.ok){
@@ -2061,6 +2083,10 @@ async function editQuotationFromHistory(quoteId){
   return response;
 }
 async function cancelQuotationFromHistory(quoteId){
+  if(!canEditQuotationsUi()){
+    toast('ไม่มีสิทธิ์ยกเลิกใบเสนอราคา');
+    return {ok:false,code:'FORBIDDEN',message:'Insufficient permission'};
+  }
   try{
     const response=await callApi('cancelQuotation',{quoteId});
     if(!response.ok){
@@ -2081,7 +2107,8 @@ async function cancelQuotationFromHistory(quoteId){
   }
 }
 function renderSettings(){if(!USER)return;let s=DB.settings||{},identity=getSystemIdentitySettingsForUi(); let set=(id,val)=>{let el=$(id); if(el)el.value=val||''}; set('setDisplay',USER.displayName); set('setPosition',USER.position); set('setPhone',USER.phone); set('setPhoto',USER.photoUrl); set('setPersonalGreeting',USER.greetingText||''); set('setCompany',identity.companyName); set('setAppName',identity.systemName); set('setWelcome',s.welcomeText); set('setMorning',s.greetingMorning); set('setAfternoon',s.greetingAfternoon); set('setEvening',s.greetingEvening); set('setNight',s.greetingNight); applySettingsPermissionUi(); updateProfilePreview(USER.photoUrl||'');}
-function openSettingPage(name){const targetName=String(name||'home'); if(['identity','systemGreeting'].indexOf(targetName)>=0&&!canManageSystemIdentitySettings()){toast('คุณไม่มีสิทธิ์แก้ไขชื่อบริษัทและชื่อระบบ');name='home'} document.querySelectorAll('#page-settings .setting-sub').forEach(x=>x.classList.remove('active')); let id=name==='home'?'settingsHome':'setting'+name.charAt(0).toUpperCase()+name.slice(1); let el=$(id); if(el)el.classList.add('active'); renderSettings(); if(name==='identity')loadSystemIdentitySettingsForSettings(); window.scrollTo({top:0,behavior:'smooth'});}
+function canManageDataEntryUi(){return permissionFlag('canManageCustomers',false)||permissionFlag('canManageProducts',false)||permissionFlag('canManagePromotions',false)||['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0}
+function openSettingPage(name){const targetName=String(name||'home'); if(['identity','systemGreeting'].indexOf(targetName)>=0&&!canManageSystemIdentitySettings()){toast('คุณไม่มีสิทธิ์แก้ไขชื่อบริษัทและชื่อระบบ');name='home'} if(targetName==='data'&&!canManageDataEntryUi()){toast('ไม่มีสิทธิ์เพิ่มข้อมูล');name='home'} document.querySelectorAll('#page-settings .setting-sub').forEach(x=>x.classList.remove('active')); let id=name==='home'?'settingsHome':'setting'+name.charAt(0).toUpperCase()+name.slice(1); let el=$(id); if(el)el.classList.add('active'); renderSettings(); if(name==='identity')loadSystemIdentitySettingsForSettings(); window.scrollTo({top:0,behavior:'smooth'});}
 function updateProfilePreview(src){let box=$('profilePreview'); if(!box)return; box.innerHTML=src?`<img src="${src}">`:'👩🏻';}
 function handleProfileImage(ev){let file=ev.target.files&&ev.target.files[0]; if(!file)return; let reader=new FileReader(); reader.onload=e=>{let img=new Image(); img.onload=()=>{let canvas=document.createElement('canvas'); let max=320,scale=Math.min(max/img.width,max/img.height,1); canvas.width=Math.round(img.width*scale); canvas.height=Math.round(img.height*scale); let ctx=canvas.getContext('2d'); ctx.drawImage(img,0,0,canvas.width,canvas.height); let data=canvas.toDataURL('image/jpeg',0.78); document.getElementById('setPhoto').value=data; updateProfilePreview(data); toast('อัพโหลดรูปแล้ว กดบันทึกโปรไฟล์เพื่อใช้งาน');}; img.src=e.target.result;}; reader.readAsDataURL(file);}
 async function saveProfile(){
@@ -2549,7 +2576,7 @@ function retryCustomerFormOptionsModal(){
     return response;
   });
 }
-function openModal(type){let title={customer:'เพิ่มร้านค้า',product:'เพิ่มสินค้า',promo:'เพิ่มโปรโมชั่น'}[type]; document.getElementById('modalTitle').textContent=title; let html=''; if(type==='customer')html=customerFormHtml(); if(type==='product')html=`<div class="field"><label>ชื่อสินค้า</label><input id="mName"></div><div class="field"><label>แบรนด์</label><select id="mBrand"><option>Weber</option><option>Gyproc</option></select></div><div class="field"><label>หน่วย</label><input id="mUnit"></div><div class="field"><label>ราคา</label><input id="mPrice" type="number"></div><button class="primary" onclick="saveModal('product')">บันทึก</button>`; if(type==='promo')html=`<div class="field"><label>แบรนด์</label><select id="mBrand"><option>Weber</option><option>Gyproc</option></select></div><div class="field"><label>สินค้า</label><input id="mName"></div><div class="field"><label>รายละเอียด</label><textarea id="mDesc"></textarea></div><div class="field"><label>ส่วนลด/โปร</label><input id="mDiscount"></div><button class="primary" onclick="saveModal('promo')">บันทึก</button>`; document.getElementById('modalBody').innerHTML=html; document.getElementById('modal').classList.add('show')}
+function openModal(type){if(type==='customer'&&!permissionFlag('canManageCustomers',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0)){toast('ไม่มีสิทธิ์เพิ่มร้านค้า');return;} if(type==='product'&&!permissionFlag('canManageProducts',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0)){toast('ไม่มีสิทธิ์เพิ่มสินค้า');return;} if(type==='promo'&&!permissionFlag('canManagePromotions',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0)){toast('ไม่มีสิทธิ์เพิ่มโปรโมชั่น');return;} let title={customer:'เพิ่มร้านค้า',product:'เพิ่มสินค้า',promo:'เพิ่มโปรโมชั่น'}[type]; document.getElementById('modalTitle').textContent=title; let html=''; if(type==='customer')html=customerFormHtml(); if(type==='product')html=`<div class="field"><label>ชื่อสินค้า</label><input id="mName"></div><div class="field"><label>แบรนด์</label><select id="mBrand"><option>Weber</option><option>Gyproc</option></select></div><div class="field"><label>หน่วย</label><input id="mUnit"></div><div class="field"><label>ราคา</label><input id="mPrice" type="number"></div><button class="primary" onclick="saveModal('product')">บันทึก</button>`; if(type==='promo')html=`<div class="field"><label>แบรนด์</label><select id="mBrand"><option>Weber</option><option>Gyproc</option></select></div><div class="field"><label>สินค้า</label><input id="mName"></div><div class="field"><label>รายละเอียด</label><textarea id="mDesc"></textarea></div><div class="field"><label>ส่วนลด/โปร</label><input id="mDiscount"></div><button class="primary" onclick="saveModal('promo')">บันทึก</button>`; document.getElementById('modalBody').innerHTML=html; document.getElementById('modal').classList.add('show')}
 function canEditCustomers(){return !!(DB.permissions&&DB.permissions.canManageCustomers)||['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0}
 function openCustomerEditModal(customerId){if(!canEditCustomers()){toast('คุณไม่มีสิทธิ์แก้ไขข้อมูลร้านค้า');return;}const customer=findCustomerById(customerId);if(!customer){toast('ไม่พบข้อมูลร้านค้า');return;}$('modalTitle').textContent='แก้ไขข้อมูลร้านค้า';$('modalBody').innerHTML=customerFormHtml(customer);$('modal').classList.add('show')}
 async function saveCustomerModal(existingId){
@@ -2785,6 +2812,8 @@ saveCustomerModal=async function(existingId){
 async function saveModal(type){
   let r;
   if (type === 'customer') return saveCustomerModal('');
+  if(type==='product'&&!permissionFlag('canManageProducts',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0)){toast('ไม่มีสิทธิ์บันทึกสินค้า');return {ok:false,code:'FORBIDDEN'};}
+  if(type==='promo'&&!permissionFlag('canManagePromotions',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0)){toast('ไม่มีสิทธิ์บันทึกโปรโมชั่น');return {ok:false,code:'FORBIDDEN'};}
   if (type === 'product') r = await gas('saveProduct', {
     productName: document.getElementById('mName').value,
     brand: document.getElementById('mBrand').value,
@@ -2979,9 +3008,20 @@ function applySettingsPermissionUi(){
     el.classList.toggle('hidden',!allowed);
     el.hidden=!allowed;
   });
+  const canManageData=canManageDataEntryUi();
+  document.querySelectorAll('[data-manage-data-only="true"]').forEach(el=>{
+    el.classList.toggle('hidden',!canManageData);
+    el.hidden=!canManageData;
+  });
   const active=document.querySelector('#page-settings .setting-sub.active[data-super-admin-only="true"]');
   if(active&&!allowed){
     active.classList.remove('active');
+    const home=$('settingsHome');
+    if(home)home.classList.add('active');
+  }
+  const dataActive=document.querySelector('#page-settings .setting-sub.active[data-manage-data-only="true"]');
+  if(dataActive&&!canManageData){
+    dataActive.classList.remove('active');
     const home=$('settingsHome');
     if(home)home.classList.add('active');
   }
@@ -3013,7 +3053,25 @@ function toggleUserPasswordVisibility(inputId,button){
   button.setAttribute('aria-label',show?'ซ่อนรหัสผ่าน':'แสดงรหัสผ่าน');
   button.setAttribute('aria-pressed',String(show));
 }
-function canAccessPage(page){const role=currentRole();const access={SUPER_ADMIN:['home','quote','customers','products','promos','quotes','users','report','settings'],ADMIN:['home','quote','customers','products','promos','quotes','users','report','settings'],MANAGER:['home','customers','quotes','report','settings'],SALES:['home','quote','customers','products','promos','quotes','settings'],VIEWER:['home','customers','quotes','report','settings']};return (access[role]||access.VIEWER).indexOf(page)>=0}
+function permissionFlag(name,fallback){return DB&&DB.permissions&&Object.prototype.hasOwnProperty.call(DB.permissions,name)?DB.permissions[name]===true:!!fallback}
+function canCreateQuotationsUi(){return permissionFlag('canCreateQuotations',['SUPER_ADMIN','ADMIN','SALES'].indexOf(currentRole())>=0)}
+function canEditQuotationsUi(){return permissionFlag('canEditQuotations',['SUPER_ADMIN','ADMIN','SALES'].indexOf(currentRole())>=0)}
+function canViewQuotationsUi(){return permissionFlag('canViewQuotations',['SUPER_ADMIN','ADMIN','MANAGER','SALES','VIEWER'].indexOf(currentRole())>=0)}
+function canExportQuotationsUi(){return permissionFlag('canExportQuotations',canViewQuotationsUi())}
+function canViewProductsUi(){return permissionFlag('canViewProducts',['SUPER_ADMIN','ADMIN','SALES'].indexOf(currentRole())>=0)}
+function canViewPromotionsUi(){return permissionFlag('canViewPromotions',['SUPER_ADMIN','ADMIN','SALES'].indexOf(currentRole())>=0)}
+function canViewReportsUi(){return permissionFlag('canViewReports',['SUPER_ADMIN','ADMIN','MANAGER','VIEWER'].indexOf(currentRole())>=0)}
+function canAccessPage(page){
+  const target=String(page||'').trim();
+  if(target==='home'||target==='customers'||target==='settings')return true;
+  if(target==='quote')return canCreateQuotationsUi();
+  if(target==='products')return canViewProductsUi();
+  if(target==='promos')return canViewPromotionsUi();
+  if(target==='quotes')return canViewQuotationsUi();
+  if(target==='users')return permissionFlag('canManageUsers',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0);
+  if(target==='report')return canViewReportsUi();
+  return false;
+}
 function applyRolePermissions(){
   document.querySelectorAll('.nav button[data-page]').forEach(btn=>{const page=btn.getAttribute('data-page');btn.classList.toggle('hidden',!canAccessPage(page));});
   document.querySelectorAll('.main-action').forEach(btn=>{btn.classList.toggle('hidden',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0);});
@@ -3126,7 +3184,7 @@ function normalizeQuoteProductPreferenceId(value){return String(value||'').trim(
 function getFavoriteProductIdSet(){return new Set(FAVORITE_PRODUCTS.map(product=>normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(product))).filter(Boolean))}
 function getPinnedProductIdSet(){return new Set(PINNED_PRODUCTS.map(product=>normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(product))).filter(Boolean))}
 function getPinnedProductOrderMap(){const map=new Map();PINNED_PRODUCTS.forEach((product,index)=>{const id=normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(product));if(id)map.set(id,Number(product.pinnedSortOrder||index+1)||index+1)});return map}
-function canManageQuoteProductPreferences(){return currentRole()!=='VIEWER'&&canAccessPage('quote')}
+function canManageQuoteProductPreferences(){return canCreateQuotationsUi()}
 function decorateQuotePreferenceProduct(product){const item=Object.assign({},product||{});const id=normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(item));const favoriteIds=getFavoriteProductIdSet();const pinnedOrders=getPinnedProductOrderMap();item.isFavoriteProduct=favoriteIds.has(id)||Boolean(item.isFavoriteProduct);item.isPinnedProduct=pinnedOrders.has(id)||Boolean(item.isPinnedProduct);item.pinnedSortOrder=pinnedOrders.get(id)||Number(item.pinnedSortOrder||0)||0;return item}
 function productPreferenceRank(product){const item=decorateQuotePreferenceProduct(product);if(item.isPinnedProduct)return item.pinnedSortOrder||1;return item.isFavoriteProduct?1000:2000}
 function findQuoteProductById(productId){const id=normalizeQuoteProductPreferenceId(productId);return DB.products.find(product=>normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(product))===id)||null}
@@ -3183,6 +3241,6 @@ const baseFilterQuoteProductsByBusinessUnitForPreferences=filterQuoteProductsByB
 filterQuoteProductsByBusinessUnit=function(query,businessUnit){return baseFilterQuoteProductsByBusinessUnitForPreferences(query,businessUnit).map(decorateQuotePreferenceProduct).sort((a,b)=>productPreferenceRank(a)-productPreferenceRank(b)||rankQuoteProductBusinessUnit(a,businessUnit)-rankQuoteProductBusinessUnit(b,businessUnit)||rankQuoteProduct(a,query)-rankQuoteProduct(b,query)||String(a.productName||'').localeCompare(String(b.productName||''),'th'))};
 const baseRenderQuoteProductPickerForPreferences=renderQuoteProductPicker;
 renderQuoteProductPicker=function(){const requestId=++quoteProductSearchSequence;ensureProductPreferenceContainers();if(!productPreferencesLoaded&&!productPreferencesPromise&&USER)loadProductPreferences();const q=$('productSearch')?.value||'';const picker=$('productPicker');if(!picker)return;if(!isQuoteBusinessUnitReadyForProducts()){picker.innerHTML='<div class="row quote-empty">กรุณาเลือก BU ก่อนแสดงสินค้า</div>';renderQuoteProductPreferenceSections();return;}const businessUnit=getSelectedQuoteBusinessUnitForProducts();const businessUnitLabel=quoteBusinessUnitLabel(businessUnit);if(!productsLoaded&&!DB.products.length){picker.innerHTML=`<div class="row quote-empty">กำลังโหลดสินค้า โดยเรียง ${businessUnitLabel} ก่อน...</div>`;if(document.activeElement===$('productSearch')){loadProducts().then(()=>{if(requestId===quoteProductSearchSequence&&businessUnit===getSelectedQuoteBusinessUnitForProducts())renderQuoteProductPicker();});}renderQuoteProductPreferenceSections();return;}const matchesAll=filterQuoteProductsByBusinessUnit(q,businessUnit);const limited=limitList(matchesAll,QUOTE_PICKER_LIMIT);const notice=limited.limited?`<div class="list-limit">แสดง 30 รายการแรกจากทุก BU โดยเรียง ${businessUnitLabel} และสินค้าปักหมุดก่อน กรุณาค้นหาเพิ่มเติม</div>`:'';picker.innerHTML=limited.items.length?notice+limited.items.map(product=>renderQuoteProductPreferenceCard(product,{source:'SEARCH'})).join(''):`<div class="row quote-empty">ไม่พบสินค้าที่ตรงกับคำค้น</div>`;renderQuoteProductPreferenceSections();};
-window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.addProductCardToQuote=addProductCardToQuote; window.openProductPromotionDetail=openProductPromotionDetail; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
+window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.addProductCardToQuote=addProductCardToQuote; window.openProductPromotionDetail=openProductPromotionDetail; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.canCreateQuotationsUi=canCreateQuotationsUi; window.canEditQuotationsUi=canEditQuotationsUi; window.canViewQuotationsUi=canViewQuotationsUi; window.canExportQuotationsUi=canExportQuotationsUi; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
 window.createProductIdentityKey=createProductIdentityKey; window.dedupeExactProducts=dedupeExactProducts; window.dedupeExactProductsWithReport=dedupeExactProductsWithReport; window.cloneProductRecordForSelection=cloneProductRecordForSelection; window.getStableProductRecordKey=getStableProductRecordKey; window.registerProductRecordSelection=registerProductRecordSelection; window.resolveProductRecordSelection=resolveProductRecordSelection;
 window.normalizeSystemIdentitySettings=normalizeSystemIdentitySettings; window.applySystemIdentityToUI=applySystemIdentityToUI; window.renderLoginBranding=renderLoginBranding; window.renderSidebarBranding=renderSidebarBranding; window.refreshPublicSystemSettings=refreshPublicSystemSettings; window.setPublicSystemSettings=setPublicSystemSettings; window.loadSystemIdentitySettingsForSettings=loadSystemIdentitySettingsForSettings; window.saveSystemIdentitySettings=saveSystemIdentitySettings; window.savePersonalGreetingSettings=savePersonalGreetingSettings; window.saveSystemGreetingSettings=saveSystemGreetingSettings; window.canManageSystemIdentitySettings=canManageSystemIdentitySettings; window.applySettingsPermissionUi=applySettingsPermissionUi;

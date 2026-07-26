@@ -435,10 +435,13 @@ function getCustomerFilters(payload) {
   const options = getCustomerFormOptions(payload);
   if (!options.ok) return options;
   const data = options.data || {};
+  const permissions = data.permissions || {};
+  const canViewAssignmentOptions = permissions.canViewCustomerAssignmentOptions === true
+    || permissions.canManageCustomerAssignments === true;
   return success({
     areas: data.salesAreas || data.areas || [],
     brands: data.brandCounts || data.brands || { weber: 0, gyproc: 0, both: 0, review: 0 },
-    assignableSalesUsers: data.salesUsers || data.assignableSalesUsers || []
+    assignableSalesUsers: canViewAssignmentOptions ? (data.salesUsers || data.assignableSalesUsers || []) : []
   });
 }
 
@@ -474,6 +477,10 @@ function getAssignableSalesUsers(payload) {
         errorCode: auth.code || 'AUTH_FAILED'
       });
       return auth;
+    }
+    const permissions = getUserPermissions(auth.data);
+    if (!permissions.canViewCustomerAssignmentOptions) {
+      return forbidden('Insufficient permission');
     }
     const areaCheck = getRequestedCustomerFormOptionsArea_(data, auth.data);
     if (!areaCheck.ok) {
@@ -556,6 +563,7 @@ function getCustomerFormOptions(payload) {
       return auth;
     }
     const actor = auth.data || {};
+    const permissions = getUserPermissions(actor);
     const areaCheck = getRequestedCustomerFormOptionsArea_(data, actor);
     if (!areaCheck.ok) {
       return areaCheck;
@@ -592,14 +600,19 @@ function getCustomerFormOptions(payload) {
       }
     }
 
-    const usersStartedAt = Date.now();
-    const usersResult = listUserAccounts();
-    usersReadMs = Number(usersResult.usersReadMs || (Date.now() - usersStartedAt));
-    if (!usersResult.ok) {
-      return usersResult;
+    var usersResult = { ok: true, data: [], cacheHit: false, spreadsheetOpenMs: 0, usersReadMs: 0 };
+    var userRows = [];
+    var salesUsers = [];
+    if (permissions.canViewCustomerAssignmentOptions) {
+      const usersStartedAt = Date.now();
+      usersResult = listUserAccounts();
+      usersReadMs = Number(usersResult.usersReadMs || (Date.now() - usersStartedAt));
+      if (!usersResult.ok) {
+        return usersResult;
+      }
+      userRows = Array.isArray(usersResult.data) ? usersResult.data : [];
+      salesUsers = getAssignableSalesUsersForActor_(actor, userRows, requestedArea);
     }
-    const userRows = Array.isArray(usersResult.data) ? usersResult.data : [];
-    const salesUsers = getAssignableSalesUsersForActor_(actor, userRows, requestedArea);
     const salesAreas = buildCustomerFormSalesAreas_(actor, [], salesUsers, requestedArea);
     const brandCounts = { weber: 0, gyproc: 0, both: 0, review: 0 };
     const result = {
@@ -615,6 +628,8 @@ function getCustomerFormOptions(payload) {
       brands: brandCounts,
       permissions: {
         canViewAllAreas: isSystemWideCustomerUser_(actor),
+        canViewCustomerAssignmentOptions: permissions.canViewCustomerAssignmentOptions === true,
+        canManageCustomerAssignments: permissions.canManageCustomerAssignments === true,
         actorArea: getCustomerUserArea_(actor),
         requestedArea: requestedArea
       },
