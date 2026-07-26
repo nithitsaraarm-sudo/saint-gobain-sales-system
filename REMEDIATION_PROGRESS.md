@@ -24,7 +24,7 @@ If remaining weekly usage is shown as 30% or lower in the product UI, stop after
 | Phase 5 — External Script and Frontend Security Hardening | Completed | `fc256877e42a970cecf5353bac4c95868bbf0d2c` |
 | Phase 6 — Apps Script Performance and Data Safety | Completed | `fb7e3e4cb59ebab9ebf50ed0a2c9608d652524c3` |
 | Phase 7 — Frontend Cache and State Reliability | Completed | `2caeaca4fecec848dc7ef771a8d6080a50a6d79f` |
-| Phase 8 — Controlled Maintainability Refactor | Pending | - |
+| Phase 8 — Controlled Maintainability Refactor | Completed | `f6981df33420d545e271ed49ff9f8715b655dc77` |
 | Phase 9 — UX Reliability and Accessibility | Pending | - |
 | Phase 10 — Documentation Synchronization | Pending | - |
 | Phase 11 — Test and Release Readiness | Pending | - |
@@ -213,7 +213,7 @@ Validation results:
 - `git diff --check` passed; only expected Windows LF/CRLF warnings were reported.
 - Static search confirmed both external CDN scripts now include `integrity` and `crossorigin`.
 - Static search confirmed `escapeHtml(JSON.stringify(...))` no longer appears; active inline JavaScript string arguments now use `jsStringLiteralAttr()`.
-- Static search still finds unsafe-looking patterns in legacy duplicate renderer definitions that are overridden later in `js/app.js`; full duplicate-definition cleanup remains pending for Phase 8 / Phase 10 to avoid mixing a broad refactor into this security-hardening phase.
+- Static search still found unsafe-looking patterns in legacy duplicate renderer definitions at Phase 5 time; the duplicate-definition cleanup was intentionally deferred and completed in Phase 8.
 - `where.exe node`, `where.exe deno`, and `where.exe bun` all failed because no local JavaScript runtime is installed; browser/runtime smoke tests must be run manually.
 
 ## Phase 6 Completion Notes
@@ -272,6 +272,33 @@ Validation results:
 - Static search confirmed `setCache()` stores `scope: getCacheScope(cacheKey)` and `getCache()` rejects mismatched private scopes.
 - Static search confirmed `saveSession()` and `clearSession()` call `clearPrivateApiCaches()` and `resetAuthenticatedFrontendState()`.
 - Static search confirmed `clearAppCaches()` also clears private prefixed caches.
+- No backend/API contract, permission logic, or database schema was changed.
+- `where.exe node`, `where.exe deno`, and `where.exe bun` were previously confirmed unavailable; browser/runtime smoke tests must be run manually.
+
+## Phase 8 Completion Notes
+
+Completed commit: `f6981df33420d545e271ed49ff9f8715b655dc77`
+
+Files changed:
+
+- `js/app.js`
+
+Implemented fixes:
+
+- Removed legacy duplicate declarations for `renderHome()`, `renderCustomers()`, `renderProducts()`, `renderQuoteCustomerPicker()`, and the old quote product picker implementation.
+- Consolidated quotation product picker behavior into the remaining `renderQuoteProductPicker()` declaration.
+- Kept product preference rendering active by using `renderQuoteProductPreferenceCard()` from the consolidated picker.
+- Removed the unused bottom-of-file `renderQuoteProductPicker` override and base variable.
+- Removed the old inline serialized product-object add-to-cart path from the active picker flow.
+- Preserved backend/API/database/schema/permission behavior.
+
+Validation results:
+
+- `git diff --check` passed; only expected Windows LF/CRLF warnings were reported.
+- Duplicate function declaration script returned no duplicated function names.
+- Static search confirmed no `addCart(${JSON.stringify...` legacy inline product serialization remains in `js/app.js`.
+- Static search confirmed no `renderQuoteProductPicker=function` override and no `baseRenderQuoteProductPickerForPreferences` variable remain.
+- Static search confirmed the expected single declarations remain for `renderHome()`, `renderCustomers()`, `renderProducts()`, `renderQuoteCustomerPicker()`, and `renderQuoteProductPicker()`.
 - No backend/API contract, permission logic, or database schema was changed.
 - `where.exe node`, `where.exe deno`, and `where.exe bun` were previously confirmed unavailable; browser/runtime smoke tests must be run manually.
 
