@@ -1571,6 +1571,25 @@ function getLoadQuotationCacheKey(quoteId) {
   return 'loadQuotation:' + normalizeString(quoteId);
 }
 
+function isLoadQuotationCacheForRecord_(cached, quote, requestedQuoteId) {
+  const cachedQuote = cached && cached.quote && typeof cached.quote === 'object' ? cached.quote : {};
+  const expectedIds = [
+    quote && quote.quoteId,
+    quote && quote.quoteNo,
+    requestedQuoteId
+  ].map(normalizeString).filter(Boolean);
+  const cachedIds = [
+    cachedQuote.quoteId,
+    cachedQuote.quoteNo
+  ].map(normalizeString).filter(Boolean);
+  if (!expectedIds.length || !cachedIds.length) {
+    return false;
+  }
+  return cachedIds.some(function (id) {
+    return expectedIds.indexOf(id) >= 0;
+  });
+}
+
 function clearQuotationCaches(quoteId, quoteNo) {
   clearServerCache(getQuotationHistoryCacheKey(null, 50));
   if (quoteId) {
@@ -1586,11 +1605,6 @@ function loadQuotation(payload) {
   try {
     const quoteId = extractQuoteId(payload);
     const cacheKey = getLoadQuotationCacheKey(quoteId);
-    const cached = getServerCache(cacheKey);
-    if (cached) {
-      endPerformanceTimer(timer, 'cache=hit');
-      return success(cached);
-    }
     const quoteResult = getQuotationRow(quoteId);
     if (!quoteResult.ok) {
       endPerformanceTimer(timer, 'quote=false');
@@ -1605,6 +1619,11 @@ function loadQuotation(payload) {
       return permissionResult;
     }
     const targetQuoteId = String(quote.quoteId || quoteId).trim();
+    const cached = getServerCache(cacheKey);
+    if (cached && isLoadQuotationCacheForRecord_(cached, quote, quoteId)) {
+      endPerformanceTimer(timer, 'cache=hit authorized=true');
+      return success(cached);
+    }
     const linesResult = getQuoteLines(targetQuoteId);
     if (!linesResult.ok) {
       endPerformanceTimer(timer, 'lines=false');

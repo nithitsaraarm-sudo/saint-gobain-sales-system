@@ -54,6 +54,33 @@ const ASSETS = [
   './icons/icon-maskable-512.png?v=0.5.7'
 ];
 
+const STATIC_ASSET_URLS = new Set(ASSETS.map(asset => new URL(asset, self.location.href).href));
+const SENSITIVE_QUERY_KEYS = ['sessionToken', 'sg_token', 'token', 'payload', 'callback', 'password'];
+const API_HOST_PATTERNS = ['script.google.com', 'script.googleusercontent.com'];
+
+function isSensitiveRequestUrl(url) {
+  if (API_HOST_PATTERNS.indexOf(url.hostname) >= 0) {
+    return true;
+  }
+  return SENSITIVE_QUERY_KEYS.some(key => url.searchParams.has(key));
+}
+
+function isApprovedStaticAsset(request) {
+  try {
+    const url = new URL(request.url);
+    if (url.origin !== self.location.origin || isSensitiveRequestUrl(url)) {
+      return false;
+    }
+    return STATIC_ASSET_URLS.has(url.href);
+  } catch (error) {
+    return false;
+  }
+}
+
+function isNavigationRequest(request) {
+  return request.mode === 'navigate' || request.destination === 'document';
+}
+
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting())
@@ -68,11 +95,19 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
-  event.respondWith(
-    caches.match(event.request).then(cached => cached || fetch(event.request).then(response => {
-      const copy = response.clone();
-      caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
-      return response;
-    }).catch(() => caches.match('./index.html')))
-  );
+  if (isApprovedStaticAsset(event.request)) {
+    event.respondWith(
+      caches.match(event.request).then(cached => cached || fetch(event.request).then(response => {
+        if (response && response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
+        }
+        return response;
+      }))
+    );
+    return;
+  }
+  if (isNavigationRequest(event.request)) {
+    event.respondWith(fetch(event.request).catch(() => caches.match('./index.html')));
+  }
 });

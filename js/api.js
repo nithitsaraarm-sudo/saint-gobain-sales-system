@@ -202,7 +202,7 @@ function reconcileQuotationSaveResponse(action, payload, postFailure) {
     message: 'Trying save reconciliation with same clientRequestId',
     detail: postFailure && postFailure.detail || ''
   });
-  return apiJsonpGet(action, payload, { timeoutMs: API_TIMEOUT_MS }).then(function (reconcileResponse) {
+  return apiPost(action, payload, { timeoutMs: API_TIMEOUT_MS }).then(function (reconcileResponse) {
     const normalized = normalizeApiResponse(reconcileResponse, {
       code: reconcileResponse && reconcileResponse.code || 'SAVE_RECONCILE_FAILED',
       message: reconcileResponse && reconcileResponse.message || ''
@@ -413,6 +413,16 @@ function isReadAction(action) {
   return READ_ACTIONS.indexOf(String(action || '').trim()) >= 0;
 }
 
+function isPublicJsonpReadAction(action) {
+  const normalizedAction = String(action || '').trim();
+  return normalizedAction === 'getPublicSystemSettings';
+}
+
+function hasAuthenticatedPayload(payload) {
+  const data = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+  return Boolean(data.sessionToken || data.sg_token || data.token);
+}
+
 function runApiRequest(action, payload) {
   return apiRequest(action, payload);
 }
@@ -422,10 +432,15 @@ function apiRequest(action, payload, options) {
   if (isWriteAction(normalizedAction)) {
     return apiPost(normalizedAction, payload, options);
   }
-  if (isReadAction(normalizedAction)) {
-    return apiJsonpGet(normalizedAction, payload, options);
+  if (hasAuthenticatedPayload(payload)) {
+    return apiPost(normalizedAction, payload, options);
   }
-  return apiJsonpGet(normalizedAction, payload, options);
+  if (isReadAction(normalizedAction)) {
+    return isPublicJsonpReadAction(normalizedAction)
+      ? apiJsonpGet(normalizedAction, payload, options)
+      : apiPost(normalizedAction, payload, options);
+  }
+  return apiPost(normalizedAction, payload, options);
 }
 
 function callApi(action, payload) {
@@ -523,27 +538,13 @@ function callApi(action, payload) {
     return pendingApiRequests[requestKey];
   }
 
-  if (normalizedAction === 'loadQuotation') {
-    const quoteId = getQuoteIdFromPayload(body);
-    const cachedQuotation = getCachedQuotation(quoteId);
-    if (cachedQuotation) {
-      logApiDebug(normalizedAction, 'cached');
-      return Promise.resolve({ ok: true, data: cachedQuotation, cached: true });
-    }
-  }
-
   if (pendingApiRequests[requestKey]) {
     logApiDebug(normalizedAction, 'pending');
     return pendingApiRequests[requestKey];
   }
 
   logApiDebug(normalizedAction, 'network');
-  pendingApiRequests[requestKey] = withApiTiming(normalizedAction, requestKey, runApiRequest(normalizedAction, body), requestId).then(function (response) {
-    if (normalizedAction === 'loadQuotation' && response && response.ok && response.data) {
-      setCachedQuotation(getQuoteIdFromPayload(body), response.data);
-    }
-    return response;
-  }).finally(function () {
+  pendingApiRequests[requestKey] = withApiTiming(normalizedAction, requestKey, runApiRequest(normalizedAction, body), requestId).finally(function () {
     delete pendingApiRequests[requestKey];
   });
 

@@ -2409,18 +2409,52 @@ function getSelectedCustomerIdForPricing() {
   return String(window.selectedCustomerId || document.getElementById('quoteCustomer')?.value || CURRENT_QUOTE.customerId || '').trim();
 }
 
+function sanitizeQuotationDiscountCacheScopePart_(value) {
+  const text = String(value || '').trim().replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80);
+  return text || 'anonymous';
+}
+
+function getQuotationDiscountCacheScope_() {
+  try {
+    const userId = localStorage.getItem('sg_userId');
+    if (String(userId || '').trim()) {
+      return sanitizeQuotationDiscountCacheScopePart_(userId);
+    }
+    const rawUser = localStorage.getItem('sg_user') || localStorage.getItem('currentUser') || '';
+    if (rawUser) {
+      const user = JSON.parse(rawUser);
+      return sanitizeQuotationDiscountCacheScopePart_(user && (user.userId || user.username));
+    }
+  } catch (error) {}
+  return 'anonymous';
+}
+
+function getQuotationDiscountCacheStorageKey_() {
+  return 'sg_discount_cache:' + getQuotationDiscountCacheScope_();
+}
+
+function getQuotationDiscountCacheKey_(customerId, productBusinessUnit, groupCode) {
+  return [
+    getQuotationDiscountCacheScope_(),
+    String(customerId || '').trim(),
+    String(productBusinessUnit || '-').trim().toUpperCase(),
+    String(groupCode || '').trim()
+  ].join('|');
+}
+
 async function getDiscountPercentForProduct(customerId, product) {
   const groupCode = String(product && product.groupCode || '').trim();
   const productBusinessUnit = getProductBusinessUnitClient(product);
   if (!customerId || !groupCode) {
     return 0;
   }
-  const cacheKey = customerId + '|' + (productBusinessUnit || '-') + '|' + groupCode;
+  const cacheKey = getQuotationDiscountCacheKey_(customerId, productBusinessUnit, groupCode);
+  const storageKey = getQuotationDiscountCacheStorageKey_();
   if (DISCOUNT_CACHE[cacheKey] !== undefined) {
     return Number(DISCOUNT_CACHE[cacheKey] || 0);
   }
   if (typeof getCache === 'function') {
-    const cachedDiscounts = getCache('sg_discount_cache') || {};
+    const cachedDiscounts = getCache(storageKey) || {};
     if (cachedDiscounts[cacheKey] !== undefined) {
       DISCOUNT_CACHE[cacheKey] = Number(cachedDiscounts[cacheKey] || 0);
       return Number(DISCOUNT_CACHE[cacheKey] || 0);
@@ -2431,14 +2465,14 @@ async function getDiscountPercentForProduct(customerId, product) {
   }
   try {
     DISCOUNT_PROMISES[cacheKey] = callApi('discount', { customerId: customerId, groupCode: groupCode, productBusinessUnit: productBusinessUnit }).then(response => {
-    const discountPercent = response && response.ok ? Number(response.data?.discountPercent || 0) : 0;
-    DISCOUNT_CACHE[cacheKey] = discountPercent;
+      const discountPercent = response && response.ok ? Number(response.data?.discountPercent || 0) : 0;
+      DISCOUNT_CACHE[cacheKey] = discountPercent;
       if (typeof getCache === 'function' && typeof setCache === 'function') {
-        const cachedDiscounts = getCache('sg_discount_cache') || {};
+        const cachedDiscounts = getCache(storageKey) || {};
         cachedDiscounts[cacheKey] = discountPercent;
-        setCache('sg_discount_cache', cachedDiscounts, 60);
+        setCache(storageKey, cachedDiscounts, 60);
       }
-    return discountPercent;
+      return discountPercent;
     }).finally(() => {
       delete DISCOUNT_PROMISES[cacheKey];
     });
@@ -3567,11 +3601,6 @@ async function loadQuotation(quoteId, options) {
     if (!opts.silent) toast('ต้องระบุเลขที่ใบเสนอราคา');
     return { ok: false, code: 'INVALID_REFERENCE', message: 'quoteId is required' };
   }
-  const cached = opts.force ? null : getLoadedQuotationCache(id);
-  if (cached) {
-    applyLoadedQuotationResponse(cached, id);
-    return cached;
-  }
   if (QUOTATION_LOAD_PROMISES[id]) {
     return QUOTATION_LOAD_PROMISES[id];
   }
@@ -3582,7 +3611,6 @@ async function loadQuotation(quoteId, options) {
     if (!opts.silent) toast(response.message || 'โหลดใบเสนอราคาไม่สำเร็จ');
     return response;
   }
-    setLoadedQuotationCache(id, response);
     applyLoadedQuotationResponse(response, id);
     return response;
   }).finally(() => {

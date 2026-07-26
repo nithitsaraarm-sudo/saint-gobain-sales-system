@@ -98,8 +98,11 @@ function api(action, payload) {
       case 'product':
         if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES])) return forbidden('Insufficient permission');
         return authorizeAction(getProduct, [payload && (payload.productId || payload.value)]);
-      case 'discount':
+      case 'discount': {
+        const discountScope = validateDiscountCustomerScope_(payload, user);
+        if (!discountScope.ok) return discountScope;
         return authorizeAction(getDiscount, [payload && payload.customerId, payload && payload.groupCode]);
+      }
       case 'saveCustomer':
         if (!permissions.canManageCustomers) return forbidden('Insufficient permission');
         if (!payload || typeof payload !== 'object') payload = {};
@@ -179,4 +182,17 @@ function authorizeAction(fn, args) {
     return fail('Action not available');
   }
   return fn.apply(null, args);
+}
+
+function validateDiscountCustomerScope_(payload, user) {
+  const data = payload && typeof payload === 'object' ? payload : {};
+  const customerId = String(data.customerId || '').trim();
+  if (!customerId) {
+    return validationError('customerId is required');
+  }
+  const customerResult = getCustomer(customerId, { currentUser: user });
+  if (!customerResult.ok) {
+    return customerResult;
+  }
+  return success(true);
 }
