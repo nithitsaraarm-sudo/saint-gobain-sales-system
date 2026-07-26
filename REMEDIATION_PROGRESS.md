@@ -20,7 +20,7 @@ If remaining weekly usage is shown as 30% or lower in the product UI, stop after
 | Phase 1 — Critical Security Fixes | Completed | `4ed7abba5628b1f3b4dae490a2ae823e5586a7a3` |
 | Phase 2 — Canonical RBAC and Permission Alignment | Completed | `064bdcf243e2fc26c6cbefa8a73964aa9d517071` |
 | Phase 3 — Incomplete and Misleading Features | Completed | `8f306fdf9e67136332e0a5446852b158babd08c2` |
-| Phase 4 — Version, Environment, and Deployment Configuration | Pending | - |
+| Phase 4 — Version, Environment, and Deployment Configuration | Completed | `89f6b53e54f82bf2af2627ac6482b537ec50eb5b` |
 | Phase 5 — External Script and Frontend Security Hardening | Pending | - |
 | Phase 6 — Apps Script Performance and Data Safety | Pending | - |
 | Phase 7 — Frontend Cache and State Reliability | Pending | - |
@@ -156,6 +156,39 @@ Validation results:
 - Static search confirmed production Demo Login is hidden by `data-demo-login` plus `ENABLE_DEMO_LOGIN = false`, and `startTestMode()` rejects when not explicitly enabled.
 - Static search confirmed add-data buttons now declare `data-permission` and `applyRolePermissions()` reads those flags.
 - `where.exe node`, `where.exe deno`, and `where.exe bun` all failed because no local JavaScript runtime is installed; browser/runtime smoke tests must be run manually.
+
+## Phase 4 Completion Notes
+
+Completed commit: `89f6b53e54f82bf2af2627ac6482b537ec50eb5b`
+
+Files changed:
+
+- `DEPLOYMENT.md`
+- `appscript/Constants.gs`
+- `index.html`
+- `js/api.js`
+- `js/app.js`
+- `js/config.js`
+- `js/quotation.js`
+- `manifest.json`
+- `service-worker.js`
+
+Implemented fixes:
+
+- Established `0.5.25` as the canonical release/cache version for this remediation checkpoint.
+- Centralized frontend runtime configuration in `window.APP_CONFIG` inside `js/config.js`.
+- Aligned frontend `APP_VERSION`, backend `APP_VERSION`, service-worker cache name, manifest icon versions, script/style query strings, favicon query strings, logout icon query string, and brand-logo query strings.
+- Moved the Apps Script Web App URL lookup out of `js/api.js` and into public runtime config (`window.GAS_WEB_APP_URL` via `APP_CONFIG.gasWebAppUrl`).
+- Added API URL missing-configuration errors instead of allowing requests to silently target the wrong URL.
+- Documented the static-hosting-compatible environment configuration pattern in `DEPLOYMENT.md`.
+- Preserved PWA static-shell behavior while forcing a new service-worker cache namespace.
+
+Validation results:
+
+- `rg "0\\.5\\.(3|6|7|8|14|17|24)|20260720|0\\.4\\.0|sales-system-v5-0\\.5\\.24"` over app/frontend/deployment files returned no matches.
+- `rg "0\\.5\\.25|APP_CONFIG|APP_VERSION|CACHE_NAME|manifest\\.json\\?v=|main\\.css\\?v=|GAS_WEB_APP_URL|API_URL_NOT_CONFIGURED"` confirmed the canonical version/config wiring.
+- `git diff --check` passed; only expected Windows LF/CRLF warnings were reported.
+- No private credentials were added; the Apps Script Web App URL remains public deployment configuration.
 
 ## Rollback Notes
 
