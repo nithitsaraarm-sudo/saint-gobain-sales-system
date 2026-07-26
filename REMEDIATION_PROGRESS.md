@@ -17,7 +17,7 @@ If remaining weekly usage is shown as 30% or lower in the product UI, stop after
 | Phase | Status | Commit |
 |---|---|---|
 | Phase 0 — Initial repository check and audit baseline | Completed | `0cb62334d62341a78ba6f3b1194ca42c985c1c47` |
-| Phase 1 — Critical Security Fixes | Pending | - |
+| Phase 1 — Critical Security Fixes | Completed | `4ed7abba5628b1f3b4dae490a2ae823e5586a7a3` |
 | Phase 2 — Canonical RBAC and Permission Alignment | Pending | - |
 | Phase 3 — Incomplete and Misleading Features | Pending | - |
 | Phase 4 — Version, Environment, and Deployment Configuration | Pending | - |
@@ -52,6 +52,39 @@ If remaining weekly usage is shown as 30% or lower in the product UI, stop after
 4. Change authenticated API flow to use POST where compatible; keep JSONP only for public/read-only compatibility if needed.
 5. Replace broad Service Worker GET caching with same-origin static-asset policy and navigation-only offline fallback.
 6. Validate with static searches and available local checks.
+
+## Phase 1 Completion Notes
+
+Completed commit: `4ed7abba5628b1f3b4dae490a2ae823e5586a7a3`
+
+Files changed:
+
+- `appscript/Quotation.gs`
+- `appscript/Api.gs`
+- `js/api.js`
+- `js/quotation.js`
+- `service-worker.js`
+
+Implemented fixes:
+
+- Moved `loadQuotation()` authorization before server-side cached quotation returns.
+- Added record identity verification before serving cached quotation data.
+- Added API-level customer scope validation before the `discount` endpoint returns discount data.
+- Removed frontend local quotation-cache returns that could bypass fresh backend authorization.
+- Routed authenticated API requests through POST instead of JSONP GET so tokens and payloads are not placed in URLs.
+- Kept JSONP compatibility only for `getPublicSystemSettings`.
+- Scoped quotation discount cache by authenticated user/customer/business unit/group.
+- Restricted the service worker to cache only the static asset allowlist and to use offline fallback only for navigation requests.
+
+Validation results:
+
+- `git diff --check` passed; only expected Windows LF/CRLF warnings were reported.
+- `rg "apiJsonpGet\\(" .` shows JSONP is only reachable through the public-read branch and the helper definition.
+- `rg "getCachedQuotation\\(|setCachedQuotation\\(|getLoadedQuotationCache\\(|setLoadedQuotationCache\\(" js\\api.js js\\quotation.js` shows quotation cache helpers are no longer called for load flow.
+- `rg "cache=hit authorized=true|canAccessQuotationRecord|getServerCache\\(cacheKey\\)" appscript\\Quotation.gs` confirms `canAccessQuotationRecord()` runs before the load-quotation cache hit.
+- `rg "case 'discount'|validateDiscountCustomerScope_|authorizeAction\\(getDiscount" appscript\\Api.gs` confirms discount API scope validation runs before `getDiscount()`.
+- `rg "cache\\.put|caches\\.match|isApprovedStaticAsset|isSensitiveRequestUrl|isNavigationRequest" service-worker.js` confirms service worker caching is static-asset scoped.
+- `where.exe node` failed because Node.js is not installed in this local environment; no JavaScript runtime test runner was available.
 
 ## Rollback Notes
 
