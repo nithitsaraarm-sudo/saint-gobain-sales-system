@@ -3,6 +3,27 @@
 วันที่ตรวจ: 2026-07-26  
 สถานะ: Audit-only / ไม่มีการแก้ไขโค้ดระบบจาก audit นี้
 
+## Remediation Status Addendum — 2026-07-26
+
+This file remains the original RBAC/security audit baseline. The findings are preserved for evidence, while remediation status is tracked here and in `REMEDIATION_PROGRESS.md`.
+
+Resolved after this audit:
+
+- Critical quotation cache permission bypass: fixed in Phase 1.
+- Discount endpoint customer/area-scope validation: fixed in Phase 1.
+- Authenticated token-bearing JSONP GET flow and broad service-worker GET caching: fixed in Phase 1.
+- MANAGER/VIEWER quotation permission drift: fixed in Phase 2 with MANAGER as oversight/read-only for quotation history/detail and reports.
+- Customer form assignment metadata exposure to lower roles: fixed in Phase 2.
+- Promotion save stub and production demo-login visibility: fixed in Phase 3.
+- Frontend private cache/session leakage risk: fixed in Phase 7.
+- Quote detail modal/export action visibility remains governed by the canonical permission flags introduced in Phase 2.
+
+Remaining hardening themes after Phase 9:
+
+- Strict CSP is still future work because inline handlers remain in legacy UI architecture.
+- Automated browser/accessibility tests are still not configured; use `ACCESSIBILITY_CHECKLIST.md` for manual smoke testing.
+- Large frontend files remain maintainability hotspots and should be split carefully in future phases.
+
 ## 1. Executive Summary
 
 จากการตรวจระบบ Role-Based Access Control (RBAC), route guard, sidebar/menu visibility, frontend API client และ Google Apps Script backend พบว่าระบบมีการป้องกันพื้นฐานแล้ว โดยเฉพาะ:
@@ -552,8 +573,8 @@ Phase 2 code alignment:
 - `js/quotation.js`: quotation edit navigation and line snapshot editing use the same frontend permission policy.
 - `index.html`: Settings data-entry tile is marked for permission-driven hiding.
 
-Remaining deferred permission-related work:
+Follow-up permission-related remediation status:
 
-- Phase 3 will address the `savePromotion()` persistence stub and production demo-login visibility.
-- Phase 5 will continue dynamic HTML / inline handler hardening.
-- Phase 7 will complete broader frontend cache lifecycle cleanup.
+- Phase 3 addressed the `savePromotion()` persistence stub and production demo-login visibility.
+- Phase 5 continued dynamic HTML / inline handler hardening.
+- Phase 7 completed broader frontend cache lifecycle cleanup for private frontend state.

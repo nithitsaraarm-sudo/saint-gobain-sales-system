@@ -4,6 +4,29 @@
 สถานะ: Full repository audit / read-only analysis ยกเว้นการสร้างไฟล์รายงานนี้  
 Repository root: `D:\saint-gobain-sales-system`
 
+## Remediation Status Addendum — 2026-07-26
+
+This document is the original full-repository audit baseline. The original findings below are intentionally preserved for traceability.
+
+Current remediation status on branch `audit/full-remediation`:
+
+| Area | Status | Commit / source |
+|---|---|---|
+| Quotation cache permission bypass | Fixed | Phase 1: `4ed7abba5628b1f3b4dae490a2ae823e5586a7a3` |
+| Discount customer/area scope validation | Fixed | Phase 1: `4ed7abba5628b1f3b4dae490a2ae823e5586a7a3` |
+| Token-bearing JSONP and service-worker API caching | Fixed | Phase 1: `4ed7abba5628b1f3b4dae490a2ae823e5586a7a3` |
+| MANAGER/VIEWER quotation RBAC drift | Fixed | Phase 2: `064bdcf243e2fc26c6cbefa8a73964aa9d517071` |
+| Customer form option metadata exposure | Fixed | Phase 2: `064bdcf243e2fc26c6cbefa8a73964aa9d517071` |
+| Promotion save stub and demo-login production visibility | Fixed | Phase 3: `8f306fdf9e67136332e0a5446852b158babd08c2` |
+| Version/cache/deployment config drift | Fixed | Phase 4: `89f6b53e54f82bf2af2627ac6482b537ec50eb5b` |
+| External CDN SRI and frontend render escaping | Fixed / partially migrated | Phase 5: `fc256877e42a970cecf5353bac4c95868bbf0d2c` |
+| Apps Script row update/delete performance hotspots | Improved | Phase 6: `fb7e3e4cb59ebab9ebf50ed0a2c9608d652524c3` |
+| Frontend private cache/session leakage risk | Fixed | Phase 7: `2caeaca4fecec848dc7ef771a8d6080a50a6d79f` |
+| Duplicate legacy renderer definitions | Fixed | Phase 8: `f6981df33420d545e271ed49ff9f8715b655dc77` |
+| Manual accessibility checklist and button/modal semantics | Added / improved | Phase 9: `0b54ca266866f8cd05cf90aede2ff6a2e9526156` |
+
+Detailed phase notes are maintained in `REMEDIATION_PROGRESS.md`. Accessibility/manual browser checks are maintained in `ACCESSIBILITY_CHECKLIST.md`.
+
 ## 1. Scope Summary
 
 Audit รอบนี้ครอบคลุมทุกไฟล์ที่อยู่ใน repository inventory ด้วย `rg --files` และ `Get-ChildItem`:
@@ -635,6 +658,10 @@ Recommended fix:
 
 ### L-1: `CHANGELOG.md` is stale
 
+Status:
+
+- Updated in Phase 10 with `0.5.25` remediation notes.
+
 Finding:
 
 - Changelog only documents `0.1.0` and initial docs.
@@ -687,6 +714,10 @@ Recommended fix:
 
 ### L-5: `manifest.json` versioned icon query params differ from app version
 
+Status:
+
+- Fixed in Phase 4 by aligning app, manifest, asset, and service-worker cache versions to `0.5.25`.
+
 Finding:
 
 - Manifest icons use `?v=0.5.7` while app is `0.5.24`.
@@ -696,6 +727,11 @@ Recommended fix:
 - Align version strategy or document why asset cache versions differ.
 
 ### L-6: No automated accessibility audit
+
+Status:
+
+- Manual checklist added in Phase 9: `ACCESSIBILITY_CHECKLIST.md`.
+- Automated axe/playwright/lighthouse checks remain future work.
 
 Finding:
 

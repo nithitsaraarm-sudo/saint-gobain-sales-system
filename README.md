@@ -34,6 +34,13 @@ python -m http.server 8000
 - [DEPLOYMENT.md](DEPLOYMENT.md)
 - [SECURITY.md](SECURITY.md)
 
+Current audit/remediation documents are kept at the repository root:
+
+- [FULL_PROJECT_AUDIT.md](FULL_PROJECT_AUDIT.md)
+- [RBAC_PERMISSION_AUDIT.md](RBAC_PERMISSION_AUDIT.md)
+- [REMEDIATION_PROGRESS.md](REMEDIATION_PROGRESS.md)
+- [ACCESSIBILITY_CHECKLIST.md](ACCESSIBILITY_CHECKLIST.md)
+
 ## ข้อควรระวัง
 - ห้ามแก้ไขโค้ดธุรกิจ (business logic) ใน `js/` หรือ `appscript/` โดยไม่ได้ประสานกับทีม
 - ห้ามเปลี่ยน header ของ `DiscountMatrix` ใน Google Sheets
