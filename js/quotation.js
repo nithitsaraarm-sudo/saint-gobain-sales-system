@@ -1607,7 +1607,7 @@ function renderProductPicker() {
   const q = (document.getElementById('productSearch')?.value || '').toLowerCase();
   const picker = document.getElementById('productPicker');
   if (!picker) return;
-  picker.innerHTML = DB.products.filter(p => JSON.stringify(p).toLowerCase().includes(q)).slice(0, 8).map(p => `<div class="row"><div class="product-img">${p.brand === 'Weber' ? '🟨' : '🟦'}</div><div><b>${p.productName}</b><br><small>${p.unit || ''} · ${money(p.listPrice)}</small></div><button class="tiny" style="margin-left:auto" onclick='addCart(${JSON.stringify(p)})'>+ เพิ่ม</button></div>`).join('');
+  picker.innerHTML = DB.products.filter(p => JSON.stringify(p).toLowerCase().includes(q)).slice(0, 8).map(p => `<div class="row"><div class="product-img">${p.brand === 'Weber' ? '🟨' : '🟦'}</div><div><b>${p.productName}</b><br><small>${p.unit || ''} · ${money(p.listPrice)}</small></div><button type="button" class="tiny" style="margin-left:auto" onclick='addCart(${JSON.stringify(p)})'>+ เพิ่ม</button></div>`).join('');
 }
 
 function addCart(p) {
@@ -1620,7 +1620,7 @@ function renderCart() {
     calcCart();
     return;
   }
-  cartList.innerHTML = CART.length ? CART.map(it => `<div class="row item-card"><div><b>${it.productName}</b><br><small>${money(it.listPrice)} · ส่วนลด <input style="width:60px;border:1px solid var(--line);border-radius:10px;padding:3px" type="number" value="${it.discount}" onchange="changeDiscount('${it.lineId}', Number(this.value))">%</small></div><div class="qty"><button onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button><b>${it.qty}</b><button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button></div><button class="ghost quote-item-delete" data-no-drag aria-label="ลบสินค้า" title="ลบสินค้า" onclick="removeProduct('${it.lineId}')">${getQuoteDeleteIconHtml()}</button></div>`).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
+  cartList.innerHTML = CART.length ? CART.map(it => `<div class="row item-card"><div><b>${it.productName}</b><br><small>${money(it.listPrice)} · ส่วนลด <input style="width:60px;border:1px solid var(--line);border-radius:10px;padding:3px" type="number" value="${it.discount}" onchange="changeDiscount('${it.lineId}', Number(this.value))">%</small></div><div class="qty"><button type="button" onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button><b>${it.qty}</b><button type="button" onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button></div><button type="button" class="ghost quote-item-delete" data-no-drag aria-label="ลบสินค้า" title="ลบสินค้า" onclick="removeProduct('${it.lineId}')">${getQuoteDeleteIconHtml()}</button></div>`).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
   calcCart();
 }
 
@@ -3126,7 +3126,7 @@ function renderCart() {
   }
   ensureCartLineIdentityAndOrder();
   CART.forEach(recalcLineItem);
-  cartList.innerHTML = CART.length ? CART.map(it => `<div class="row item-card quote-line"><div class="quote-line-main"><b>${it.productName||'-'}</b><br><small>${it.unit||'-'}</small><div class="quote-line-prices"><span>ราคาตั้ง ${money(it.listPrice)}</span><span>ส่วนลด <input style="width:60px;border:1px solid var(--line);border-radius:10px;padding:3px" type="number" value="${it.discountPercent||0}" onchange="changeDiscount('${it.lineId}', Number(this.value))">%</span><span>ราคาสุทธิ ${money(it.unitPrice)}</span><span>รวม ${money(it.lineTotal)}</span></div></div><div class="qty"><button onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button><b>${it.qty}</b><button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button></div><button class="ghost quote-item-delete" data-no-drag aria-label="ลบสินค้า" title="ลบสินค้า" onclick="removeProduct('${it.lineId}')">${getQuoteDeleteIconHtml()}</button></div>`).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
+  cartList.innerHTML = CART.length ? CART.map(it => `<div class="row item-card quote-line"><div class="quote-line-main"><b>${it.productName||'-'}</b><br><small>${it.unit||'-'}</small><div class="quote-line-prices"><span>ราคาตั้ง ${money(it.listPrice)}</span><span>ส่วนลด <input style="width:60px;border:1px solid var(--line);border-radius:10px;padding:3px" type="number" value="${it.discountPercent||0}" onchange="changeDiscount('${it.lineId}', Number(this.value))">%</span><span>ราคาสุทธิ ${money(it.unitPrice)}</span><span>รวม ${money(it.lineTotal)}</span></div></div><div class="qty"><button type="button" onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button><b>${it.qty}</b><button type="button" onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button></div><button type="button" class="ghost quote-item-delete" data-no-drag aria-label="ลบสินค้า" title="ลบสินค้า" onclick="removeProduct('${it.lineId}')">${getQuoteDeleteIconHtml()}</button></div>`).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
   calcCart();
 }
 
@@ -4766,11 +4766,11 @@ function renderCart() {
         </div>
       </div>
       <div class="qty quote-qty-control" data-no-drag>
-        <button onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button>
+        <button type="button" onclick="changeQty('${it.lineId}', ${Number(it.qty) - 1})">−</button>
         <input type="number" min="1" value="${Number(it.qty) || 1}" onchange="changeQty('${it.lineId}', this.value)">
-        <button onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button>
+        <button type="button" onclick="changeQty('${it.lineId}', ${Number(it.qty) + 1})">+</button>
       </div>
-      <button class="ghost quote-item-delete" data-no-drag aria-label="ลบสินค้า" title="ลบสินค้า" onclick="removeProduct('${it.lineId}')">${getQuoteDeleteIconHtml()}</button>
+      <button type="button" class="ghost quote-item-delete" data-no-drag aria-label="ลบสินค้า" title="ลบสินค้า" onclick="removeProduct('${it.lineId}')">${getQuoteDeleteIconHtml()}</button>
     </div>`;
   }).join('') : '<p style="color:var(--muted)">ยังไม่มีสินค้า</p>';
   calcCart();
