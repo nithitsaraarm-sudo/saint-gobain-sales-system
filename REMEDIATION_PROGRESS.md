@@ -22,7 +22,7 @@ If remaining weekly usage is shown as 30% or lower in the product UI, stop after
 | Phase 3 — Incomplete and Misleading Features | Completed | `8f306fdf9e67136332e0a5446852b158babd08c2` |
 | Phase 4 — Version, Environment, and Deployment Configuration | Completed | `89f6b53e54f82bf2af2627ac6482b537ec50eb5b` |
 | Phase 5 — External Script and Frontend Security Hardening | Completed | `fc256877e42a970cecf5353bac4c95868bbf0d2c` |
-| Phase 6 — Apps Script Performance and Data Safety | Pending | - |
+| Phase 6 — Apps Script Performance and Data Safety | Completed | `fb7e3e4cb59ebab9ebf50ed0a2c9608d652524c3` |
 | Phase 7 — Frontend Cache and State Reliability | Pending | - |
 | Phase 8 — Controlled Maintainability Refactor | Pending | - |
 | Phase 9 — UX Reliability and Accessibility | Pending | - |
@@ -215,6 +215,36 @@ Validation results:
 - Static search confirmed `escapeHtml(JSON.stringify(...))` no longer appears; active inline JavaScript string arguments now use `jsStringLiteralAttr()`.
 - Static search still finds unsafe-looking patterns in legacy duplicate renderer definitions that are overridden later in `js/app.js`; full duplicate-definition cleanup remains pending for Phase 8 / Phase 10 to avoid mixing a broad refactor into this security-hardening phase.
 - `where.exe node`, `where.exe deno`, and `where.exe bun` all failed because no local JavaScript runtime is installed; browser/runtime smoke tests must be run manually.
+
+## Phase 6 Completion Notes
+
+Completed commit: `fb7e3e4cb59ebab9ebf50ed0a2c9608d652524c3`
+
+Files changed:
+
+- `appscript/Database.gs`
+- `appscript/Quotation.gs`
+- `appscript/User.gs`
+- `appscript/FavoriteCustomer.gs`
+- `appscript/FavoriteProduct.gs`
+
+Implemented fixes:
+
+- Added shared Apps Script helpers to group row-object updates into contiguous `setValues()` calls instead of per-cell `setValue()` writes.
+- Added shared grouped row deletion helper using `deleteRows(start, count)` for contiguous delete groups.
+- Updated central `updateRowById()` so all callers benefit from batched row updates while still writing only explicitly changed columns.
+- Updated quotation-specific `updateQuotationObject()`, quotation line cleanup, and quotation header rollback cleanup to use the shared batch helpers.
+- Updated user sheet migrations to write affected columns in one column-range batch instead of calling `setValue()` inside row loops.
+- Updated favorite customer/product removal cleanup paths to batch row deletes.
+- Preserved schema, backend permission checks, quotation save locking, customer area scope, and API contracts.
+
+Validation results:
+
+- `git diff --check` passed; only expected Windows LF/CRLF warnings were reported.
+- Static search confirmed the normal update path now uses `applyRowObjectUpdate_()` and `setValues([run.values])`.
+- Static search confirmed grouped row delete paths now call `deleteSheetRowsByRowNumbers_()` and `deleteRows(start, count)`.
+- Remaining `setValue()` / `deleteRow()` hits in the touched files are fallback branches or unrelated existing low-volume code paths.
+- No JavaScript runtime or Apps Script local runner is installed in this environment; live Google Apps Script performance smoke tests must be run after deployment.
 
 ## Rollback Notes
 
