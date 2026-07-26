@@ -9,8 +9,8 @@ const QUOTATION_LOAD_CACHE = {};
 const QUOTATION_LOAD_PROMISES = {};
 const QUOTATION_LOAD_TTL_MS = 10 * 60 * 1000;
 const QUOTE_BRAND_LOGO_SOURCES = {
-  WEBER: 'images/weber-logo.png?v=0.5.8',
-  GYPROC: 'images/gyproc-logo.png?v=0.5.8'
+  WEBER: 'images/weber-logo.png?v=0.5.25',
+  GYPROC: 'images/gyproc-logo.png?v=0.5.25'
 };
 let QUOTE_ITEM_SCROLL_SEQUENCE = 0;
 let QUOTE_ITEM_HIGHLIGHT_TIMER = null;

@@ -1,8 +1,7 @@
-window.APP_VERSION = window.APP_VERSION || '0.5.17';
+window.APP_VERSION = window.APP_VERSION || '0.5.25';
 const APP_ENV = String(window.APP_ENV || 'production').trim().toLowerCase();
 const API_MOCK_MODE = APP_ENV === 'development';
-const GAS_WEB_APP_URL =
-'https://script.google.com/macros/s/AKfycbyuhRP2aIYI11vzMsIzGr2ncuhrflHb1u9flm_OwjpjZOJOTXvAg1HQu4iq62ZwjJn3RQ/exec';
+const GAS_WEB_APP_URL = String(window.GAS_WEB_APP_URL || '').trim();
 let bootstrapApiPromise = null;
 let bootstrapApiCache = null;
 const pendingApiRequests = {};
@@ -558,6 +557,9 @@ function gas(action, payload) {
 }
 
 function apiJsonpGet(action, payload, options) {
+  if (!GAS_WEB_APP_URL) {
+    return Promise.resolve({ ok: false, success: false, code: 'API_URL_NOT_CONFIGURED', message: 'API URL is not configured' });
+  }
   return new Promise(function (resolve) {
     const callbackName = '__sgApiCallback_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
     const script = document.createElement('script');
@@ -621,6 +623,9 @@ function apiJsonpGet(action, payload, options) {
 }
 
 function apiPost(action, payload, options) {
+  if (!GAS_WEB_APP_URL) {
+    return Promise.resolve({ ok: false, success: false, code: 'API_URL_NOT_CONFIGURED', message: 'API URL is not configured' });
+  }
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timeoutMs = Number(options && options.timeoutMs || API_TIMEOUT_MS);
   let timeoutId = null;
