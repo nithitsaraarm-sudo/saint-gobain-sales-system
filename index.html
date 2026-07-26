@@ -3,35 +3,35 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Saint-Gobain Sales System</title>
-<link rel="manifest" href="manifest.json?v=0.5.7">
+<link rel="manifest" href="manifest.json?v=0.5.25">
 <meta name="theme-color" content="#0067b1">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Sales System">
-<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16x16.png?v=0.5.7">
-<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32x32.png?v=0.5.7">
-<link rel="shortcut icon" href="favicon.ico?v=0.5.7">
-<link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png?v=0.5.7">
+<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16x16.png?v=0.5.25">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32x32.png?v=0.5.25">
+<link rel="shortcut icon" href="favicon.ico?v=0.5.25">
+<link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png?v=0.5.25">
 
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/main.css?v=0.5.23">
+<link rel="stylesheet" href="css/main.css?v=0.5.25">
 </head>
 <body>
 <div id="loginView" class="login">
   <div class="login-card">
     <div class="brand-title" id="loginBrandCompany">SAINT-GOBAIN</div><div class="brand-sub" id="loginBrandSystem">SALES SYSTEM</div>
-    <div class="tabs"><button id="tabLogin" class="active" onclick="showLoginTab('login')">เข้าสู่ระบบ</button></div>
-    <div class="login-sub"><button id="tabReset" onclick="showLoginTab('reset')">Forgot password</button></div>
+    <div class="tabs"><button type="button" id="tabLogin" class="active" onclick="showLoginTab('login')">เข้าสู่ระบบ</button></div>
+    <div class="login-sub"><button type="button" id="tabReset" onclick="showLoginTab('reset')">Forgot password</button></div>
     <div id="loginPanel">
       <div class="field"><label>Email หรือ Username</label><input id="loginUsername" autocomplete="username"></div>
       <div class="field"><label>Password</label><input id="loginPassword" type="password" autocomplete="current-password"></div>
       <label class="remember-row"><input id="rememberLogin" type="checkbox"> Remember Me</label>
-      <button class="primary" style="width:100%" onclick="login()">เข้าสู่ระบบ</button>
-      <div class="test-box hidden">
+      <button type="button" class="primary" style="width:100%" onclick="login()">เข้าสู่ระบบ</button>
+      <div class="test-box hidden" data-demo-login="true" hidden>
         <small>Test mode: ทดลองใช้งานได้ทันทีโดยยังไม่ต้องเปิด Google Apps Script</small>
-        <button class="ghost" style="width:100%" onclick="startTestMode()">ทดลองใช้งาน / Demo Login</button>
+        <button type="button" class="ghost" style="width:100%" onclick="startTestMode()">ทดลองใช้งาน / Demo Login</button>
       </div>
     </div>
     <div id="registerPanel" class="hidden">
@@ -47,7 +47,7 @@
       <div class="field"><label>Username ถ้าจำได้</label><input id="resetUsername"></div>
       <div class="field"><label>เบอร์โทรที่ลงทะเบียน</label><input id="resetPhone" inputmode="tel"></div>
       <div class="field"><label>Password ใหม่</label><input id="resetPassword" type="password"></div>
-      <button class="yellow" style="width:100%" onclick="resetPass()">รีเซ็ตรหัสผ่าน</button>
+      <button type="button" class="yellow" style="width:100%" onclick="resetPass()">รีเซ็ตรหัสผ่าน</button>
     </div>
   </div>
 </div>
@@ -66,40 +66,40 @@
       </button>
     </div>
     <nav class="nav">
-      <button class="active" data-page="home" onclick="go('home',this)" title="หน้าหลัก" aria-label="หน้าหลัก"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/home.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">หน้าหลัก</span></button><button data-page="quote" onclick="go('quote',this)" title="ออกใบเสนอราคา" aria-label="ออกใบเสนอราคา"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/create-quotation.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">ออกใบเสนอราคา</span></button><button data-page="customers" onclick="go('customers',this)" title="ร้านค้า" aria-label="ร้านค้า"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/customer.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">ร้านค้า</span></button><button data-page="products" onclick="go('products',this)" title="สินค้า" aria-label="สินค้า"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/product.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">สินค้า</span></button><button data-page="promos" onclick="go('promos',this)" title="โปรโมชั่น" aria-label="โปรโมชั่น"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/promotion.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">โปรโมชั่น</span></button><button data-page="quotes" onclick="go('quotes',this)" title="ประวัติใบเสนอราคา" aria-label="ประวัติใบเสนอราคา"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/quotation-history.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">ประวัติใบเสนอราคา</span></button><button data-page="users" onclick="go('users',this)" title="Users" aria-label="Users"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/users.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">Users</span></button><button data-page="report" onclick="go('report',this)" title="รายงาน" aria-label="รายงาน"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/reports.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">รายงาน</span></button><button data-page="settings" onclick="go('settings',this)" title="ตั้งค่า" aria-label="ตั้งค่า"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/settings.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">ตั้งค่า</span></button>
+      <button type="button" class="active" data-page="home" onclick="go('home',this)" title="หน้าหลัก" aria-label="หน้าหลัก"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/home.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">หน้าหลัก</span></button><button type="button" data-page="quote" onclick="go('quote',this)" title="ออกใบเสนอราคา" aria-label="ออกใบเสนอราคา"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/create-quotation.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">ออกใบเสนอราคา</span></button><button type="button" data-page="customers" onclick="go('customers',this)" title="ร้านค้า" aria-label="ร้านค้า"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/customer.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">ร้านค้า</span></button><button type="button" data-page="products" onclick="go('products',this)" title="สินค้า" aria-label="สินค้า"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/product.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">สินค้า</span></button><button type="button" data-page="promos" onclick="go('promos',this)" title="โปรโมชั่น" aria-label="โปรโมชั่น"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/promotion.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">โปรโมชั่น</span></button><button type="button" data-page="quotes" onclick="go('quotes',this)" title="ประวัติใบเสนอราคา" aria-label="ประวัติใบเสนอราคา"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/quotation-history.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">ประวัติใบเสนอราคา</span></button><button type="button" data-page="users" onclick="go('users',this)" title="Users" aria-label="Users"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/users.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">Users</span></button><button type="button" data-page="report" onclick="go('report',this)" title="รายงาน" aria-label="รายงาน"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/reports.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">รายงาน</span></button><button type="button" data-page="settings" onclick="go('settings',this)" title="ตั้งค่า" aria-label="ตั้งค่า"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="assets/icons/sidebar/settings.png" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">ตั้งค่า</span></button>
     </nav>
   </aside>
   <main class="main">
-    <div class="topbar no-print"><div id="mobileSidebarToggleHost" class="mobile-sidebar-toggle-host"></div><div></div><div class="topbar-user-area"><button class="header-profile" onclick="go('settings')" aria-label="Profile"><span class="header-avatar" id="topAvatar">👤</span><span class="header-user-text"><b id="topName">-</b><small id="topPosition">-</small></span></button><span class="header-separator"></span><button class="logout-icon-button" type="button" onclick="logout()" aria-label="Logout" title="Logout"><img class="logout-icon" src="assets/icons/logout.svg?v=0.5.14" alt="" aria-hidden="true"></button></div></div>
+    <div class="topbar no-print"><div id="mobileSidebarToggleHost" class="mobile-sidebar-toggle-host"></div><div></div><div class="topbar-user-area"><button type="button" class="header-profile" onclick="go('settings')" aria-label="Profile"><span class="header-avatar" id="topAvatar">👤</span><span class="header-user-text"><b id="topName">-</b><small id="topPosition">-</small></span></button><span class="header-separator"></span><button class="logout-icon-button" type="button" onclick="logout()" aria-label="Logout" title="Logout"><img class="logout-icon" src="assets/icons/logout.svg?v=0.5.25" alt="" aria-hidden="true"></button></div></div>
     <section id="page-home" class="page active">
       <div class="hero"><div class="greeting"><h1 id="greetingText">-</h1><p id="welcomeText">-</p></div><div class="logos"><div class="badge-logo gyro"><img class="home-brand-badge-logo" src="images/gyproc-logo.png" alt="Gyproc" loading="eager" decoding="async"></div><div class="badge-logo web"><img class="home-brand-badge-logo" src="images/weber-logo.png" alt="Weber" loading="eager" decoding="async"></div></div></div>
       <div class="grid4"><div class="stat"><div class="ico">📄</div><h3>ใบเสนอราคาวันนี้</h3><b id="statQuotes">0</b> ใบ<small>อัปเดตจาก Google Sheet</small></div><div class="stat"><div class="ico">💰</div><h3>ยอดรวมวันนี้</h3><b id="statSales">0</b><small>บาท</small></div><div class="stat"><div class="ico">👥</div><h3>ลูกค้าใหม่วันนี้</h3><b id="statCustomers">0</b> ราย<small>จากรายการร้านค้า</small></div><div class="stat"><div class="ico">📝</div><h3>ใบเสนอราคาที่รออนุมัติ</h3><b id="statPending">0</b> ใบ<small>รอดำเนินการ</small></div></div>
-      <div class="cols"><div class="card"><div class="section-title"><h2>ลูกค้าที่เปิดล่าสุด</h2><button class="tiny" onclick="go('customers')">ดูทั้งหมด</button></div><div class="list" id="latestCustomers"></div></div><div class="card"><div class="section-title"><h2>โปรโมชั่นที่กำลังใช้งาน</h2><button class="tiny" onclick="go('promos')">ดูทั้งหมด</button></div><div class="list" id="activePromos"></div></div></div>
-      <div class="card" style="margin-top:20px"><div class="section-title"><h2>สินค้าขายดี</h2><button class="tiny" onclick="go('report')">ดูรายงานยอดขาย</button></div><div class="best" id="bestProducts"></div></div>
+      <div class="cols"><div class="card"><div class="section-title"><h2>ลูกค้าที่เปิดล่าสุด</h2><button type="button" class="tiny" onclick="go('customers')">ดูทั้งหมด</button></div><div class="list" id="latestCustomers"></div></div><div class="card"><div class="section-title"><h2>โปรโมชั่นที่กำลังใช้งาน</h2><button type="button" class="tiny" onclick="go('promos')">ดูทั้งหมด</button></div><div class="list" id="activePromos"></div></div></div>
+      <div class="card" style="margin-top:20px"><div class="section-title"><h2>สินค้าขายดี</h2><button type="button" class="tiny" onclick="go('report')">ดูรายงานยอดขาย</button></div><div class="best" id="bestProducts"></div></div>
     </section>
     <section id="page-quote" class="page"><h1>ออกใบเสนอราคา</h1><div id="quoteMeta" class="quote-meta no-print"></div><div class="quote-layout"><div><div id="quotationProductSearchSection" class="card quote-product-search-section" data-role="quotation-product-search-section"><div class="field quote-customer-field"><label>เลือกร้านค้า</label><input id="quoteCustomerSearch" autocomplete="off" onfocus="renderQuoteCustomerPicker(true)" oninput="renderQuoteCustomerPicker(true)" placeholder="พิมพ์ชื่อร้านค้า รหัสร้านค้า จังหวัด หรือประเภท"><input id="quoteCustomer" type="hidden"><div id="quoteCustomerPicker" class="quote-autocomplete"></div></div><div class="field quote-product-search-field"><label id="quotationProductSearchLabel" for="productSearch">ค้นหาสินค้า</label><input id="productSearch" data-role="quotation-product-search" aria-labelledby="quotationProductSearchLabel" oninput="renderProductPicker()" placeholder="พิมพ์ชื่อสินค้า SKU หรือแบรนด์"></div><div class="list" id="productPicker"></div></div></div><div class="card quote-cart-card"><div class="quote-cart-header"><h2>รายการสินค้า</h2></div><div class="list" id="cartList"></div><div class="quote-cart-add-product-row"><button type="button" class="ghost quote-search-shortcut no-print" data-action="navigate-to-product-search" aria-label="ไปยังช่องค้นหาสินค้า" aria-controls="quotationProductSearchSection" title="ค้นหาสินค้า" onclick="navigateToProductSearch(event)"><svg class="quote-search-shortcut-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11 5a6 6 0 1 1 0 12a6 6 0 0 1 0-12Z"></path><path d="m15.5 15.5 4 4"></path></svg><span>+ เพิ่มสินค้า</span></button></div><div class="quotation-adjustments"><div class="field quote-adjustment-field"><label for="specialDiscount">ส่วนลดพิเศษ (%)</label><input id="specialDiscount" type="number" value="0" oninput="calcCart()"></div><div class="field quote-adjustment-field"><label for="shipping">ค่าขนส่ง (บาท)</label><input id="shipping" type="number" value="0" oninput="calcCart()"></div></div><hr style="border:0;border-top:1px solid var(--line)"><p>ยอดก่อน VAT <b id="sumSubtotal">0.00</b></p><p>VAT <span id="vatLabel">7</span>% <b id="sumVat">0.00</b></p><div>ยอดสุทธิ</div><div class="total" id="sumTotal">0.00</div><div id="quoteActionBar" class="actions quote-actions no-print" aria-live="polite"></div></div></div></section>
-    <section id="page-customers" class="page"><div class="section-title"><h1>ร้านค้า</h1></div><div class="toolbar"><input class="search" id="customerSearch" oninput="renderCustomers()" placeholder="ค้นหาร้านค้า"><button class="primary main-action" onclick="openModal('customer')">+ เพิ่มร้านค้า</button></div><div id="favoriteCustomers" class="favorite-customers"></div><div class="data-grid" id="customerGrid"></div></section>
-    <section id="page-products" class="page"><div class="section-title"><h1>สินค้า</h1></div><div class="toolbar"><input class="search" id="searchProducts" oninput="renderProducts()" placeholder="ค้นหาสินค้า"><button class="yellow main-action" onclick="openModal('product')">+ เพิ่มสินค้า</button></div><div class="data-grid" id="productGrid"></div></section>
-    <section id="page-promos" class="page"><div class="section-title"><h1>โปรโมชั่น</h1></div><div class="toolbar"><input class="search" id="searchPromos" oninput="renderPromos()" placeholder="ค้นหาโปรโมชั่น"><button class="yellow main-action" onclick="openModal('promo')">+ เพิ่มโปรโมชั่น</button></div><div class="data-grid" id="promoGrid"></div></section>
-    <section id="page-quotes" class="page"><h1>ใบเสนอราคา</h1><div class="toolbar"><input class="search" id="quoteHistorySearch" oninput="renderHistory()" placeholder="ค้นหาเลขที่ใบเสนอราคา ร้านค้า รหัสร้านค้า หรือสถานะ"><button class="ghost" onclick="refreshQuotationHistory()">รีเฟรช</button></div><div class="card"><div class="list" id="quoteHistory"></div></div><div id="quoteDetail" class="card quote-detail hidden" style="margin-top:16px"></div></section>
+    <section id="page-customers" class="page"><div class="section-title"><h1>ร้านค้า</h1></div><div class="toolbar"><input class="search" id="customerSearch" oninput="renderCustomers()" placeholder="ค้นหาร้านค้า"><button type="button" class="primary main-action" data-permission="canManageCustomers" onclick="openModal('customer')">+ เพิ่มร้านค้า</button></div><div id="favoriteCustomers" class="favorite-customers"></div><div class="data-grid" id="customerGrid"></div></section>
+    <section id="page-products" class="page"><div class="section-title"><h1>สินค้า</h1></div><div class="toolbar"><input class="search" id="searchProducts" oninput="renderProducts()" placeholder="ค้นหาสินค้า"><button type="button" class="yellow main-action" data-permission="canManageProducts" onclick="openModal('product')">+ เพิ่มสินค้า</button></div><div class="data-grid" id="productGrid"></div></section>
+    <section id="page-promos" class="page"><div class="section-title"><h1>โปรโมชั่น</h1></div><div class="toolbar"><input class="search" id="searchPromos" oninput="renderPromos()" placeholder="ค้นหาโปรโมชั่น"><button type="button" class="yellow main-action" data-permission="canManagePromotions" onclick="openModal('promo')">+ เพิ่มโปรโมชั่น</button></div><div class="data-grid" id="promoGrid"></div></section>
+    <section id="page-quotes" class="page"><h1>ใบเสนอราคา</h1><div class="toolbar"><input class="search" id="quoteHistorySearch" oninput="renderHistory()" placeholder="ค้นหาเลขที่ใบเสนอราคา ร้านค้า รหัสร้านค้า หรือสถานะ"><button type="button" class="ghost" onclick="refreshQuotationHistory()">รีเฟรช</button></div><div class="card"><div class="list" id="quoteHistory"></div></div><div id="quoteDetail" class="card quote-detail hidden" style="margin-top:16px"></div></section>
     <section id="page-report" class="page"><h1>รายงาน</h1><div class="grid4"><div class="stat"><h3>จำนวนสินค้า</h3><b id="rProducts">0</b></div><div class="stat"><h3>จำนวนร้านค้า</h3><b id="rCustomers">0</b></div><div class="stat"><h3>โปรโมชั่น</h3><b id="rPromos">0</b></div><div class="stat"><h3>ใบเสนอราคา</h3><b id="rQuotes">0</b></div></div></section>
-    <section id="page-users" class="page"><div class="section-title"><h1>Users</h1><button class="primary" onclick="openUserForm()">+ สร้างผู้ใช้งาน</button></div><div class="toolbar"><input class="search" id="userSearch" oninput="renderUsers()" placeholder="ค้นหาผู้ใช้งาน ชื่อ Username Role หรือ Area"></div><div class="card"><div id="userForm" class="user-form hidden"></div><div class="list" id="userList"></div></div></section>
+    <section id="page-users" class="page"><div class="section-title"><h1>Users</h1><button type="button" class="primary" onclick="openUserForm()">+ สร้างผู้ใช้งาน</button></div><div class="toolbar"><input class="search" id="userSearch" oninput="renderUsers()" placeholder="ค้นหาผู้ใช้งาน ชื่อ Username Role หรือ Area"></div><div class="card"><div id="userForm" class="user-form hidden"></div><div class="list" id="userList"></div></div></section>
     <section id="page-settings" class="page">
       <div id="settingsHome" class="setting-sub active">
         <h1>ตั้งค่า</h1>
         <div class="settings-menu">
-          <button class="setting-tile" onclick="openSettingPage('profile')"><span class="icon">👤</span><span><h3>โปรไฟล์ผู้ใช้งาน</h3><p>เปลี่ยนชื่อ ตำแหน่ง เบอร์โทร และรูปโปรไฟล์</p></span><span class="arrow">›</span></button>
-          <button class="setting-tile" onclick="openSettingPage('greeting')"><span class="icon">💬</span><span><h3>คำทักทายส่วนตัว</h3><p>ตั้งข้อความทักทายที่แสดงเฉพาะบัญชีของคุณ</p></span><span class="arrow">›</span></button>
-          <button class="setting-tile" data-super-admin-only="true" onclick="openSettingPage('identity')"><span class="icon">🏢</span><span><h3>ชื่อบริษัทและชื่อระบบ</h3><p>ตั้งชื่อบริษัทและชื่อระบบที่แสดงบน Login และ Sidebar</p></span><span class="arrow">›</span></button>
-          <button class="setting-tile" data-super-admin-only="true" onclick="openSettingPage('systemGreeting')"><span class="icon">📣</span><span><h3>คำทักทายจากระบบ / ข่าวสาร</h3><p>ตั้งข้อความต้อนรับและคำทักทายตามช่วงเวลา</p></span><span class="arrow">›</span></button>
-          <button class="setting-tile" onclick="openSettingPage('data')"><span class="icon">＋</span><span><h3>เพิ่มข้อมูล</h3><p>เพิ่มร้านค้า สินค้า และโปรโมชั่น</p></span><span class="arrow">›</span></button>
-          <button class="setting-tile" onclick="openSettingPage('account')"><span class="icon">🔐</span><span><h3>บัญชีและความปลอดภัย</h3><p>ออกจากระบบ และข้อมูลสำหรับรีเซ็ตรหัสผ่าน</p></span><span class="arrow">›</span></button>
-          <button class="setting-tile" onclick="openSettingPage('password')"><span class="icon">🔑</span><span><h3>Change Password</h3><p>เปลี่ยนรหัสผ่านของบัญชีปัจจุบัน</p></span><span class="arrow">›</span></button>
+          <button type="button" class="setting-tile" onclick="openSettingPage('profile')"><span class="icon">👤</span><span><h3>โปรไฟล์ผู้ใช้งาน</h3><p>เปลี่ยนชื่อ ตำแหน่ง เบอร์โทร และรูปโปรไฟล์</p></span><span class="arrow">›</span></button>
+          <button type="button" class="setting-tile" onclick="openSettingPage('greeting')"><span class="icon">💬</span><span><h3>คำทักทายส่วนตัว</h3><p>ตั้งข้อความทักทายที่แสดงเฉพาะบัญชีของคุณ</p></span><span class="arrow">›</span></button>
+          <button type="button" class="setting-tile" data-super-admin-only="true" onclick="openSettingPage('identity')"><span class="icon">🏢</span><span><h3>ชื่อบริษัทและชื่อระบบ</h3><p>ตั้งชื่อบริษัทและชื่อระบบที่แสดงบน Login และ Sidebar</p></span><span class="arrow">›</span></button>
+          <button type="button" class="setting-tile" data-super-admin-only="true" onclick="openSettingPage('systemGreeting')"><span class="icon">📣</span><span><h3>คำทักทายจากระบบ / ข่าวสาร</h3><p>ตั้งข้อความต้อนรับและคำทักทายตามช่วงเวลา</p></span><span class="arrow">›</span></button>
+          <button type="button" class="setting-tile" data-manage-data-only="true" onclick="openSettingPage('data')"><span class="icon">＋</span><span><h3>เพิ่มข้อมูล</h3><p>เพิ่มร้านค้า สินค้า และโปรโมชั่น</p></span><span class="arrow">›</span></button>
+          <button type="button" class="setting-tile" onclick="openSettingPage('account')"><span class="icon">🔐</span><span><h3>บัญชีและความปลอดภัย</h3><p>ออกจากระบบ และข้อมูลสำหรับรีเซ็ตรหัสผ่าน</p></span><span class="arrow">›</span></button>
+          <button type="button" class="setting-tile" onclick="openSettingPage('password')"><span class="icon">🔑</span><span><h3>Change Password</h3><p>เปลี่ยนรหัสผ่านของบัญชีปัจจุบัน</p></span><span class="arrow">›</span></button>
         </div>
       </div>
 
       <div id="settingProfile" class="setting-sub">
-        <button class="ghost" onclick="openSettingPage('home')">← กลับ</button>
+        <button type="button" class="ghost" onclick="openSettingPage('home')">← กลับ</button>
         <div class="card" style="margin-top:16px"><h2>โปรไฟล์ผู้ใช้งาน</h2>
           <div class="avatar-upload"><div id="profilePreview" class="avatar-preview">👩🏻</div><div><label class="primary" for="profileFile">อัพโหลดรูปจากมือถือ</label><input id="profileFile" class="file-input" type="file" accept="image/*" onchange="handleProfileImage(event)"><p style="color:var(--muted);margin:8px 0 0">ระบบจะย่อรูปให้อัตโนมัติเพื่อให้บันทึกได้เร็ว</p></div></div>
           <div class="field"><label>ชื่อที่แสดง</label><input id="setDisplay"></div>
@@ -108,72 +108,72 @@
           <div class="field"><label>เบอร์โทร</label><input id="setPhone" type="tel" inputmode="tel" autocomplete="tel"><div id="setPhoneLink"></div></div>
           <div class="field"><label>Email</label><input id="setEmail" type="email"></div>
           <div class="field"><label>ลิงก์รูปโปรไฟล์ หรือรูปที่อัพโหลด</label><input id="setPhoto" placeholder="วาง URL รูปภาพ หรืออัพโหลดรูปจากมือถือด้านบน" oninput="updateProfilePreview(this.value)"></div>
-          <button id="saveProfileBtn" class="primary" onclick="saveProfile()">บันทึกโปรไฟล์</button>
+          <button type="button" id="saveProfileBtn" class="primary" onclick="saveProfile()">บันทึกโปรไฟล์</button>
         </div>
       </div>
 
       <div id="settingGreeting" class="setting-sub">
-        <button class="ghost" onclick="openSettingPage('home')">← กลับ</button>
+        <button type="button" class="ghost" onclick="openSettingPage('home')">← กลับ</button>
         <div class="card" style="margin-top:16px"><h2>คำทักทายส่วนตัว</h2>
           <p style="color:var(--muted)">ข้อความนี้ผูกกับบัญชีของคุณเท่านั้น และผู้ใช้อื่นไม่สามารถแก้ไขแทนได้</p>
           <div class="field"><label>คำทักทายส่วนตัว</label><input id="setPersonalGreeting" maxlength="200" placeholder="เช่น ขอให้วันนี้เป็นวันที่ดี"></div>
-          <button id="savePersonalGreetingBtn" class="primary" onclick="savePersonalGreetingSettings()">บันทึกคำทักทายส่วนตัว</button>
+          <button type="button" id="savePersonalGreetingBtn" class="primary" onclick="savePersonalGreetingSettings()">บันทึกคำทักทายส่วนตัว</button>
         </div>
       </div>
 
       <div id="settingIdentity" class="setting-sub" data-super-admin-only="true">
-        <button class="ghost" onclick="openSettingPage('home')">← กลับ</button>
+        <button type="button" class="ghost" onclick="openSettingPage('home')">← กลับ</button>
         <div class="card" style="margin-top:16px"><h2>ชื่อบริษัทและชื่อระบบ</h2>
           <div class="field"><label>ชื่อบริษัท ภาษาอังกฤษ</label><input id="setCompany"></div>
           <div class="field"><label>ชื่อระบบ</label><input id="setAppName"></div>
-          <button id="saveSystemIdentityBtn" class="primary" onclick="saveSystemIdentitySettings()">บันทึกชื่อบริษัทและชื่อระบบ</button>
+          <button type="button" id="saveSystemIdentityBtn" class="primary" onclick="saveSystemIdentitySettings()">บันทึกชื่อบริษัทและชื่อระบบ</button>
         </div>
       </div>
 
       <div id="settingSystemGreeting" class="setting-sub" data-super-admin-only="true">
-        <button class="ghost" onclick="openSettingPage('home')">← กลับ</button>
+        <button type="button" class="ghost" onclick="openSettingPage('home')">← กลับ</button>
         <div class="card" style="margin-top:16px"><h2>คำทักทายจากระบบ / ข่าวสาร</h2>
           <div class="field"><label>ข้อความต้อนรับ</label><input id="setWelcome"></div>
           <div class="field"><label>คำทักทายตอนเช้า</label><input id="setMorning"></div>
           <div class="field"><label>คำทักทายตอนบ่าย</label><input id="setAfternoon"></div>
           <div class="field"><label>คำทักทายตอนเย็น</label><input id="setEvening"></div>
           <div class="field"><label>คำทักทายตอนดึก</label><input id="setNight"></div>
-          <button id="saveSettingsBtn" class="primary" onclick="saveSystemGreetingSettings()">บันทึกคำทักทายจากระบบ</button>
+          <button type="button" id="saveSettingsBtn" class="primary" onclick="saveSystemGreetingSettings()">บันทึกคำทักทายจากระบบ</button>
         </div>
       </div>
 
-      <div id="settingData" class="setting-sub">
-        <button class="ghost" onclick="openSettingPage('home')">← กลับ</button>
-        <div class="card" style="margin-top:16px"><h2>เพิ่มข้อมูล</h2><p style="color:var(--muted)">ปุ่มเพิ่มร้านค้า / สินค้า / โปรโมชั่น อยู่ในหน้านี้เท่านั้น ไม่ลอยติดหน้าจอ</p><div class="fab-group"><button class="primary" onclick="openModal('customer')">+ เพิ่มร้านค้า</button><button class="yellow" onclick="openModal('product')">+ เพิ่มสินค้า</button><button class="yellow" onclick="openModal('promo')">+ เพิ่มโปรโมชั่น</button></div></div>
+      <div id="settingData" class="setting-sub" data-manage-data-only="true">
+        <button type="button" class="ghost" onclick="openSettingPage('home')">← กลับ</button>
+        <div class="card" style="margin-top:16px"><h2>เพิ่มข้อมูล</h2><p style="color:var(--muted)">ปุ่มเพิ่มร้านค้า / สินค้า / โปรโมชั่น อยู่ในหน้านี้เท่านั้น ไม่ลอยติดหน้าจอ</p><div class="fab-group"><button type="button" class="primary" data-permission="canManageCustomers" onclick="openModal('customer')">+ เพิ่มร้านค้า</button><button type="button" class="yellow" data-permission="canManageProducts" onclick="openModal('product')">+ เพิ่มสินค้า</button><button type="button" class="yellow" data-permission="canManagePromotions" onclick="openModal('promo')">+ เพิ่มโปรโมชั่น</button></div></div>
       </div>
 
       <div id="settingAccount" class="setting-sub">
-        <button class="ghost" onclick="openSettingPage('home')">← กลับ</button>
-        <div class="card" style="margin-top:16px"><h2>บัญชีและความปลอดภัย</h2><p style="color:var(--muted)">เบอร์โทรที่บันทึกไว้จะใช้สำหรับรีเซ็ตรหัสผ่าน</p><button class="ghost" onclick="logout()">ออกจากระบบ</button></div>
+        <button type="button" class="ghost" onclick="openSettingPage('home')">← กลับ</button>
+        <div class="card" style="margin-top:16px"><h2>บัญชีและความปลอดภัย</h2><p style="color:var(--muted)">เบอร์โทรที่บันทึกไว้จะใช้สำหรับรีเซ็ตรหัสผ่าน</p><button type="button" class="ghost" onclick="logout()">ออกจากระบบ</button></div>
       </div>
       <div id="settingPassword" class="setting-sub">
-        <button class="ghost" onclick="openSettingPage('home')">← กลับ</button>
-        <div class="card" style="margin-top:16px"><h2>Change Password</h2><div class="field"><label>Current Password</label><input id="currentPassword" type="password"></div><div class="field"><label>New Password</label><input id="newPassword" type="password"></div><div class="field"><label>Confirm Password</label><input id="confirmPassword" type="password"></div><button class="primary" onclick="changePassword()">Save Password</button><p style="color:var(--muted)">Forgot Password: not required now.</p></div>
+        <button type="button" class="ghost" onclick="openSettingPage('home')">← กลับ</button>
+        <div class="card" style="margin-top:16px"><h2>Change Password</h2><div class="field"><label>Current Password</label><input id="currentPassword" type="password"></div><div class="field"><label>New Password</label><input id="newPassword" type="password"></div><div class="field"><label>Confirm Password</label><input id="confirmPassword" type="password"></div><button type="button" class="primary" onclick="changePassword()">Save Password</button><p style="color:var(--muted)">Forgot Password: not required now.</p></div>
       </div>
     </section>
   </main>
 </div>
-<div id="quotationPrintPreview" class="quotation-print-overlay hidden">
+<div id="quotationPrintPreview" class="quotation-print-overlay hidden" role="dialog" aria-modal="true" aria-label="Quotation print preview">
   <div class="quotation-print-shell">
     <div class="quotation-print-actions no-print">
-      <button class="primary" data-quote-export-control="print" onclick="printQuotationSheet()">Print</button>
-      <button class="primary" data-quote-export-control="pdf" onclick="saveQuotationPdf()">Save PDF</button>
-      <button class="yellow" data-quote-export-control="png" onclick="saveQuotationPng()">Save PNG</button>
-      <button class="yellow" data-quote-export-control="share" onclick="shareQuote()">Share</button>
-      <button class="ghost" onclick="closeQuotationPrintPreview()">Close</button>
+      <button type="button" class="primary" data-quote-export-control="print" onclick="printQuotationSheet()">Print</button>
+      <button type="button" class="primary" data-quote-export-control="pdf" onclick="saveQuotationPdf()">Save PDF</button>
+      <button type="button" class="yellow" data-quote-export-control="png" onclick="saveQuotationPng()">Save PNG</button>
+      <button type="button" class="yellow" data-quote-export-control="share" onclick="shareQuote()">Share</button>
+      <button type="button" class="ghost" onclick="closeQuotationPrintPreview()">Close</button>
     </div>
     <div id="quotationPreviewState" class="quotation-preview-state no-print" role="status" aria-live="polite"></div>
     <div id="printQuotationSheet" class="quotation-print-document"></div>
   </div>
 </div>
-<div id="productPriceModal" class="product-price-modal hidden" onclick="if(event.target===this)closeProductCalculator()">
+<div id="productPriceModal" class="product-price-modal hidden" role="dialog" aria-modal="true" aria-label="Product price calculator" onclick="if(event.target===this)closeProductCalculator()">
   <div class="product-price-shell">
-    <button class="modal-close" onclick="closeProductCalculator()">×</button>
+    <button type="button" class="modal-close" onclick="closeProductCalculator()" aria-label="Close product price calculator" title="Close">×</button>
     <div id="productPriceCapture" class="product-price-capture"></div>
     <div class="product-calc-form">
       <div class="field"><label>ราคาตั้งต่อหน่วย</label><input id="productCalcListPrice" type="text" inputmode="decimal" autocomplete="off" oninput="renderProductCalculator()"></div>
@@ -181,32 +181,32 @@
       <div class="field"><label>จำนวน</label><input id="productCalcQty" type="number" step="1" min="0" value="1" oninput="renderProductCalculator()"></div>
     </div>
     <div class="actions product-calc-actions">
-      <button class="ghost" onclick="resetProductCalculator()">คืนค่าราคาเดิม</button>
-      <button class="primary" onclick="saveProductCalculatorImage()">บันทึกเป็นรูปภาพ</button>
+      <button type="button" class="ghost" onclick="resetProductCalculator()">คืนค่าราคาเดิม</button>
+      <button type="button" class="primary" onclick="saveProductCalculatorImage()">บันทึกเป็นรูปภาพ</button>
     </div>
   </div>
 </div>
-<div id="quoteDetailModal" class="quote-detail-modal hidden" onclick="if(event.target===this)closeQuotationDetailModal()">
+<div id="quoteDetailModal" class="quote-detail-modal hidden" role="dialog" aria-modal="true" aria-labelledby="quoteDetailModalTitle" onclick="if(event.target===this)closeQuotationDetailModal()">
   <div class="quote-detail-modal-card">
     <div class="section-title no-print">
-      <h2>รายละเอียดใบเสนอราคา</h2>
-      <button class="ghost" onclick="closeQuotationDetailModal()">Close</button>
+      <h2 id="quoteDetailModalTitle">รายละเอียดใบเสนอราคา</h2>
+      <button type="button" class="ghost" onclick="closeQuotationDetailModal()" aria-label="Close quotation detail">Close</button>
     </div>
     <div id="quoteDetailModalBody" class="quote-detail-modal-body"></div>
   </div>
 </div>
-<div id="quoteTypeModal" class="modal no-print">
+<div id="quoteTypeModal" class="modal no-print" role="dialog" aria-modal="true" aria-labelledby="quoteTypeModalTitle">
   <div class="modal-card quote-type-modal-card">
-    <h2>เลือกประเภทใบเสนอราคา</h2>
+    <h2 id="quoteTypeModalTitle">เลือกประเภทใบเสนอราคา</h2>
     <p>เลือก BU ก่อนสร้างใบเสนอราคาใหม่</p>
     <div class="quote-type-options">
-      <button class="quote-type-option gyproc" onclick="selectQuoteType('GYPROC')"><img class="quote-type-option-logo" src="images/gyproc-logo.png" alt="Gyproc" loading="eager" decoding="async"></button>
-      <button class="quote-type-option weber" onclick="selectQuoteType('WEBER')"><img class="quote-type-option-logo" src="images/weber-logo.png" alt="Weber" loading="eager" decoding="async"></button>
+      <button type="button" class="quote-type-option gyproc" onclick="selectQuoteType('GYPROC')"><img class="quote-type-option-logo" src="images/gyproc-logo.png" alt="Gyproc" loading="eager" decoding="async"></button>
+      <button type="button" class="quote-type-option weber" onclick="selectQuoteType('WEBER')"><img class="quote-type-option-logo" src="images/weber-logo.png" alt="Weber" loading="eager" decoding="async"></button>
     </div>
-    <div class="actions" style="margin-top:14px"><button class="ghost" onclick="closeQuoteTypeModal()">Cancel</button></div>
+    <div class="actions" style="margin-top:14px"><button type="button" class="ghost" onclick="closeQuoteTypeModal()">Cancel</button></div>
   </div>
 </div>
-<div id="modal" class="modal"><div class="modal-card"><div class="section-title"><h2 id="modalTitle">เพิ่มข้อมูล</h2><button class="ghost" onclick="closeModal()">ปิด</button></div><div id="modalBody"></div></div></div><div id="toast" class="toast"></div>
+<div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-card"><div class="section-title"><h2 id="modalTitle">เพิ่มข้อมูล</h2><button type="button" class="ghost" onclick="closeModal()" aria-label="Close modal">ปิด</button></div><div id="modalBody"></div></div></div><div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 
 <script>
@@ -236,11 +236,11 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   });
 }
 </script>
-<script src="js/config.js?v=0.5.23"></script>
-<script src="js/api.js?v=0.5.17"></script>
-<script src="js/auth.js?v=0.5.3"></script>
-<script src="js/app.js?v=0.5.23"></script>
-<script src="js/quotation.js?v=0.5.18"></script>
-<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="js/config.js?v=0.5.25"></script>
+<script src="js/api.js?v=0.5.25"></script>
+<script src="js/auth.js?v=0.5.25"></script>
+<script src="js/app.js?v=0.5.25"></script>
+<script src="js/quotation.js?v=0.5.25"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous"></script>
 </body></html>

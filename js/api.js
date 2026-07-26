@@ -1,8 +1,7 @@
-window.APP_VERSION = window.APP_VERSION || '0.5.17';
+window.APP_VERSION = window.APP_VERSION || '0.5.25';
 const APP_ENV = String(window.APP_ENV || 'production').trim().toLowerCase();
 const API_MOCK_MODE = APP_ENV === 'development';
-const GAS_WEB_APP_URL =
-'https://script.google.com/macros/s/AKfycbyuhRP2aIYI11vzMsIzGr2ncuhrflHb1u9flm_OwjpjZOJOTXvAg1HQu4iq62ZwjJn3RQ/exec';
+const GAS_WEB_APP_URL = String(window.GAS_WEB_APP_URL || '').trim();
 let bootstrapApiPromise = null;
 let bootstrapApiCache = null;
 const pendingApiRequests = {};
@@ -15,6 +14,16 @@ const CACHE_KEYS = {
   quotation: 'sg_quotation_cache',
   quotationHistory: 'sg_quotation_history_cache'
 };
+const PUBLIC_CACHE_KEY_SET = {};
+PUBLIC_CACHE_KEY_SET[CACHE_KEYS.publicSettings] = true;
+const PRIVATE_CACHE_PREFIXES = [
+  CACHE_KEYS.customers,
+  CACHE_KEYS.products,
+  CACHE_KEYS.bootstrap,
+  CACHE_KEYS.discount,
+  CACHE_KEYS.quotation,
+  CACHE_KEYS.quotationHistory
+];
 const API_TIMEOUT_MS = 30000;
 const API_RESPONSE_PREVIEW_LIMIT = 500;
 const QUOTATION_SAVE_RECONCILE_ACTIONS = ['saveQuotation', 'updateQuotation', 'quotation'];
@@ -33,6 +42,8 @@ const READ_ACTIONS = [
   'getCustomerFormOptions',
   'products',
   'getProducts',
+  'promotions',
+  'getPromotions',
   'searchQuoteProducts',
   'product',
   'discount',
@@ -202,7 +213,7 @@ function reconcileQuotationSaveResponse(action, payload, postFailure) {
     message: 'Trying save reconciliation with same clientRequestId',
     detail: postFailure && postFailure.detail || ''
   });
-  return apiJsonpGet(action, payload, { timeoutMs: API_TIMEOUT_MS }).then(function (reconcileResponse) {
+  return apiPost(action, payload, { timeoutMs: API_TIMEOUT_MS }).then(function (reconcileResponse) {
     const normalized = normalizeApiResponse(reconcileResponse, {
       code: reconcileResponse && reconcileResponse.code || 'SAVE_RECONCILE_FAILED',
       message: reconcileResponse && reconcileResponse.message || ''
@@ -236,9 +247,11 @@ function reconcileQuotationSaveResponse(action, payload, postFailure) {
 
 function setCache(key, data, ttlMinutes) {
   try {
+    const cacheKey = String(key);
     const ttl = Math.max(1, Number(ttlMinutes || 1)) * 60 * 1000;
-    localStorage.setItem(String(key), JSON.stringify({
+    localStorage.setItem(cacheKey, JSON.stringify({
       expiresAt: Date.now() + ttl,
+      scope: getCacheScope(cacheKey),
       data: data
     }));
     return true;
@@ -249,13 +262,19 @@ function setCache(key, data, ttlMinutes) {
 
 function getCache(key) {
   try {
-    const raw = localStorage.getItem(String(key));
+    const cacheKey = String(key);
+    const raw = localStorage.getItem(cacheKey);
     if (!raw) {
       return null;
     }
     const cached = JSON.parse(raw);
     if (!cached || !cached.expiresAt || cached.expiresAt <= Date.now()) {
-      clearCache(key);
+      clearCache(cacheKey);
+      return null;
+    }
+    const expectedScope = getCacheScope(cacheKey);
+    if (expectedScope && cached.scope !== expectedScope) {
+      clearCache(cacheKey);
       return null;
     }
     return cached.data;
@@ -270,6 +289,62 @@ function clearCache(key) {
     localStorage.removeItem(String(key));
   } catch (error) {
     // Cache is best-effort only.
+  }
+}
+
+function isPrivateCacheKey(key) {
+  const cacheKey = String(key || '');
+  if (!cacheKey || PUBLIC_CACHE_KEY_SET[cacheKey]) {
+    return false;
+  }
+  return PRIVATE_CACHE_PREFIXES.some(function (prefix) {
+    return cacheKey === prefix || cacheKey.indexOf(prefix + ':') === 0;
+  });
+}
+
+function getStoredCacheUser_() {
+  try {
+    const raw = localStorage.getItem('sg_user') || localStorage.getItem('currentUser') || '';
+    return raw ? JSON.parse(raw) || {} : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function getCacheScope(key) {
+  if (!isPrivateCacheKey(key)) {
+    return '';
+  }
+  const user = getStoredCacheUser_();
+  const userId = String(localStorage.getItem('sg_userId') || user.userId || user.username || 'anonymous').trim();
+  const role = String(localStorage.getItem('sg_role') || user.role || '').trim();
+  const area = String(user.area || user.branch || '').trim();
+  const token = String(localStorage.getItem('sg_token') || localStorage.getItem('sessionToken') || '').trim();
+  return [
+    String(window.APP_VERSION || '0.5.25').trim(),
+    userId || 'anonymous',
+    role || 'role-unknown',
+    area || 'area-unknown',
+    token ? token.slice(-12) : 'no-token'
+  ].join(':');
+}
+
+function clearPrivateApiCaches() {
+  try {
+    const keys = [];
+    for (var i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (isPrivateCacheKey(key)) {
+        keys.push(key);
+      }
+    }
+    keys.forEach(function (key) {
+      clearCache(key);
+    });
+    bootstrapApiCache = null;
+    bootstrapApiPromise = null;
+  } catch (error) {
+    // Cache clearing is best-effort only.
   }
 }
 
@@ -413,6 +488,16 @@ function isReadAction(action) {
   return READ_ACTIONS.indexOf(String(action || '').trim()) >= 0;
 }
 
+function isPublicJsonpReadAction(action) {
+  const normalizedAction = String(action || '').trim();
+  return normalizedAction === 'getPublicSystemSettings';
+}
+
+function hasAuthenticatedPayload(payload) {
+  const data = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+  return Boolean(data.sessionToken || data.sg_token || data.token);
+}
+
 function runApiRequest(action, payload) {
   return apiRequest(action, payload);
 }
@@ -422,10 +507,15 @@ function apiRequest(action, payload, options) {
   if (isWriteAction(normalizedAction)) {
     return apiPost(normalizedAction, payload, options);
   }
-  if (isReadAction(normalizedAction)) {
-    return apiJsonpGet(normalizedAction, payload, options);
+  if (hasAuthenticatedPayload(payload)) {
+    return apiPost(normalizedAction, payload, options);
   }
-  return apiJsonpGet(normalizedAction, payload, options);
+  if (isReadAction(normalizedAction)) {
+    return isPublicJsonpReadAction(normalizedAction)
+      ? apiJsonpGet(normalizedAction, payload, options)
+      : apiPost(normalizedAction, payload, options);
+  }
+  return apiPost(normalizedAction, payload, options);
 }
 
 function callApi(action, payload) {
@@ -523,27 +613,13 @@ function callApi(action, payload) {
     return pendingApiRequests[requestKey];
   }
 
-  if (normalizedAction === 'loadQuotation') {
-    const quoteId = getQuoteIdFromPayload(body);
-    const cachedQuotation = getCachedQuotation(quoteId);
-    if (cachedQuotation) {
-      logApiDebug(normalizedAction, 'cached');
-      return Promise.resolve({ ok: true, data: cachedQuotation, cached: true });
-    }
-  }
-
   if (pendingApiRequests[requestKey]) {
     logApiDebug(normalizedAction, 'pending');
     return pendingApiRequests[requestKey];
   }
 
   logApiDebug(normalizedAction, 'network');
-  pendingApiRequests[requestKey] = withApiTiming(normalizedAction, requestKey, runApiRequest(normalizedAction, body), requestId).then(function (response) {
-    if (normalizedAction === 'loadQuotation' && response && response.ok && response.data) {
-      setCachedQuotation(getQuoteIdFromPayload(body), response.data);
-    }
-    return response;
-  }).finally(function () {
+  pendingApiRequests[requestKey] = withApiTiming(normalizedAction, requestKey, runApiRequest(normalizedAction, body), requestId).finally(function () {
     delete pendingApiRequests[requestKey];
   });
 
@@ -555,6 +631,9 @@ function gas(action, payload) {
 }
 
 function apiJsonpGet(action, payload, options) {
+  if (!GAS_WEB_APP_URL) {
+    return Promise.resolve({ ok: false, success: false, code: 'API_URL_NOT_CONFIGURED', message: 'API URL is not configured' });
+  }
   return new Promise(function (resolve) {
     const callbackName = '__sgApiCallback_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
     const script = document.createElement('script');
@@ -618,6 +697,9 @@ function apiJsonpGet(action, payload, options) {
 }
 
 function apiPost(action, payload, options) {
+  if (!GAS_WEB_APP_URL) {
+    return Promise.resolve({ ok: false, success: false, code: 'API_URL_NOT_CONFIGURED', message: 'API URL is not configured' });
+  }
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timeoutMs = Number(options && options.timeoutMs || API_TIMEOUT_MS);
   let timeoutId = null;
@@ -709,6 +791,9 @@ function mockApi(action, payload) {
     return window.__mockPublicSettings;
   };
   if (action === 'demoLogin') {
+    if (APP_ENV === 'development' && window.ENABLE_DEMO_LOGIN === true) {
+      return { ok: true, data: { sessionToken: 'mock-demo-token', user: { userId: 'LOCAL_DEMO', username: 'demo', fullName: 'Local Demo User', displayName: 'Local Demo User', role: 'VIEWER', branch: '', phone: '' } } };
+    }
     return { ok: false, code: 'FORBIDDEN', message: 'Demo Login is disabled' };
   }
   if (action === 'login') {
@@ -723,10 +808,9 @@ function mockApi(action, payload) {
   switch (action) {
     case 'login':
       return { ok: true, data: { username: data.username || 'local', displayName: 'Local User', position: '', phone: '' } };
-    case 'demoLogin':
-      return { ok: false, code: 'FORBIDDEN', message: 'Demo Login is disabled' };
     case 'bootstrap':
-      return { ok: true, data: { settings: Object.assign({}, mockPublicSettings(), { welcomeText: 'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ', vatRate: 7 }), publicSettings: mockPublicSettings(), counts: { customers: 0, products: 0 }, quotes: [], quoteLines: [], sheetInitialized: true } };
+      window.__mockPromotions = window.__mockPromotions || [];
+      return { ok: true, data: { settings: Object.assign({}, mockPublicSettings(), { welcomeText: 'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ', vatRate: 7 }), publicSettings: mockPublicSettings(), counts: { customers: 0, products: 0 }, quotes: [], quoteLines: [], promotions: window.__mockPromotions, sheetInitialized: true } };
     case 'getPublicSystemSettings':
       return { ok: true, data: mockPublicSettings(), message: 'Mock public settings loaded' };
     case 'getSystemIdentitySettings':
@@ -743,6 +827,10 @@ function mockApi(action, payload) {
       return { ok: true, data: [] };
     case 'products':
       return { ok: true, data: [] };
+    case 'promotions':
+    case 'getPromotions':
+      window.__mockPromotions = window.__mockPromotions || [];
+      return { ok: true, data: window.__mockPromotions };
     case 'discount':
       return { ok: true, data: { customerId: data.customerId || '', groupCode: data.groupCode || '', discountGroup: '', discountPercent: 0, source: 'mock' }, message: 'Mock discount' };
     case 'quotation':
@@ -808,8 +896,21 @@ function mockApi(action, payload) {
       return {ok:true,data:data,message:'Pinned products reordered'};
     case 'saveProduct':
       return { ok: true, data: data, message: 'Mock product saved' };
-    case 'savePromotion':
-      return { ok: true, data: data, message: 'Mock promotion saved' };
+    case 'savePromotion': {
+      window.__mockPromotions = window.__mockPromotions || [];
+      const mockPromotion = Object.assign({
+        promotionId: 'PROMO-MOCK-' + Date.now(),
+        createdAt: new Date().toISOString()
+      }, data, {
+        updatedAt: new Date().toISOString(),
+        active: data.active === false ? false : true
+      });
+      window.__mockPromotions = window.__mockPromotions.filter(function (promotion) {
+        return String(promotion.promotionId || '') !== String(mockPromotion.promotionId || '');
+      }).concat([mockPromotion]);
+      invalidateBootstrapApiCache();
+      return { ok: true, data: mockPromotion, message: 'Mock promotion saved' };
+    }
     case 'createQuotation':
       return { ok: true, data: { quoteId: 'QT-MOCK-' + Date.now() }, message: 'Mock quotation created' };
     case 'loadQuotation':
@@ -834,6 +935,7 @@ window.jsonpApi = apiJsonpGet;
 window.setCache = setCache;
 window.getCache = getCache;
 window.clearCache = clearCache;
+window.clearPrivateApiCaches = clearPrivateApiCaches;
 window.invalidateBootstrapApiCache = invalidateBootstrapApiCache;
 window.CACHE_KEYS = CACHE_KEYS;
 window.clearQuotationCache = clearQuotationCache;

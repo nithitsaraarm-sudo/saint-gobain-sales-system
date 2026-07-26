@@ -40,6 +40,7 @@ function doGet(e) {
 function getBootstrapData(payload) {
   const timer = startPerformanceTimer('bootstrap');
   try {
+    const force = payload && typeof payload === 'object' && payload.force === true;
     const auth = requireApiUser(payload);
     if (!auth.ok) {
       return auth;
@@ -48,7 +49,7 @@ function getBootstrapData(payload) {
     const permissions = getUserPermissions(currentUser);
     const settings = getSystemSettings();
     const cacheKey = 'bootstrap:dashboard:v3:' + String(currentUser.userId || currentUser.username || 'anon') + ':' + String(settings.cacheVersion || settings.identityUpdatedAt || '');
-    const cached = getServerCache(cacheKey);
+    const cached = force ? null : getServerCache(cacheKey);
     if (cached) {
       endPerformanceTimer(timer, 'cache=hit');
       return success(cached);
@@ -59,6 +60,7 @@ function getBootstrapData(payload) {
     const quotes = filterQuotesForUser(allQuotes, currentUser);
     const quoteLines = getBootstrapQuoteLineRows(quotes);
     const scopedCustomers = typeof getCustomers === 'function' ? getCustomers({ currentUser: currentUser }) : null;
+    const promotionsResult = permissions.canViewPromotions ? getPromotions({ currentUser: currentUser }) : success([]);
     const customerCount = scopedCustomers && scopedCustomers.ok && Array.isArray(scopedCustomers.data)
       ? scopedCustomers.data.length
       : countSheetDataRows(CUSTOMERS_SHEET);
@@ -81,7 +83,8 @@ function getBootstrapData(payload) {
         products: countSheetDataRows(SHEET_NAMES.PRODUCTS)
       },
       quotes: quotes.slice(0, 50),
-      quoteLines: quoteLines
+      quoteLines: quoteLines,
+      promotions: promotionsResult.ok && Array.isArray(promotionsResult.data) ? promotionsResult.data : []
     };
     setServerCache(cacheKey, data, 300);
     endPerformanceTimer(timer, 'cache=miss');
@@ -108,19 +111,9 @@ function countSheetDataRows(sheetName) {
 
 function filterQuotesForUser(quotes, user) {
   const list = Array.isArray(quotes) ? quotes : [];
-  if (hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.VIEWER])) {
-    return list;
-  }
-  if (hasRole(user, [USER_ROLES.SALES])) {
-    const userId = String(user && user.userId || '').trim().toLowerCase();
-    const username = String(user && user.username || '').trim().toLowerCase();
-    return list.filter(function (quote) {
-      const createdById = String(quote.createdById || quote.updatedById || '').trim().toLowerCase();
-      const createdBy = String(quote.createdBy || quote.updatedBy || '').trim().toLowerCase();
-      return (userId && createdById === userId) || (username && createdBy === username);
-    });
-  }
-  return [];
+  return list.filter(function (quote) {
+    return canAccessQuotationRecord(user, quote).ok;
+  });
 }
 
 function getSuperAdminOnlySystemIdentityError_() {
@@ -482,12 +475,233 @@ function ensureSettingsSheetColumns_(sheet) {
   }
 }
 
-function savePromotion(payload) {
+function sanitizePromotionText_(value, maxLength) {
+  const text = String(value || '').replace(/[<>]/g, '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const limit = maxLength || 200;
+  return text.length > limit ? text.slice(0, limit) : text;
+}
+
+function normalizePromotionBrand_(value) {
+  const text = String(value || '').trim().toUpperCase();
+  if (text.indexOf('GYPROC') >= 0 || text === 'GYP') return 'Gyproc';
+  if (text.indexOf('WEBER') >= 0 || text === 'WEB') return 'Weber';
+  return '';
+}
+
+function parsePromotionActiveFlag_(value) {
+  if (value === false) return false;
+  const text = String(value === null || value === undefined ? '' : value).trim().toLowerCase();
+  if (!text) return true;
+  if (text === 'false' || text === 'no' || text === '0' || text === 'inactive' || text === 'disabled') return false;
+  return true;
+}
+
+function normalizePromotionObject_(row) {
+  const source = row && typeof row === 'object' ? row : {};
+  const promotionId = sanitizePromotionText_(source.promotionId || source.id || source.promoId, 80);
+  const brand = normalizePromotionBrand_(source.brand || source.businessUnit || source.quoteType);
+  const productName = sanitizePromotionText_(source.productName || source.itemName || source.name, 150);
+  const description = sanitizePromotionText_(source.description || source.detail || source.notes, 300);
+  const discountText = sanitizePromotionText_(source.discountText || source.promoText || source.promotionText, 150);
+  const active = parsePromotionActiveFlag_(source.active !== undefined ? source.active : source.status);
+  return Object.assign({}, source, {
+    promotionId: promotionId,
+    id: promotionId,
+    brand: brand,
+    productName: productName,
+    description: description,
+    discountText: discountText,
+    active: active,
+    status: active ? 'Active' : 'Inactive',
+    createdAt: sanitizePromotionText_(source.createdAt, 80),
+    updatedAt: sanitizePromotionText_(source.updatedAt, 80),
+    updatedBy: sanitizePromotionText_(source.updatedBy, 80)
+  });
+}
+
+function getPromotionIdentityKey_(promotion) {
+  const item = normalizePromotionObject_(promotion);
+  return [
+    String(item.brand || '').trim().toLowerCase(),
+    String(item.productName || '').trim().toLowerCase(),
+    String(item.description || '').trim().toLowerCase(),
+    String(item.discountText || '').trim().toLowerCase(),
+    item.active === false ? 'inactive' : 'active'
+  ].join('|');
+}
+
+function generatePromotionId_() {
+  if (typeof generateId === 'function') {
+    return generateId('PROMO');
+  }
+  return 'PROMO_' + new Date().getTime() + '_' + Math.floor(Math.random() * 10000);
+}
+
+function clearPromotionCaches_() {
+  if (typeof clearSheetDataCache === 'function') {
+    clearSheetDataCache(PROMOTIONS_SHEET);
+  }
+  clearServerCache('bootstrap:lightweight');
+}
+
+function getPromotions(payload) {
   try {
-    return success(payload || {}, 'Promotion saved');
+    const data = payload && typeof payload === 'object' ? payload : {};
+    const auth = data.currentUser ? success(data.currentUser) : requireApiUser(data);
+    if (!auth.ok) return auth;
+    const permissions = getUserPermissions(auth.data);
+    if (!permissions.canViewPromotions) {
+      return forbidden('Insufficient permission');
+    }
+    const result = getSheetData(PROMOTIONS_SHEET);
+    if (!result.ok) {
+      return result;
+    }
+    const promotions = (Array.isArray(result.data) ? result.data : []).map(normalizePromotionObject_).filter(function (promotion) {
+      return promotion.active !== false;
+    });
+    return success(promotions);
+  } catch (error) {
+    logError('getPromotions', error);
+    return fail(error && error.message ? error.message : 'Failed to load promotions');
+  }
+}
+
+function ensurePromotionSheetColumns_(sheet) {
+  const requiredHeaders = getHeadersForSheet(PROMOTIONS_SHEET);
+  var headers = getHeaders(sheet).map(function (header) {
+    return String(header || '').trim();
+  }).filter(function (header) {
+    return header;
+  });
+  if (!headers.length) {
+    sheet.getRange(1, 1, 1, requiredHeaders.length).setValues([requiredHeaders]);
+    return requiredHeaders.slice();
+  }
+  var changed = false;
+  requiredHeaders.forEach(function (header) {
+    if (headers.indexOf(header) < 0) {
+      headers.push(header);
+      changed = true;
+    }
+  });
+  if (changed) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  }
+  return headers;
+}
+
+function getPromotionSheetRowsLocked_(sheet, headers) {
+  if (!sheet || sheet.getLastRow() < 2) {
+    return [];
+  }
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), headers.length)).getDisplayValues();
+  return values.map(function (rowValues, index) {
+    const record = {};
+    headers.forEach(function (header, columnIndex) {
+      if (header) {
+        record[header] = rowValues[columnIndex] || '';
+      }
+    });
+    record._rowNumber = index + 2;
+    record._rowValues = rowValues;
+    return record;
+  });
+}
+
+function savePromotion(payload) {
+  var lock = null;
+  try {
+    const data = payload && typeof payload === 'object' ? payload : {};
+    const auth = data.currentUser ? success(data.currentUser) : requireApiRole(data, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN]);
+    if (!auth.ok) return auth;
+    const permissions = getUserPermissions(auth.data);
+    if (!permissions.canManagePromotions) {
+      return forbidden('Insufficient permission');
+    }
+    const brand = normalizePromotionBrand_(data.brand || data.businessUnit);
+    if (!brand) {
+      return validationError('brand must be Weber or Gyproc');
+    }
+    const productName = sanitizePromotionText_(data.productName || data.itemName || data.name, 150);
+    const discountText = sanitizePromotionText_(data.discountText || data.promoText || data.promotionText, 150);
+    if (!productName) {
+      return validationError('productName is required');
+    }
+    if (!discountText) {
+      return validationError('discountText is required');
+    }
+
+    lock = LockService.getScriptLock();
+    lock.waitLock(10000);
+    const sheet = ensureSheet(PROMOTIONS_SHEET, getHeadersForSheet(PROMOTIONS_SHEET));
+    if (!sheet) {
+      return fail('Unable to access Promotions sheet');
+    }
+    const headers = ensurePromotionSheetColumns_(sheet);
+    const existingRows = getPromotionSheetRowsLocked_(sheet, headers);
+    const existingPromotions = existingRows.map(function (row) {
+      return Object.assign(normalizePromotionObject_(row), {
+        _rowNumber: row._rowNumber,
+        _rowValues: row._rowValues
+      });
+    });
+    const now = new Date().toISOString();
+    const requestedId = sanitizePromotionText_(data.promotionId || data.id || data.promoId, 80);
+    const active = parsePromotionActiveFlag_(data.active !== undefined ? data.active : data.status);
+    const row = {
+      promotionId: requestedId || generatePromotionId_(),
+      brand: brand,
+      productName: productName,
+      description: sanitizePromotionText_(data.description || data.detail || data.notes, 300),
+      discountText: discountText,
+      active: active ? 'TRUE' : 'FALSE',
+      createdAt: now,
+      updatedAt: now,
+      updatedBy: String(auth.data && (auth.data.userId || auth.data.username) || '').trim()
+    };
+    const duplicateKey = getPromotionIdentityKey_(row);
+    const duplicate = existingPromotions.find(function (promotion) {
+      return getPromotionIdentityKey_(promotion) === duplicateKey
+        && normalizeString(promotion.promotionId) !== normalizeString(row.promotionId);
+    });
+    if (duplicate) {
+      return validationError('Duplicate promotion detected', {
+        promotionId: duplicate.promotionId
+      });
+    }
+    const existing = existingPromotions.find(function (promotion) {
+      return normalizeString(promotion.promotionId) === normalizeString(row.promotionId);
+    });
+    const writeObject = existing
+      ? Object.assign({}, row, { createdAt: existing.createdAt || row.createdAt })
+      : row;
+    if (existing && existing._rowNumber) {
+      const previousValues = Array.isArray(existing._rowValues) ? existing._rowValues : [];
+      const updateValues = headers.map(function (header, index) {
+        return writeObject[header] !== undefined ? writeObject[header] : (previousValues[index] || '');
+      });
+      sheet.getRange(existing._rowNumber, 1, 1, headers.length).setValues([updateValues]);
+    } else {
+      const appendValues = headers.map(function (header) {
+        return writeObject[header] !== undefined ? writeObject[header] : '';
+      });
+      sheet.getRange(sheet.getLastRow() + 1, 1, 1, headers.length).setValues([appendValues]);
+    }
+    clearPromotionCaches_();
+    logActivity(row.updatedBy, existing ? 'PROMOTION_UPDATED' : 'PROMOTION_CREATED', 'promotionId=' + row.promotionId);
+    return success(row, existing ? 'Promotion updated' : 'Promotion saved');
   } catch (error) {
     logError('savePromotion', error);
     return fail(error && error.message ? error.message : 'Failed to save promotion');
+  } finally {
+    if (lock) {
+      try {
+        lock.releaseLock();
+      } catch (releaseError) {
+        logWarning('savePromotion', 'Unable to release promotion save lock');
+      }
+    }
   }
 }
 

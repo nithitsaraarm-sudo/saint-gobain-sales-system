@@ -210,8 +210,15 @@ function removeFavoriteCustomer(payload) {
     const headers = rows[0] || [];
     const userIndex = headers.indexOf('userId');
     const customerIndex = headers.indexOf('customerId');
+    const rowsToDelete = [];
     for (var i = rows.length - 1; i >= 1; i--) {
-      if (String(rows[i][userIndex] || '').trim() === userId && String(rows[i][customerIndex] || '').trim() === customerId) sheet.deleteRow(i + 1);
+      if (String(rows[i][userIndex] || '').trim() === userId && String(rows[i][customerIndex] || '').trim() === customerId) rowsToDelete.push(i + 1);
+    }
+    if (typeof deleteSheetRowsByRowNumbers_ === 'function') {
+      const deleteResult = deleteSheetRowsByRowNumbers_(sheet, rowsToDelete);
+      if (!deleteResult.ok) return deleteResult;
+    } else {
+      rowsToDelete.forEach(function (rowNumber) { sheet.deleteRow(rowNumber); });
     }
     logActivity(userId, 'FAVORITE_CUSTOMER_REMOVED', 'customerId=' + customerId);
     return success({ customerId: customerId }, 'นำร้านค้าออกจากรายการโปรดแล้ว');
@@ -255,7 +262,13 @@ function removeCustomerFromAllFavorites_(customerId) {
   if (!sheet || sheet.getLastRow() < 2) return;
   const rows = sheet.getDataRange().getDisplayValues();
   const customerIndex = (rows[0] || []).indexOf('customerId');
+  const rowsToDelete = [];
   for (var i = rows.length - 1; i >= 1; i--) {
-    if (String(rows[i][customerIndex] || '').trim() === String(customerId || '').trim()) sheet.deleteRow(i + 1);
+    if (String(rows[i][customerIndex] || '').trim() === String(customerId || '').trim()) rowsToDelete.push(i + 1);
+  }
+  if (typeof deleteSheetRowsByRowNumbers_ === 'function') {
+    deleteSheetRowsByRowNumbers_(sheet, rowsToDelete);
+  } else {
+    rowsToDelete.forEach(function (rowNumber) { sheet.deleteRow(rowNumber); });
   }
 }

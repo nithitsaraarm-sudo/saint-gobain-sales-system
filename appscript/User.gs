@@ -710,13 +710,21 @@ function migrateUserAreaColumn_(sheet, headers) {
     const lastRow = sheet.getLastRow();
     const lastColumn = Math.max(sheet.getLastColumn(), headers.length);
     const values = sheet.getRange(2, 1, lastRow - 1, lastColumn).getDisplayValues();
+    const areaValues = values.map(function (row) {
+      return [sanitizeUserText(row[areaIndex])];
+    });
+    var changed = false;
     values.forEach(function (row, index) {
       const area = sanitizeUserText(row[areaIndex]);
       const branch = sanitizeUserText(row[branchIndex]);
       if (!area && branch) {
-        sheet.getRange(index + 2, areaIndex + 1).setValue(branch);
+        areaValues[index][0] = branch;
+        changed = true;
       }
     });
+    if (changed) {
+      sheet.getRange(2, areaIndex + 1, areaValues.length, 1).setValues(areaValues);
+    }
   } catch (error) {
     logError('migrateUserAreaColumn_', error);
   }
@@ -733,17 +741,33 @@ function migrateUserFullNameColumn_(sheet, headers) {
     const lastRow = sheet.getLastRow();
     const lastColumn = Math.max(sheet.getLastColumn(), headers.length);
     const values = sheet.getRange(2, 1, lastRow - 1, lastColumn).getDisplayValues();
+    const fullNameValues = values.map(function (row) {
+      return [sanitizeUserText(row[fullNameIndex])];
+    });
+    const quoteDisplayNameValues = quoteDisplayNameIndex >= 0 ? values.map(function (row) {
+      return [sanitizeUserText(row[quoteDisplayNameIndex])];
+    }) : [];
+    var fullNameChanged = false;
+    var quoteDisplayNameChanged = false;
     values.forEach(function (row, index) {
       const fullName = sanitizeUserText(row[fullNameIndex]);
       const displayName = displayNameIndex >= 0 ? sanitizeUserText(row[displayNameIndex]) : '';
       if (!fullName && displayName) {
-        sheet.getRange(index + 2, fullNameIndex + 1).setValue(displayName);
+        fullNameValues[index][0] = displayName;
         row[fullNameIndex] = displayName;
+        fullNameChanged = true;
       }
       if (quoteDisplayNameIndex >= 0 && !sanitizeUserText(row[quoteDisplayNameIndex])) {
-        sheet.getRange(index + 2, quoteDisplayNameIndex + 1).setValue(sanitizeUserText(row[fullNameIndex] || displayName));
+        quoteDisplayNameValues[index][0] = sanitizeUserText(row[fullNameIndex] || displayName);
+        quoteDisplayNameChanged = true;
       }
     });
+    if (fullNameChanged) {
+      sheet.getRange(2, fullNameIndex + 1, fullNameValues.length, 1).setValues(fullNameValues);
+    }
+    if (quoteDisplayNameChanged) {
+      sheet.getRange(2, quoteDisplayNameIndex + 1, quoteDisplayNameValues.length, 1).setValues(quoteDisplayNameValues);
+    }
   } catch (error) {
     logError('migrateUserFullNameColumn_', error);
   }

@@ -148,6 +148,9 @@ function getSheetDataCacheKey(sheetName) {
   if (typeof getUsersSheetName === 'function' && name === String(getUsersSheetName() || '')) {
     return 'sheetData:users';
   }
+  if (name === String(SHEET_NAMES.PROMOTIONS || '') || name === String(typeof PROMOTIONS_SHEET !== 'undefined' ? PROMOTIONS_SHEET : '')) {
+    return 'sheetData:promotions';
+  }
   return '';
 }
 
@@ -318,6 +321,72 @@ function getSheetByName(name) {
   return getSheet(name);
 }
 
+function getRowUpdateRuns_(headers, object) {
+  const source = object && typeof object === 'object' ? object : {};
+  const runs = [];
+  var currentRun = null;
+  headers.forEach(function (header, index) {
+    if (!header || source[header] === undefined) {
+      if (currentRun) {
+        runs.push(currentRun);
+        currentRun = null;
+      }
+      return;
+    }
+    if (!currentRun) {
+      currentRun = { startColumn: index + 1, values: [] };
+    }
+    currentRun.values.push(source[header]);
+  });
+  if (currentRun) {
+    runs.push(currentRun);
+  }
+  return runs;
+}
+
+function applyRowObjectUpdate_(sheet, rowNumber, headers, object) {
+  const runs = getRowUpdateRuns_(headers || [], object || {});
+  runs.forEach(function (run) {
+    sheet.getRange(rowNumber, run.startColumn, 1, run.values.length).setValues([run.values]);
+  });
+  return success({ rowNumber: rowNumber, updatedRuns: runs.length });
+}
+
+function deleteSheetRowsByRowNumbers_(sheet, rowNumbers) {
+  try {
+    const rows = (Array.isArray(rowNumbers) ? rowNumbers : []).map(function (rowNumber) {
+      return parseInt(rowNumber, 10);
+    }).filter(function (rowNumber, index, list) {
+      return !isNaN(rowNumber) && rowNumber > 0 && list.indexOf(rowNumber) === index;
+    }).sort(function (a, b) {
+      return a - b;
+    });
+    if (!rows.length) {
+      return success({ deleted: 0, groups: 0 });
+    }
+    const groups = [];
+    var start = rows[0];
+    var end = rows[0];
+    for (var i = 1; i < rows.length; i++) {
+      if (rows[i] === end + 1) {
+        end = rows[i];
+      } else {
+        groups.push({ start: start, count: end - start + 1 });
+        start = rows[i];
+        end = rows[i];
+      }
+    }
+    groups.push({ start: start, count: end - start + 1 });
+    for (var j = groups.length - 1; j >= 0; j--) {
+      sheet.deleteRows(groups[j].start, groups[j].count);
+    }
+    return success({ deleted: rows.length, groups: groups.length });
+  } catch (error) {
+    logError('deleteSheetRowsByRowNumbers_', error);
+    return fail(error && error.message ? error.message : 'Failed to delete rows');
+  }
+}
+
 function updateRowById(sheetName, idColumn, idValue, object) {
   var lock = null;
   try {
@@ -348,13 +417,12 @@ function updateRowById(sheetName, idColumn, idValue, object) {
       return fail('Record not found');
     }
     const actualRowIndex = targetRowIndex + 2;
-    headers.forEach(function (header, index) {
-      if (object[header] !== undefined) {
-        sheet.getRange(actualRowIndex, index + 1).setValue(object[header]);
-      }
-    });
+    const updateResult = applyRowObjectUpdate_(sheet, actualRowIndex, headers, object);
+    if (!updateResult.ok) {
+      return updateResult;
+    }
     clearSheetDataCache(sheetName);
-    return success({ sheetName: sheetName, idColumn: idColumn, idValue: idValue });
+    return success({ sheetName: sheetName, idColumn: idColumn, idValue: idValue, updatedRuns: updateResult.data && updateResult.data.updatedRuns || 0 });
   } catch (error) {
     logError('updateRowById', error);
     return fail(error && error.message ? error.message : 'Failed to update row');

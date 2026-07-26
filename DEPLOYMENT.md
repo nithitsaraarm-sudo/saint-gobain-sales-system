@@ -8,6 +8,19 @@
 - อัปเดต `CHANGELOG.md` ก่อน tag
 
 ## Deploy Frontend (GitHub Pages)
+
+### Environment configuration
+
+Frontend runtime configuration is centralized in `js/config.js`.
+
+- `APP_CONFIG.version` is the canonical frontend release version.
+- `APP_CONFIG.cacheVersion` must match the release version used by `index.html`, `manifest.json`, and `service-worker.js` cache-busting query strings.
+- `APP_CONFIG.environment` supports `development`, `uat`, and `production`.
+- `APP_CONFIG.enableDemoLogin` must remain `false` in production.
+- `APP_CONFIG.gasWebAppUrl` stores the deployed Google Apps Script Web App URL. This URL is public deployment configuration, not a private credential.
+
+For UAT or production-specific deployments, publish an environment-specific `js/config.js` with the target Apps Script Web App URL and matching release/cache version. Do not store passwords, session tokens, or private API credentials in frontend configuration.
+
 1. Push code to `main` branch
 2. เปิด GitHub Pages ใน repository settings ให้ใช้ branch `main` และ folder `/` (root)
 3. เมื่อ push แล้วเว็บจะ live ที่ `https://<org>.github.io/<repo>`

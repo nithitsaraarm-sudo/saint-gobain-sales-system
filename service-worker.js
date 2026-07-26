@@ -1,29 +1,29 @@
-const CACHE_NAME = 'sales-system-v5-0.5.23';
+const CACHE_NAME = 'sales-system-v5-0.5.25';
 const ASSETS = [
   './',
   './index.html',
   './favicon.ico',
-  './favicon.ico?v=0.5.7',
+  './favicon.ico?v=0.5.25',
   './manifest.json',
-  './manifest.json?v=0.5.7',
+  './manifest.json?v=0.5.25',
   './css/main.css',
-  './css/main.css?v=0.5.23',
+  './css/main.css?v=0.5.25',
   './js/config.js',
-  './js/config.js?v=0.5.23',
+  './js/config.js?v=0.5.25',
   './js/api.js',
-  './js/api.js?v=0.5.17',
+  './js/api.js?v=0.5.25',
   './js/app.js',
-  './js/app.js?v=0.5.23',
+  './js/app.js?v=0.5.25',
   './js/auth.js',
-  './js/auth.js?v=0.5.3',
+  './js/auth.js?v=0.5.25',
   './js/quotation.js',
-  './js/quotation.js?v=0.5.18',
+  './js/quotation.js?v=0.5.25',
   './images/gyproc-logo.png',
-  './images/gyproc-logo.png?v=0.5.8',
+  './images/gyproc-logo.png?v=0.5.25',
   './images/weber-logo.png',
-  './images/weber-logo.png?v=0.5.8',
+  './images/weber-logo.png?v=0.5.25',
   './assets/icons/logout.svg',
-  './assets/icons/logout.svg?v=0.5.14',
+  './assets/icons/logout.svg?v=0.5.25',
   './assets/icons/sidebar/home.png',
   './assets/icons/sidebar/dashboard.png',
   './assets/icons/sidebar/customer.png',
@@ -39,20 +39,47 @@ const ASSETS = [
   './assets/icons/sidebar/settings.png',
   './assets/icons/sidebar/logout.png',
   './icons/favicon-16x16.png',
-  './icons/favicon-16x16.png?v=0.5.7',
+  './icons/favicon-16x16.png?v=0.5.25',
   './icons/favicon-32x32.png',
-  './icons/favicon-32x32.png?v=0.5.7',
+  './icons/favicon-32x32.png?v=0.5.25',
   './icons/apple-touch-icon.png',
-  './icons/apple-touch-icon.png?v=0.5.7',
+  './icons/apple-touch-icon.png?v=0.5.25',
   './icons/icon-192.png',
-  './icons/icon-192.png?v=0.5.7',
+  './icons/icon-192.png?v=0.5.25',
   './icons/icon-512.png',
-  './icons/icon-512.png?v=0.5.7',
+  './icons/icon-512.png?v=0.5.25',
   './icons/icon-maskable-192.png',
-  './icons/icon-maskable-192.png?v=0.5.7',
+  './icons/icon-maskable-192.png?v=0.5.25',
   './icons/icon-maskable-512.png',
-  './icons/icon-maskable-512.png?v=0.5.7'
+  './icons/icon-maskable-512.png?v=0.5.25'
 ];
+
+const STATIC_ASSET_URLS = new Set(ASSETS.map(asset => new URL(asset, self.location.href).href));
+const SENSITIVE_QUERY_KEYS = ['sessionToken', 'sg_token', 'token', 'payload', 'callback', 'password'];
+const API_HOST_PATTERNS = ['script.google.com', 'script.googleusercontent.com'];
+
+function isSensitiveRequestUrl(url) {
+  if (API_HOST_PATTERNS.indexOf(url.hostname) >= 0) {
+    return true;
+  }
+  return SENSITIVE_QUERY_KEYS.some(key => url.searchParams.has(key));
+}
+
+function isApprovedStaticAsset(request) {
+  try {
+    const url = new URL(request.url);
+    if (url.origin !== self.location.origin || isSensitiveRequestUrl(url)) {
+      return false;
+    }
+    return STATIC_ASSET_URLS.has(url.href);
+  } catch (error) {
+    return false;
+  }
+}
+
+function isNavigationRequest(request) {
+  return request.mode === 'navigate' || request.destination === 'document';
+}
 
 self.addEventListener('install', event => {
   event.waitUntil(
@@ -68,11 +95,19 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
-  event.respondWith(
-    caches.match(event.request).then(cached => cached || fetch(event.request).then(response => {
-      const copy = response.clone();
-      caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
-      return response;
-    }).catch(() => caches.match('./index.html')))
-  );
+  if (isApprovedStaticAsset(event.request)) {
+    event.respondWith(
+      caches.match(event.request).then(cached => cached || fetch(event.request).then(response => {
+        if (response && response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
+        }
+        return response;
+      }))
+    );
+    return;
+  }
+  if (isNavigationRequest(event.request)) {
+    event.respondWith(fetch(event.request).catch(() => caches.match('./index.html')));
+  }
 });

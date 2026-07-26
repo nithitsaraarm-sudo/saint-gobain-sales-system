@@ -19,11 +19,31 @@ function toastMessage(message) {
   }
 }
 
+function isDemoLoginEnabled() {
+  const env = String(window.APP_ENV || 'production').trim().toLowerCase();
+  return env !== 'production' && window.ENABLE_DEMO_LOGIN === true;
+}
+
+function applyDemoLoginVisibility() {
+  const enabled = isDemoLoginEnabled();
+  document.querySelectorAll('[data-demo-login="true"]').forEach(function (element) {
+    element.hidden = !enabled;
+    element.classList.toggle('hidden', !enabled);
+  });
+}
+
 function saveSession(user, sessionToken) {
   try {
-    ['sg_bootstrap_cache', 'sg_quotation_history_cache', 'sg_quotation_cache'].forEach(function (key) {
-      localStorage.removeItem(key);
-    });
+    if (typeof clearPrivateApiCaches === 'function') {
+      clearPrivateApiCaches();
+    } else {
+      ['sg_bootstrap_cache', 'sg_products_cache', 'sg_customers_cache', 'sg_quotation_history_cache', 'sg_quotation_cache', 'sg_discount_cache'].forEach(function (key) {
+        localStorage.removeItem(key);
+      });
+    }
+    if (typeof resetAuthenticatedFrontendState === 'function') {
+      resetAuthenticatedFrontendState();
+    }
   } catch (error) {}
   if (user) {
     const normalizedUser = Object.assign({}, user, {
@@ -43,6 +63,14 @@ function saveSession(user, sessionToken) {
 }
 
 function clearSession() {
+  try {
+    if (typeof clearPrivateApiCaches === 'function') {
+      clearPrivateApiCaches();
+    }
+    if (typeof resetAuthenticatedFrontendState === 'function') {
+      resetAuthenticatedFrontendState();
+    }
+  } catch (error) {}
   localStorage.removeItem('sg_user');
   localStorage.removeItem('sg_token');
   localStorage.removeItem('sg_role');
@@ -139,6 +167,10 @@ async function login() {
 
 async function startTestMode() {
   try {
+    if (!isDemoLoginEnabled()) {
+      toastMessage('Demo Login is disabled');
+      return { ok: false, code: 'FORBIDDEN', message: 'Demo Login is disabled' };
+    }
     const response = await callApi('demoLogin', {});
     if (!response.ok) {
       toastMessage(response.message || 'เข้าสู่ระบบไม่สำเร็จ');
@@ -363,8 +395,11 @@ window.clearSession = clearSession;
 window.loadBootstrap = loadBootstrap;
 window.updateProfile = updateProfile;
 window.changePassword = changePassword;
+window.isDemoLoginEnabled = isDemoLoginEnabled;
+window.applyDemoLoginVisibility = applyDemoLoginVisibility;
 
 document.addEventListener('DOMContentLoaded', function () {
+  applyDemoLoginVisibility();
   try {
     const remembered = localStorage.getItem('rememberLogin') === 'true';
     const username = localStorage.getItem('rememberUsername') || '';

@@ -46,6 +46,9 @@ function notifyAppVersionUpdate(){
 }
 
 function clearAppCaches(){
+  if(typeof clearPrivateApiCaches==='function'){
+    clearPrivateApiCaches();
+  }
   const cacheKeys=Array.isArray(window.APP_CACHE_KEYS)?window.APP_CACHE_KEYS:[];
   cacheKeys.forEach(key=>{
     try{
@@ -61,9 +64,51 @@ function clearAppCaches(){
   console.log('[CACHE CLEARED]');
 }
 
+function resetAuthenticatedFrontendState(){
+  DB=normalizeDb();
+  CART=[];
+  selectedCustomerId='';
+  PRODUCT_CALC_PRODUCT=null;
+  PRODUCT_CALC_STATE={selectedProduct:null,originalUnitPrice:0,editedUnitPrice:0,discountPercent:0,quantity:1,recordKey:'',sourceListIndex:null};
+  PRODUCT_CALC_RECORDS=new Map();
+  PRODUCT_CALC_RENDER_SEQUENCE=0;
+  PRODUCT_CALC_RECORD_SEQUENCE=0;
+  PRODUCT_SELECTION_RECORDS=new Map();
+  PRODUCT_SELECTION_RECORD_SEQUENCE=0;
+  bootstrapLoaded=false;
+  bootstrapPromise=null;
+  quoteHistoryLoaded=false;
+  quoteHistoryPromise=null;
+  customersLoaded=false;
+  productsLoaded=false;
+  customersPromise=null;
+  customersPromiseForce=false;
+  customersQueuedForce=false;
+  customersRequestSeq+=1;
+  customerRefreshPromise=null;
+  productsPromise=null;
+  customerFormOptionsLoaded=false;
+  customerFormOptionsPromise=null;
+  customerFormOptionsError='';
+  FAVORITE_CUSTOMERS=[];
+  FAVORITE_CUSTOMER_ROWS=[];
+  favoriteCustomersPromise=null;
+  favoriteCustomersLoadSeq+=1;
+  FAVORITE_PRODUCTS=[];
+  PINNED_PRODUCTS=[];
+  productPreferencesLoaded=false;
+  productPreferencesPromise=null;
+  Object.keys(openQuotationDetailPromises).forEach(key=>delete openQuotationDetailPromises[key]);
+  revokeProfileImageObjectUrl();
+  PROFILE_IMAGE_DATA='';
+  PROFILE_IMAGE_OBJECT_URL='';
+  PROFILE_IMAGE_PROCESSING_PROMISE=null;
+  PROFILE_IMAGE_SELECTION_SEQUENCE+=1;
+}
+
 function checkAppVersion(){
   try{
-    const newVersion=String(window.APP_VERSION||'0.4.0').trim();
+    const newVersion=String(window.APP_VERSION||'0.5.25').trim();
     console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
     const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
     if(oldVersion===newVersion){
@@ -914,7 +959,7 @@ async function loadData(options){
   return bootstrapPromise;
 }
 function toggleMenu(open){placeSidebarToggleButton();if(isMobileSidebar()){const sidebar=document.getElementById('sidebar');const next=typeof open==='boolean'?open:!sidebar?.classList.contains('open');setSidebarDrawer(next);return;}if(open===false)return;setSidebarMini(!isSidebarMini())}
-function go(page,btn){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active')); document.getElementById('page-'+page).classList.add('active'); document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('active')); if(btn)btn.classList.add('active'); if(isMobileSidebar())toggleMenu(false); window.scrollTo({top:0,behavior:'smooth'}); ensurePageData(page); if(page==='quotes')ensureQuotationHistoryLoaded();}
+function go(page,btn){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active')); document.getElementById('page-'+page).classList.add('active'); document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('active')); if(btn)btn.classList.add('active'); if(isMobileSidebar())toggleMenu(false); window.scrollTo({top:0,behavior:'smooth'}); const pageData=ensurePageData(page); if(page==='quotes')ensureQuotationHistoryLoaded(); return pageData;}
 function renderAll(){renderBrand();renderProfile();renderHome();renderPromos();renderSettings();}
 function renderBrand(){applySystemIdentityToUI(getSystemIdentitySettingsForUi());}
 function greeting(){const personal=String(USER?.greetingText||'').trim(); if(personal)return personal; let h=new Date().getHours(),s=DB.settings||{}; if(h<12)return s.greetingMorning||'สวัสดีตอนเช้า'; if(h<17)return s.greetingAfternoon||'สวัสดีตอนบ่าย'; if(h<21)return s.greetingEvening||'สวัสดีตอนเย็น'; return s.greetingNight||'สวัสดีตอนดึก';}
@@ -979,7 +1024,6 @@ function currentProfileImage(){return getRawProfileImageUrl(USER)}
 function currentDisplayName(){return USER&&(USER.displayName||USER.fullName||USER.username)||'-'}
 function currentJobTitle(){return USER&&(USER.jobTitle||USER.position||USER.area||USER.branch)||'-'}
 function renderProfile(){if(!USER)return; normalizeUserProfileImageState(USER); const displayName=currentDisplayName(); const jobTitle=currentJobTitle(); const photo=currentProfileImage(); const sideName=$('sideName'),sidePosition=$('sidePosition'),sideAvatar=$('sideAvatar'),topName=$('topName'),topPosition=$('topPosition'),topAvatar=$('topAvatar'); if(sideName)sideName.textContent=displayName; if(sidePosition)sidePosition.textContent=jobTitle; if(topName)topName.textContent=displayName; if(topPosition)topPosition.textContent=jobTitle; renderProfileImageElement(sideAvatar,photo,USER); renderProfileImageElement(topAvatar,photo,USER);}
-function renderHome(){let name=(currentDisplayName()||'-').split(' ')[0];const customerCount=DB.customers.length||parseClientNumber(DB.counts?.customers);const productCount=DB.products.length||parseClientNumber(DB.counts?.products); document.getElementById('greetingText').textContent=`${greeting()}, ${name} 👋`; document.getElementById('welcomeText').textContent=DB.settings?.welcomeText||'-'; document.getElementById('statQuotes').textContent=DB.quotes.length; document.getElementById('statSales').textContent=Number(DB.quotes.reduce((s,q)=>s+Number(q.total||0),0)).toLocaleString('th-TH'); document.getElementById('statCustomers').textContent=customerCount; document.getElementById('statPending').textContent=DB.quotes.filter(q=>q.status==='รออนุมัติ').length; document.getElementById('latestCustomers').innerHTML=DB.customers.slice(0,4).map(c=>`<div class="row">🏪 <b>${c.customerName||'-'}</b><span style="margin-left:auto;color:var(--muted)">${c.province||''}</span></div>`).join(''); document.getElementById('activePromos').innerHTML=DB.promotions.slice(0,4).map(p=>`<div class="row"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${p.brand||'-'}</span><div><b>${p.productName||'-'}</b><br><small>${p.description||p.discountText||''}</small></div></div>`).join(''); document.getElementById('bestProducts').innerHTML=DB.products.slice(0,3).map((p,i)=>`<div><div class="product-img">${p.brand==='Weber'?'🟨':'🟦'}</div><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${i+1}</span><h3>${p.productName||'-'}</h3><p style="color:var(--muted)">${p.brand||''}</p></div>`).join(''); document.getElementById('rProducts').textContent=productCount; document.getElementById('rCustomers').textContent=customerCount; document.getElementById('rPromos').textContent=DB.promotions.length; document.getElementById('rQuotes').textContent=DB.quotes.length;}
 function ensureCustomerCrmUi(){
   const page=document.getElementById('page-customers');
   const toolbar=page?.querySelector('.toolbar');
@@ -1038,10 +1082,12 @@ function ensureCustomerCrmUi(){
 }
 function customerSearchText(c){return getCustomerSearchFields().map(field=>c&&c[field]||'').join(' ').toLowerCase()}
 function renderCustomerSummary(customers){let counts={all:customers.length,gyro:0,weber:0,both:0}; customers.forEach(c=>{if(c.sellsGyproc&&!c.sellsWeber)counts.gyro++; if(c.sellsWeber&&!c.sellsGyproc)counts.weber++; if(c.sellsGyproc&&c.sellsWeber)counts.both++;}); let el=$('customerSummary'); if(el)el.innerHTML=`<div class="crm-stat"><small>ร้านค้าทั้งหมดในเขต</small><b>${counts.all}</b></div><div class="crm-stat"><small>Weber</small><b>${counts.weber}</b></div><div class="crm-stat"><small>Gyproc</small><b>${counts.gyro}</b></div><div class="crm-stat"><small>Weber/Gyproc</small><b>${counts.both}</b></div>`}
-function renderCustomers(){ensureCustomerCrmUi();let q=$('customerSearch')?.value||'';let type=($('customerTypeFilter')?.value||'');let fields=['customerId','customerCode','customerName','province','customerType','phone','notes','address'];let customers=DB.customers.filter(c=>smartMatch(c,q,fields)&&(!type||c.customerType===type));let limited=limitList(customers,LIST_RENDER_LIMIT);renderCustomerSummary(DB.customers);let grid=$('customerGrid'); if(!grid)return; grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(c=>`<div class="card"><h3>${c.customerName||'-'}</h3><p>รหัสร้านค้า: ${c.customerCode||c.customerId||c.id||'-'}</p><p>ประเภท: ${c.customerType||'-'}</p><p>จังหวัด: ${c.province||'-'}</p><p>โทร: ${c.phone||'-'}</p><p>ที่อยู่: ${c.address||'-'}</p><p>หมายเหตุ: ${c.notes||'-'}</p><button class="ghost" onclick="selectCustomer('${c.customerId}')">ออกใบเสนอราคา</button></div>`).join('')}
 function productSearchText(p){return [p.productId,p.sku,p.productName,p.description,p.brand,p.discountGroup,p.groupCode,p.unit,p.notes,p.promoText].join(' ').toLowerCase()}
 function htmlAttr(value){
   return String(value??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function jsStringLiteralAttr(value){
+  return htmlAttr(JSON.stringify(String(value??'')));
 }
 let PRODUCT_PROMO_LAST_FOCUS=null, productPromoEscapeBound=false;
 function getProductPromoText(product){
@@ -1079,7 +1125,7 @@ function renderProductPromotionTeaser(product,recordKey,context){
   const promoText=getProductPromoText(product);
   const promoLines=getProductPromoLines(product);
   if(!promoLines.length)return '';
-  const jsRecordKey=escapeHtml(JSON.stringify(String(recordKey||'')));
+  const jsRecordKey=jsStringLiteralAttr(recordKey||'');
   const contextAttr=htmlAttr(context||'product');
   const productName=String(product&&product.productName||product&&product.name||'สินค้า').trim()||'สินค้า';
   const ariaLabel=htmlAttr('ดูโปรโมชั่นของสินค้า '+productName);
@@ -1372,18 +1418,20 @@ function addProductCardToQuote(productId,event){
 }
 function getProductDiscount(customerId, product){
   const groupCode=String(product&&product.groupCode||'').trim();
-  const cacheKey=String(customerId||'').trim()+'|'+groupCode;
-  if(typeof getCache==='function'&&cacheKey!=='|'){
-    const cachedDiscounts=getCache('sg_discount_cache')||{};
+  const userScope=String(USER&&USER.userId||USER&&USER.username||localStorage.getItem('sg_userId')||'anonymous').trim().replace(/[^A-Za-z0-9_-]/g,'_')||'anonymous';
+  const storageKey='sg_discount_cache:'+userScope;
+  const cacheKey=userScope+'|'+String(customerId||'').trim()+'|'+groupCode;
+  if(typeof getCache==='function'&&String(customerId||'').trim()&&groupCode){
+    const cachedDiscounts=getCache(storageKey)||{};
     if(cachedDiscounts[cacheKey]!==undefined){
       return Promise.resolve({ok:true,data:{customerId:customerId,groupCode:groupCode,discountPercent:Number(cachedDiscounts[cacheKey]||0),source:'local_cache'}});
     }
   }
   return callApi('discount',{customerId:customerId,groupCode:groupCode}).then(function(response){
     if(response&&response.ok&&typeof getCache==='function'&&typeof setCache==='function'){
-      const cachedDiscounts=getCache('sg_discount_cache')||{};
+      const cachedDiscounts=getCache(storageKey)||{};
       cachedDiscounts[cacheKey]=Number(response.data&&response.data.discountPercent||0);
-      setCache('sg_discount_cache',cachedDiscounts,60);
+      setCache(storageKey,cachedDiscounts,60);
     }
     return response;
   });
@@ -1563,7 +1611,6 @@ function ensurePageData(page){
   }
   return Promise.resolve({ok:true});
 }
-function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>`<div class="card"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${p.brand||'-'}</span><h3>${p.productName||'-'}</h3><p>รหัสสินค้า: ${p.sku||p.productId||p.id||'-'}</p><p>${p.unit||'-'}</p><b>${money(p.listPrice)}</b><br><button class="ghost" onclick='addCart(${JSON.stringify(p)})'>เพิ่มลงใบเสนอราคา</button></div>`).join('')}
 function setupQuoteSearchEnhancements(){
   const originalRenderQuote=window.renderQuote;
   const originalSelectCustomer=window.selectCustomer;
@@ -1631,16 +1678,6 @@ function setSelectedQuoteCustomer(customerId,updateInput){
     if(input)input.value=customer?customer.customerName||customer.customerCode||id:id;
   }
 }
-function renderQuoteCustomerPicker(forceShow){
-  const picker=$('quoteCustomerPicker'),input=$('quoteCustomerSearch');
-  if(!picker||!input)return;
-  const q=input.value||'';
-  const shouldShow=forceShow||document.activeElement===input;
-  if(!shouldShow){picker.classList.remove('show');picker.innerHTML='';return;}
-  const matches=DB.customers.filter(c=>smartMatch(c,q,getQuoteCustomerFields())).slice(0,8);
-  picker.classList.add('show');
-  picker.innerHTML=matches.length?matches.map(c=>`<button type="button" class="quote-option" onclick="chooseQuoteCustomer('${c.customerId}')"><b>${c.customerName||'-'}</b><small>รหัสร้านค้า: ${c.customerCode||c.customerId||'-'} · ${c.province||'-'} · ${c.customerType||'-'}</small></button>`).join(''):'<div class="quote-empty">ไม่พบรายการที่ค้นหา</div>';
-}
 function chooseQuoteCustomer(customerId){
   setSelectedQuoteCustomer(customerId,true);
   const customer=findCustomerById(customerId);
@@ -1650,14 +1687,7 @@ function chooseQuoteCustomer(customerId){
   const picker=$('quoteCustomerPicker');
   if(picker)picker.classList.remove('show');
 }
-function renderQuoteProductPicker(){
-  const q=$('productSearch')?.value||'';
-  const picker=$('productPicker');
-  if(!picker)return;
-  const matches=DB.products.filter(p=>smartMatch(p,q,getQuoteProductFields())).slice(0,8);
-  picker.innerHTML=matches.length?matches.map(p=>`<div class="row"><div class="product-img">${p.brand==='Weber'?'🟨':'🟦'}</div><div><b>${p.productName||'-'}</b><br><small>${p.brand||'-'} · รหัสสินค้า: ${p.sku||p.productId||p.id||'-'} · ${p.unit||'-'} · ${money(p.listPrice)}</small></div><button class="tiny" style="margin-left:auto" onclick='addCart(${JSON.stringify(p)})'>+ เพิ่ม</button></div>`).join(''):'<div class="row quote-empty">ไม่พบรายการที่ค้นหา</div>';
-}
-function renderPromos(){let q=($('searchPromos')?.value||'').toLowerCase(); $('promoGrid').innerHTML=DB.promotions.filter(p=>JSON.stringify(p).toLowerCase().includes(q)).map(p=>`<div class="card"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${p.brand}</span><h3>${p.productName}</h3><p>${p.description||''}</p><b>${p.discountText||''}</b><p style="color:var(--muted)">${p.startDate||''} - ${p.endDate||''}</p></div>`).join('')}
+function renderPromos(){let q=($('searchPromos')?.value||'').toLowerCase(); const grid=$('promoGrid'); if(!grid)return; grid.innerHTML=DB.promotions.filter(p=>JSON.stringify(p).toLowerCase().includes(q)).map(p=>`<div class="card"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${escapeHtml(p.brand||'-')}</span><h3>${escapeHtml(p.productName||'-')}</h3><p>${escapeHtml(p.description||'')}</p><b>${escapeHtml(p.discountText||'')}</b><p style="color:var(--muted)">${escapeHtml(p.startDate||'')} - ${escapeHtml(p.endDate||'')}</p></div>`).join('')}
 function normalizeQuoteTypeForUi(value){
   const text=String(value||'').trim().toUpperCase();
   return text==='GYPROC'?'GYPROC':'WEBER';
@@ -1695,7 +1725,7 @@ function normalizeQuoteRecord(quote){
 
 function dashboardText(value, fallback){
   const text=String(value??'').trim();
-  return text||fallback||'-';
+  return escapeHtml(text||fallback||'-');
 }
 function dashboardMoney(value){
   return money(parseClientNumber(value));
@@ -1913,7 +1943,14 @@ function renderHistory(){
   }
   const keyword=$('quoteHistorySearch')?.value||'';
   const quotes=(Array.isArray(DB.quotes)?DB.quotes:[]).map(normalizeQuoteRecord).filter(q=>smartMatch(q,keyword,getQuoteSearchFields())).sort((a,b)=>new Date(b.createdAt||b.updatedAt||0)-new Date(a.createdAt||a.updatedAt||0));
-  history.innerHTML=quotes.length?quotes.map(q=>`<div class="row quote-history-row"><div><b>${q.quoteNo||'-'}</b><br><small>${q.customerName||'-'} · ${q.customerId||'-'}</small></div><span class="quote-type-badge ${quoteTypeClassForUi(q.quoteType)}">${quoteTypeLabelForUi(q.quoteType)}</span><span class="pill ${q.status==='CANCELLED'?'yellow':'blue'}">${q.status||'-'}</span><span>${formatDateTime(q.createdAt)}</span><b style="margin-left:auto">${money(q.grandTotal||q.total)}</b><button class="tiny" onclick="openQuotationDetail('${htmlAttr(q.quoteId||q.quoteNo||'')}')">เปิดดู</button><button class="tiny" data-quote-edit-button data-quote-edit-source="quotation-history" data-quote-id="${htmlAttr(q.quoteId||'')}" data-quote-no="${htmlAttr(q.quoteNo||'')}" onclick="navigateToQuotationEdit('${htmlAttr(q.quoteId||q.quoteNo||'')}',event,{source:'quotation-history'})">แก้ไข</button></div>`).join(''):'<p style="color:var(--muted)">ยังไม่มีใบเสนอราคา</p>';
+  const canEdit=canEditQuotationsUi();
+  history.innerHTML=quotes.length?quotes.map(q=>{
+    const refAttr=htmlAttr(q.quoteId||q.quoteNo||'');
+    const refJs=jsStringLiteralAttr(q.quoteId||q.quoteNo||'');
+    const quoteNo=htmlAttr(q.quoteNo||'');
+    const editAction=canEdit?`<button type="button" class="tiny" data-quote-edit-button data-quote-edit-source="quotation-history" data-quote-id="${refAttr}" data-quote-no="${quoteNo}" onclick="navigateToQuotationEdit(${refJs},event,{source:'quotation-history'})">แก้ไข</button>`:'';
+    return `<div class="row quote-history-row"><div><b>${escapeHtml(q.quoteNo||'-')}</b><br><small>${escapeHtml(q.customerName||'-')} · ${escapeHtml(q.customerId||'-')}</small></div><span class="quote-type-badge ${quoteTypeClassForUi(q.quoteType)}">${escapeHtml(quoteTypeLabelForUi(q.quoteType))}</span><span class="pill ${q.status==='CANCELLED'?'yellow':'blue'}">${escapeHtml(q.status||'-')}</span><span>${escapeHtml(formatDateTime(q.createdAt))}</span><b style="margin-left:auto">${money(q.grandTotal||q.total)}</b><button type="button" class="tiny" onclick="openQuotationDetail(${refJs})">เปิดดู</button>${editAction}</div>`;
+  }).join(''):'<p style="color:var(--muted)">ยังไม่มีใบเสนอราคา</p>';
 }
 async function refreshQuotationHistory(options){
   const force=!!(options&&options.force);
@@ -1967,9 +2004,21 @@ function buildQuotationDetailHtml(data){
   const quote=normalizeQuoteRecord(data.quote||{});
   const lines=Array.isArray(data.lines)?data.lines:[];
   const totals=data.totals||{};
-  const quoteIdAttr=htmlAttr(quote.quoteId||quote.quoteNo||'');
+  const quoteRef=quote.quoteId||quote.quoteNo||'';
+  const quoteIdAttr=htmlAttr(quoteRef);
+  const quoteIdJs=jsStringLiteralAttr(quoteRef);
   const quoteNoAttr=htmlAttr(quote.quoteNo||'');
-  return `<div class="section-title"><div><h2>${quote.quoteNo||quote.quoteId||'-'}</h2><p style="color:var(--muted);margin:4px 0 0">${quote.customerName||'-'} · ${quote.customerId||'-'}</p></div><span class="pill ${quote.status==='CANCELLED'?'yellow':'blue'}">${quote.status||'-'}</span></div><div class="quote-detail-meta"><span>วันที่: ${formatDateTime(quote.createdAt)}</span><span>ยอดสุทธิ: ${money(totals.grandTotal||quote.grandTotal)}</span></div><div class="list quote-detail-lines">${lines.length?lines.map((line,index)=>`<div class="row"><div><b>${line.productName||'-'}</b><br><small>${line.productId||'-'} · ${line.unit||'-'}</small></div><span>จำนวน ${line.qty||0}</span><span>ราคา ${money(line.listPrice)}</span><span>ส่วนลด ${line.discountPercent||0}%</span><b style="margin-left:auto">${money(line.grandTotal||line.lineTotal)}</b></div>`).join(''):'<p style="color:var(--muted)">ไม่มีรายการสินค้า</p>'}</div><div class="quote-total-box"><p>Subtotal <b>${money(totals.subtotal||quote.subtotal)}</b></p><p>VAT <b>${money(totals.vat||quote.vat)}</b></p><p>Grand Total <b>${money(totals.grandTotal||quote.grandTotal)}</b></p></div><div class="actions no-print"><button class="primary" onclick="printQuotation('${quoteIdAttr}')">Print</button><button class="yellow" onclick="exportQuotationPNG('${quoteIdAttr}')">Save PNG</button><button class="yellow" onclick="shareQuote('${quoteIdAttr}')">Share</button><button class="ghost" data-quote-edit-button data-quote-edit-source="quotation-detail" data-quote-id="${quoteIdAttr}" data-quote-no="${quoteNoAttr}" onclick="navigateToQuotationEdit('${quoteIdAttr}',event,{source:'quotation-detail'})">แก้ไข</button><button class="yellow" onclick="cancelQuotationFromHistory('${quoteIdAttr}')">Cancel</button></div>`;
+  const exportActions=canExportQuotationsUi()?[
+    `<button type="button" class="primary" onclick="printQuotation(${quoteIdJs})">Print</button>`,
+    `<button type="button" class="yellow" onclick="exportQuotationPNG(${quoteIdJs})">Save PNG</button>`,
+    `<button type="button" class="yellow" onclick="shareQuote(${quoteIdJs})">Share</button>`
+  ].join(''):'';
+  const editActions=canEditQuotationsUi()?[
+    `<button type="button" class="ghost" data-quote-edit-button data-quote-edit-source="quotation-detail" data-quote-id="${quoteIdAttr}" data-quote-no="${quoteNoAttr}" onclick="navigateToQuotationEdit(${quoteIdJs},event,{source:'quotation-detail'})">แก้ไข</button>`,
+    `<button type="button" class="yellow" onclick="cancelQuotationFromHistory(${quoteIdJs})">Cancel</button>`
+  ].join(''):'';
+  const actionsHtml=(exportActions||editActions)?`<div class="actions no-print">${exportActions}${editActions}</div>`:'';
+  return `<div class="section-title"><div><h2>${escapeHtml(quote.quoteNo||quote.quoteId||'-')}</h2><p style="color:var(--muted);margin:4px 0 0">${escapeHtml(quote.customerName||'-')} · ${escapeHtml(quote.customerId||'-')}</p></div><span class="pill ${quote.status==='CANCELLED'?'yellow':'blue'}">${escapeHtml(quote.status||'-')}</span></div><div class="quote-detail-meta"><span>วันที่: ${escapeHtml(formatDateTime(quote.createdAt))}</span><span>ยอดสุทธิ: ${money(totals.grandTotal||quote.grandTotal)}</span></div><div class="list quote-detail-lines">${lines.length?lines.map((line,index)=>`<div class="row"><div><b>${escapeHtml(line.productName||'-')}</b><br><small>${escapeHtml(line.productId||'-')} · ${escapeHtml(line.unit||'-')}</small></div><span>จำนวน ${escapeHtml(line.qty||0)}</span><span>ราคา ${money(line.listPrice)}</span><span>ส่วนลด ${escapeHtml(line.discountPercent||0)}%</span><b style="margin-left:auto">${money(line.grandTotal||line.lineTotal)}</b></div>`).join(''):'<p style="color:var(--muted)">ไม่มีรายการสินค้า</p>'}</div><div class="quote-total-box"><p>Subtotal <b>${money(totals.subtotal||quote.subtotal)}</b></p><p>VAT <b>${money(totals.vat||quote.vat)}</b></p><p>Grand Total <b>${money(totals.grandTotal||quote.grandTotal)}</b></p></div>${actionsHtml}`;
 }
 function renderQuotationDetail(data){
   const box=$('quoteDetail');
@@ -2029,6 +2078,10 @@ async function openQuotationDetail(quoteId){
   return openQuotationDetailPromises[id];
 }
 async function duplicateQuotationFromHistory(quoteId){
+  if(!canCreateQuotationsUi()){
+    toast('ไม่มีสิทธิ์สร้างสำเนาใบเสนอราคา');
+    return {ok:false,code:'FORBIDDEN',message:'Insufficient permission'};
+  }
   try{
     const response=await callApi('duplicateQuotation',{quoteId});
     if(!response.ok){
@@ -2061,6 +2114,10 @@ async function editQuotationFromHistory(quoteId){
   return response;
 }
 async function cancelQuotationFromHistory(quoteId){
+  if(!canEditQuotationsUi()){
+    toast('ไม่มีสิทธิ์ยกเลิกใบเสนอราคา');
+    return {ok:false,code:'FORBIDDEN',message:'Insufficient permission'};
+  }
   try{
     const response=await callApi('cancelQuotation',{quoteId});
     if(!response.ok){
@@ -2081,7 +2138,8 @@ async function cancelQuotationFromHistory(quoteId){
   }
 }
 function renderSettings(){if(!USER)return;let s=DB.settings||{},identity=getSystemIdentitySettingsForUi(); let set=(id,val)=>{let el=$(id); if(el)el.value=val||''}; set('setDisplay',USER.displayName); set('setPosition',USER.position); set('setPhone',USER.phone); set('setPhoto',USER.photoUrl); set('setPersonalGreeting',USER.greetingText||''); set('setCompany',identity.companyName); set('setAppName',identity.systemName); set('setWelcome',s.welcomeText); set('setMorning',s.greetingMorning); set('setAfternoon',s.greetingAfternoon); set('setEvening',s.greetingEvening); set('setNight',s.greetingNight); applySettingsPermissionUi(); updateProfilePreview(USER.photoUrl||'');}
-function openSettingPage(name){const targetName=String(name||'home'); if(['identity','systemGreeting'].indexOf(targetName)>=0&&!canManageSystemIdentitySettings()){toast('คุณไม่มีสิทธิ์แก้ไขชื่อบริษัทและชื่อระบบ');name='home'} document.querySelectorAll('#page-settings .setting-sub').forEach(x=>x.classList.remove('active')); let id=name==='home'?'settingsHome':'setting'+name.charAt(0).toUpperCase()+name.slice(1); let el=$(id); if(el)el.classList.add('active'); renderSettings(); if(name==='identity')loadSystemIdentitySettingsForSettings(); window.scrollTo({top:0,behavior:'smooth'});}
+function canManageDataEntryUi(){return permissionFlag('canManageCustomers',false)||permissionFlag('canManageProducts',false)||permissionFlag('canManagePromotions',false)||['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0}
+function openSettingPage(name){const targetName=String(name||'home'); if(['identity','systemGreeting'].indexOf(targetName)>=0&&!canManageSystemIdentitySettings()){toast('คุณไม่มีสิทธิ์แก้ไขชื่อบริษัทและชื่อระบบ');name='home'} if(targetName==='data'&&!canManageDataEntryUi()){toast('ไม่มีสิทธิ์เพิ่มข้อมูล');name='home'} document.querySelectorAll('#page-settings .setting-sub').forEach(x=>x.classList.remove('active')); let id=name==='home'?'settingsHome':'setting'+name.charAt(0).toUpperCase()+name.slice(1); let el=$(id); if(el)el.classList.add('active'); renderSettings(); if(name==='identity')loadSystemIdentitySettingsForSettings(); window.scrollTo({top:0,behavior:'smooth'});}
 function updateProfilePreview(src){let box=$('profilePreview'); if(!box)return; box.innerHTML=src?`<img src="${src}">`:'👩🏻';}
 function handleProfileImage(ev){let file=ev.target.files&&ev.target.files[0]; if(!file)return; let reader=new FileReader(); reader.onload=e=>{let img=new Image(); img.onload=()=>{let canvas=document.createElement('canvas'); let max=320,scale=Math.min(max/img.width,max/img.height,1); canvas.width=Math.round(img.width*scale); canvas.height=Math.round(img.height*scale); let ctx=canvas.getContext('2d'); ctx.drawImage(img,0,0,canvas.width,canvas.height); let data=canvas.toDataURL('image/jpeg',0.78); document.getElementById('setPhoto').value=data; updateProfilePreview(data); toast('อัพโหลดรูปแล้ว กดบันทึกโปรไฟล์เพื่อใช้งาน');}; img.src=e.target.result;}; reader.readAsDataURL(file);}
 async function saveProfile(){
@@ -2458,6 +2516,7 @@ function customerFormHtml(customer){
     ? customerSalesUserOptionsHtml(c.assignedSalesUserId||'',salesArea,selectedSalesName)
     : `<option value="${escapeHtml(c.assignedSalesUserId||'')}" selected>${escapeHtml(selectedSalesName||c.assignedSalesUserId||'กำลังโหลดรายชื่อ Sales...')}</option>`;
   const salesUserControl=`<select id="mAssignedSalesUserId" data-original-value="${escapeHtml(c.assignedSalesUserId||'')}" data-dirty="false" ${optionsReady?'':'disabled'} onchange="handleCustomerAssignedSalesChange()">${salesOptions}</select>`;
+  const customerIdJs=jsStringLiteralAttr(c.customerId||'');
   const salesOptionsState=customerFormOptionsError
     ? `<div class="customer-form-options-state error">โหลดรายชื่อ Sales ผู้ดูแลไม่สำเร็จ <button type="button" class="tiny" onclick="retryCustomerFormOptionsModal()">ลองใหม่</button></div>`
     : (!optionsReady?'<div class="customer-form-options-state">กำลังโหลดรายชื่อ Sales ผู้ดูแล...</div>':(!getCustomerFormSalesUsersForArea(salesArea).length?'<div class="customer-form-options-state">ไม่พบ Sales ที่ ACTIVE ในเขตนี้</div>':''));
@@ -2475,7 +2534,7 @@ function customerFormHtml(customer){
   <div class="field"><label>โทร</label><input id="mPhone" type="tel" inputmode="tel" value="${escapeHtml(c.phone==='-'?'':c.phone||'')}"></div>
   <div class="field"><label>ที่อยู่</label><textarea id="mAddress">${escapeHtml(c.address||'')}</textarea></div>
   <div class="field"><label>หมายเหตุ</label><textarea id="mNotes">${escapeHtml(c.notes||'')}</textarea></div>
-  <button id="saveCustomerModalButton" class="primary" onclick="saveCustomerModal('${escapeHtml(c.customerId||'')}')">บันทึก</button>`;
+  <button type="button" id="saveCustomerModalButton" class="primary" onclick="saveCustomerModal(${customerIdJs})">บันทึก</button>`;
 }
 function readCustomerModalDraft(){
   const assignedSelect=$('mAssignedSalesUserId');
@@ -2549,7 +2608,7 @@ function retryCustomerFormOptionsModal(){
     return response;
   });
 }
-function openModal(type){let title={customer:'เพิ่มร้านค้า',product:'เพิ่มสินค้า',promo:'เพิ่มโปรโมชั่น'}[type]; document.getElementById('modalTitle').textContent=title; let html=''; if(type==='customer')html=customerFormHtml(); if(type==='product')html=`<div class="field"><label>ชื่อสินค้า</label><input id="mName"></div><div class="field"><label>แบรนด์</label><select id="mBrand"><option>Weber</option><option>Gyproc</option></select></div><div class="field"><label>หน่วย</label><input id="mUnit"></div><div class="field"><label>ราคา</label><input id="mPrice" type="number"></div><button class="primary" onclick="saveModal('product')">บันทึก</button>`; if(type==='promo')html=`<div class="field"><label>แบรนด์</label><select id="mBrand"><option>Weber</option><option>Gyproc</option></select></div><div class="field"><label>สินค้า</label><input id="mName"></div><div class="field"><label>รายละเอียด</label><textarea id="mDesc"></textarea></div><div class="field"><label>ส่วนลด/โปร</label><input id="mDiscount"></div><button class="primary" onclick="saveModal('promo')">บันทึก</button>`; document.getElementById('modalBody').innerHTML=html; document.getElementById('modal').classList.add('show')}
+function openModal(type){if(type==='customer'&&!permissionFlag('canManageCustomers',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0)){toast('ไม่มีสิทธิ์เพิ่มร้านค้า');return;} if(type==='product'&&!permissionFlag('canManageProducts',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0)){toast('ไม่มีสิทธิ์เพิ่มสินค้า');return;} if(type==='promo'&&!permissionFlag('canManagePromotions',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0)){toast('ไม่มีสิทธิ์เพิ่มโปรโมชั่น');return;} let title={customer:'เพิ่มร้านค้า',product:'เพิ่มสินค้า',promo:'เพิ่มโปรโมชั่น'}[type]; document.getElementById('modalTitle').textContent=title; let html=''; if(type==='customer')html=customerFormHtml(); if(type==='product')html=`<div class="field"><label>ชื่อสินค้า</label><input id="mName"></div><div class="field"><label>แบรนด์</label><select id="mBrand"><option>Weber</option><option>Gyproc</option></select></div><div class="field"><label>หน่วย</label><input id="mUnit"></div><div class="field"><label>ราคา</label><input id="mPrice" type="number"></div><button type="button" class="primary" onclick="saveModal('product')">บันทึก</button>`; if(type==='promo')html=`<div class="field"><label>แบรนด์</label><select id="mBrand"><option>Weber</option><option>Gyproc</option></select></div><div class="field"><label>สินค้า</label><input id="mName"></div><div class="field"><label>รายละเอียด</label><textarea id="mDesc"></textarea></div><div class="field"><label>ส่วนลด/โปร</label><input id="mDiscount"></div><button type="button" class="primary" onclick="saveModal('promo')">บันทึก</button>`; document.getElementById('modalBody').innerHTML=html; document.getElementById('modal').classList.add('show')}
 function canEditCustomers(){return !!(DB.permissions&&DB.permissions.canManageCustomers)||['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0}
 function openCustomerEditModal(customerId){if(!canEditCustomers()){toast('คุณไม่มีสิทธิ์แก้ไขข้อมูลร้านค้า');return;}const customer=findCustomerById(customerId);if(!customer){toast('ไม่พบข้อมูลร้านค้า');return;}$('modalTitle').textContent='แก้ไขข้อมูลร้านค้า';$('modalBody').innerHTML=customerFormHtml(customer);$('modal').classList.add('show')}
 async function saveCustomerModal(existingId){
@@ -2785,6 +2844,8 @@ saveCustomerModal=async function(existingId){
 async function saveModal(type){
   let r;
   if (type === 'customer') return saveCustomerModal('');
+  if(type==='product'&&!permissionFlag('canManageProducts',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0)){toast('ไม่มีสิทธิ์บันทึกสินค้า');return {ok:false,code:'FORBIDDEN'};}
+  if(type==='promo'&&!permissionFlag('canManagePromotions',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0)){toast('ไม่มีสิทธิ์บันทึกโปรโมชั่น');return {ok:false,code:'FORBIDDEN'};}
   if (type === 'product') r = await gas('saveProduct', {
     productName: document.getElementById('mName').value,
     brand: document.getElementById('mBrand').value,
@@ -2797,8 +2858,12 @@ async function saveModal(type){
     description: document.getElementById('mDesc').value,
     discountText: document.getElementById('mDiscount').value
   });
+  if(!r||!r.ok){
+    toast(r&&r.message?r.message:'บันทึกไม่สำเร็จ');
+    return r||{ok:false,message:'บันทึกไม่สำเร็จ'};
+  }
   closeModal();
-  toast('บันทึกแล้ว');
+  toast(r.message||'บันทึกแล้ว');
   if(type==='customer'){
     clearCustomersFrontendCache();
     invalidateBootstrapCustomerCacheIfNeeded();
@@ -2818,9 +2883,10 @@ function toast(msg){const el=document.getElementById('toast'); if(!el)return; el
 
 function isFavoriteCustomer(customerId){return FAVORITE_CUSTOMERS.some(c=>String(c.customerId||'')===String(customerId||''))}
 function renderCustomerCard(c,isFavorite){
-  const id=escapeHtml(c.customerId||'');
-  const quoteButton=currentRole()==='VIEWER'?'':`<button class="ghost" onclick="selectCustomer('${id}')">ออกใบเสนอราคา</button>`;
-  return `<div class="card ${isFavorite?'favorite-card':''}" ${isFavorite?`draggable="true" data-customer-id="${id}"`:''}>
+  const idAttr=htmlAttr(c.customerId||'');
+  const idJs=jsStringLiteralAttr(c.customerId||'');
+  const quoteButton=currentRole()==='VIEWER'?'':`<button type="button" class="ghost" onclick="selectCustomer(${idJs})">ออกใบเสนอราคา</button>`;
+  return `<div class="card ${isFavorite?'favorite-card':''}" ${isFavorite?`draggable="true" data-customer-id="${idAttr}"`:''}>
     <div class="customer-card-head"><h3>${escapeHtml(c.customerName||'-')}</h3><div class="customer-brand-badges">${customerBrandBadgesHtml(c)}</div></div>
     <p>รหัสร้านค้า: ${escapeHtml(c.customerCode||c.customerId||c.id||'-')}</p>
     <p>เขตการดูแล: ${escapeHtml(c.salesArea||'-')}${(c.assignedSalesNameSnapshot||c.assignedSalesUsername)?` · Sales: ${escapeHtml(c.assignedSalesNameSnapshot||c.assignedSalesUsername)}`:''}</p>
@@ -2829,8 +2895,8 @@ function renderCustomerCard(c,isFavorite){
     <p>โทร: ${renderPhoneLink(c.phone)||'-'}</p>
     <p>ที่อยู่: ${escapeHtml(c.address||'-')}</p>
     <p>หมายเหตุ: ${escapeHtml(c.notes||'-')}</p>
-    <div class="customer-actions">${quoteButton}${canEditCustomers()?`<button class="ghost" onclick="openCustomerEditModal('${id}')">✏️ แก้ไขข้อมูล</button>`:''}</div>
-    <button class="favorite-toggle" onclick="toggleFavoriteCustomer('${id}')">${isFavorite?'⭐ ยกเลิกปักหมุด':'☆ เพิ่มในร้านค้าโปรด'}</button>
+    <div class="customer-actions">${quoteButton}${canEditCustomers()?`<button type="button" class="ghost" onclick="openCustomerEditModal(${idJs})">✏️ แก้ไขข้อมูล</button>`:''}</div>
+    <button type="button" class="favorite-toggle" onclick="toggleFavoriteCustomer(${idJs})">${isFavorite?'⭐ ยกเลิกปักหมุด':'☆ เพิ่มในร้านค้าโปรด'}</button>
   </div>`;
 }
 function renderFavoriteCustomers(){
@@ -2922,9 +2988,10 @@ function renderProductCard(product,sourceListIndex){
   const p=product&&typeof product==='object'?product:{};
   const recordKey=registerProductCalculatorRecord(p,sourceListIndex);
   const key=htmlAttr(recordKey);
+  const keyJs=jsStringLiteralAttr(recordKey);
   const brandClass=normalizeProductBusinessUnitForUi(p)==='WEBER'||p.brand==='Weber'?'yellow':'blue';
   const promoHtml=renderProductPromotionTeaser(p,recordKey,'product-list');
-  return `<div class="card product-card-clickable" role="button" tabindex="0" data-product-record-key="${key}" onclick="openProductCalculator('${key}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProductCalculator('${key}')}"><span class="pill ${brandClass}">${escapeHtml(p.brand||'-')}</span><h3>${escapeHtml(p.productName||'-')}</h3><p>รหัสสินค้า: ${escapeHtml(p.sku||p.productId||p.id||'-')}</p><p>${escapeHtml(p.unit||'-')}</p><b>${money(p.listPrice)}</b>${promoHtml}<div class="product-card-actions"><button class="ghost" onclick="addProductCardToQuote('${key}',event)">เพิ่มลงใบเสนอราคา</button></div></div>`;
+  return `<div class="card product-card-clickable" role="button" tabindex="0" data-product-record-key="${key}" onclick="openProductCalculator(${keyJs})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProductCalculator(${keyJs})}"><span class="pill ${brandClass}">${escapeHtml(p.brand||'-')}</span><h3>${escapeHtml(p.productName||'-')}</h3><p>รหัสสินค้า: ${escapeHtml(p.sku||p.productId||p.id||'-')}</p><p>${escapeHtml(p.unit||'-')}</p><b>${money(p.listPrice)}</b>${promoHtml}<div class="product-card-actions"><button type="button" class="ghost" onclick="addProductCardToQuote(${keyJs},event)">เพิ่มลงใบเสนอราคา</button></div></div>`;
 }
 function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); if(!productsLoaded&&!DB.products.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} resetProductCalculatorRecordRegistry(); grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>renderProductCard(p,DB.products.indexOf(p))).join('')}
 
@@ -2943,16 +3010,19 @@ function renderQuoteCustomerPicker(forceShow){
   const matchesAll=DB.customers.filter(c=>smartMatch(c,q,getQuoteCustomerFields()));
   const limited=limitList(matchesAll,QUOTE_PICKER_LIMIT);
   picker.classList.add('show');
-  picker.innerHTML=limited.items.length?renderLimitNotice(limited.limited,QUOTE_PICKER_LIMIT)+limited.items.map(c=>`<button type="button" class="quote-option" onclick="chooseQuoteCustomer('${c.customerId}')"><b>${c.customerName||'-'}</b><small>รหัสร้านค้า: ${c.customerCode||c.customerId||'-'} · เขต ${c.salesArea||'-'} · ${c.province||'-'}${c.district?' / '+c.district:''} · ${c.customerType||'-'}</small></button>`).join(''):'<div class="quote-empty">ไม่พบรายการที่ค้นหา</div>';
+  picker.innerHTML=limited.items.length?renderLimitNotice(limited.limited,QUOTE_PICKER_LIMIT)+limited.items.map(c=>{const id=jsStringLiteralAttr(c.customerId||'');return `<button type="button" class="quote-option" onclick="chooseQuoteCustomer(${id})"><b>${escapeHtml(c.customerName||'-')}</b><small>รหัสร้านค้า: ${escapeHtml(c.customerCode||c.customerId||'-')} · เขต ${escapeHtml(c.salesArea||'-')} · ${escapeHtml(c.province||'-')}${c.district?' / '+escapeHtml(c.district):''} · ${escapeHtml(c.customerType||'-')}</small></button>`}).join(''):'<div class="quote-empty">ไม่พบรายการที่ค้นหา</div>';
 }
 
 function renderQuoteProductPicker(){
   const requestId=++quoteProductSearchSequence;
+  ensureProductPreferenceContainers();
+  if(!productPreferencesLoaded&&!productPreferencesPromise&&USER)loadProductPreferences();
   const q=$('productSearch')?.value||'';
   const picker=$('productPicker');
   if(!picker)return;
   if(!isQuoteBusinessUnitReadyForProducts()){
     picker.innerHTML='<div class="row quote-empty">กรุณาเลือก BU ก่อนแสดงสินค้า</div>';
+    renderQuoteProductPreferenceSections();
     return;
   }
   const businessUnit=getSelectedQuoteBusinessUnitForProducts();
@@ -2962,12 +3032,14 @@ function renderQuoteProductPicker(){
     if(document.activeElement===$('productSearch')){
       loadProducts().then(()=>{if(requestId===quoteProductSearchSequence&&businessUnit===getSelectedQuoteBusinessUnitForProducts())renderQuoteProductPicker();});
     }
+    renderQuoteProductPreferenceSections();
     return;
   }
   const matchesAll=filterQuoteProductsByBusinessUnit(q,businessUnit);
   const limited=limitList(matchesAll,QUOTE_PICKER_LIMIT);
   const notice=limited.limited?`<div class="list-limit">แสดง 30 รายการแรกจากทุก BU โดยเรียง ${businessUnitLabel} ก่อน กรุณาค้นหาเพิ่มเติม</div>`:'';
-  picker.innerHTML=limited.items.length?notice+limited.items.map(p=>{const productUnit=normalizeProductBusinessUnitForUi(p);return `<div class="row"><div class="product-img">${productUnit==='WEBER'?'🟨':'🟦'}</div><div><div class="quote-product-title">${quoteProductBusinessUnitBadge(p,businessUnit)}<b>${p.productName||'-'}</b></div><small>${p.brand||quoteBusinessUnitLabel(productUnit)} · รหัสสินค้า: ${p.sku||p.productId||p.id||'-'} · ${p.unit||'-'} · ${money(p.listPrice)}</small></div><button class="tiny" style="margin-left:auto" onclick='addCart(${JSON.stringify(p)})'>+ เพิ่ม</button></div>`}).join(''):`<div class="row quote-empty">ไม่พบสินค้าที่ตรงกับคำค้น</div>`;
+  picker.innerHTML=limited.items.length?notice+limited.items.map(product=>renderQuoteProductPreferenceCard(product,{source:'SEARCH'})).join(''):`<div class="row quote-empty">ไม่พบสินค้าที่ตรงกับคำค้น</div>`;
+  renderQuoteProductPreferenceSections();
 }
 
 function normalizeRole(role){const text=String(role||'').trim().toLowerCase().replace(/[\s-]+/g,'_');if(text==='super_admin'||text==='superadmin')return'SUPER_ADMIN';if(text==='admin')return'ADMIN';if(text==='manager')return'MANAGER';if(text==='viewer')return'VIEWER';return'SALES'}
@@ -2979,9 +3051,20 @@ function applySettingsPermissionUi(){
     el.classList.toggle('hidden',!allowed);
     el.hidden=!allowed;
   });
+  const canManageData=canManageDataEntryUi();
+  document.querySelectorAll('[data-manage-data-only="true"]').forEach(el=>{
+    el.classList.toggle('hidden',!canManageData);
+    el.hidden=!canManageData;
+  });
   const active=document.querySelector('#page-settings .setting-sub.active[data-super-admin-only="true"]');
   if(active&&!allowed){
     active.classList.remove('active');
+    const home=$('settingsHome');
+    if(home)home.classList.add('active');
+  }
+  const dataActive=document.querySelector('#page-settings .setting-sub.active[data-manage-data-only="true"]');
+  if(dataActive&&!canManageData){
+    dataActive.classList.remove('active');
     const home=$('settingsHome');
     if(home)home.classList.add('active');
   }
@@ -3013,10 +3096,29 @@ function toggleUserPasswordVisibility(inputId,button){
   button.setAttribute('aria-label',show?'ซ่อนรหัสผ่าน':'แสดงรหัสผ่าน');
   button.setAttribute('aria-pressed',String(show));
 }
-function canAccessPage(page){const role=currentRole();const access={SUPER_ADMIN:['home','quote','customers','products','promos','quotes','users','report','settings'],ADMIN:['home','quote','customers','products','promos','quotes','users','report','settings'],MANAGER:['home','customers','quotes','report','settings'],SALES:['home','quote','customers','products','promos','quotes','settings'],VIEWER:['home','customers','quotes','report','settings']};return (access[role]||access.VIEWER).indexOf(page)>=0}
+function permissionFlag(name,fallback){return DB&&DB.permissions&&Object.prototype.hasOwnProperty.call(DB.permissions,name)?DB.permissions[name]===true:!!fallback}
+function canCreateQuotationsUi(){return permissionFlag('canCreateQuotations',['SUPER_ADMIN','ADMIN','SALES'].indexOf(currentRole())>=0)}
+function canEditQuotationsUi(){return permissionFlag('canEditQuotations',['SUPER_ADMIN','ADMIN','SALES'].indexOf(currentRole())>=0)}
+function canViewQuotationsUi(){return permissionFlag('canViewQuotations',['SUPER_ADMIN','ADMIN','MANAGER','SALES','VIEWER'].indexOf(currentRole())>=0)}
+function canExportQuotationsUi(){return permissionFlag('canExportQuotations',canViewQuotationsUi())}
+function canViewProductsUi(){return permissionFlag('canViewProducts',['SUPER_ADMIN','ADMIN','SALES'].indexOf(currentRole())>=0)}
+function canViewPromotionsUi(){return permissionFlag('canViewPromotions',['SUPER_ADMIN','ADMIN','SALES'].indexOf(currentRole())>=0)}
+function canViewReportsUi(){return permissionFlag('canViewReports',['SUPER_ADMIN','ADMIN','MANAGER','VIEWER'].indexOf(currentRole())>=0)}
+function canAccessPage(page){
+  const target=String(page||'').trim();
+  if(target==='home'||target==='customers'||target==='settings')return true;
+  if(target==='quote')return canCreateQuotationsUi();
+  if(target==='products')return canViewProductsUi();
+  if(target==='promos')return canViewPromotionsUi();
+  if(target==='quotes')return canViewQuotationsUi();
+  if(target==='users')return permissionFlag('canManageUsers',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0);
+  if(target==='report')return canViewReportsUi();
+  return false;
+}
 function applyRolePermissions(){
   document.querySelectorAll('.nav button[data-page]').forEach(btn=>{const page=btn.getAttribute('data-page');btn.classList.toggle('hidden',!canAccessPage(page));});
-  document.querySelectorAll('.main-action').forEach(btn=>{btn.classList.toggle('hidden',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0);});
+  document.querySelectorAll('[data-permission]').forEach(btn=>{const permission=btn.getAttribute('data-permission');const allowed=permissionFlag(permission,false);btn.classList.toggle('hidden',!allowed);btn.hidden=!allowed;});
+  document.querySelectorAll('.main-action:not([data-permission])').forEach(btn=>{btn.classList.toggle('hidden',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0);});
   const quoteActions=document.querySelector('#page-quote .actions');
   if(quoteActions)quoteActions.classList.toggle('hidden',currentRole()==='VIEWER');
   applySettingsPermissionUi();
@@ -3038,9 +3140,9 @@ showApp=function(){baseShowAppForAuth();applyRolePermissions();};
 const baseRenderAllForAuth=renderAll;
 renderAll=function(){baseRenderAllForAuth();renderUsers();applyRolePermissions();};
 const baseGoForAuth=go;
-go=function(page,btn){if(!canAccessPage(page)){toast('ไม่มีสิทธิ์เข้าใช้งานหน้านี้');return;}baseGoForAuth(page,btn);applyRolePermissions();};
+go=function(page,btn){if(!canAccessPage(page)){toast('ไม่มีสิทธิ์เข้าใช้งานหน้านี้');return;}const result=baseGoForAuth(page,btn);applyRolePermissions();return result;};
 const baseEnsurePageDataForAuth=ensurePageData;
-ensurePageData=function(page){if(page==='users'){return loadUsers();}if(page==='customers'){return baseEnsurePageDataForAuth(page).then(response=>{scheduleFavoriteCustomersLoad();return response;});}if(page==='quote'){return Promise.all([baseEnsurePageDataForAuth(page),loadProductPreferences()]);}return baseEnsurePageDataForAuth(page);};
+ensurePageData=function(page){if(page==='users'){return loadUsers();}if(page==='customers'){return baseEnsurePageDataForAuth(page).then(response=>{scheduleFavoriteCustomersLoad();return response;});}if(page==='quote'){return Promise.all([baseEnsurePageDataForAuth(page),loadProductPreferences()]).then(async responses=>{if(typeof window.initializePendingQuotationContext==='function'){const pending=await window.initializePendingQuotationContext();if(pending&&pending.ok===false)return pending;}return {ok:true,data:responses};});}return baseEnsurePageDataForAuth(page);};
 async function loadUsers(){
   if(['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0)return {ok:false,message:'Insufficient permission'};
   const response=await callApi('loadUsers',{});
@@ -3053,14 +3155,14 @@ function renderUsers(){
   if(['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0){list.innerHTML='<p class="loading-text">Admin only</p>';return;}
   const q=normalizeSearchText($('userSearch')?.value||'');
   const users=(Array.isArray(DB.users)?DB.users:[]).filter(u=>!q||smartMatch(u,q,['fullName','displayName','username','role','branch','status','email','phone']));
-  list.innerHTML=users.length?users.map(u=>`<div class="row user-row"><div><b>${u.fullName||u.displayName||u.username||'-'}</b><br><small>${u.username||'-'} · ${u.email||'-'}</small></div><span class="pill blue">${u.role||'-'}</span><span>${u.branch||'-'}</span><span>${u.status||'-'}</span><small>${u.lastLogin||'-'}</small><button class="tiny" onclick="openUserForm('${u.userId||''}')">Edit</button></div>`).join(''):'<p class="loading-text">No users</p>';
+  list.innerHTML=users.length?users.map(u=>`<div class="row user-row"><div><b>${u.fullName||u.displayName||u.username||'-'}</b><br><small>${u.username||'-'} · ${u.email||'-'}</small></div><span class="pill blue">${u.role||'-'}</span><span>${u.branch||'-'}</span><span>${u.status||'-'}</span><small>${u.lastLogin||'-'}</small><button type="button" class="tiny" onclick="openUserForm('${u.userId||''}')">Edit</button></div>`).join(''):'<p class="loading-text">No users</p>';
 }
 function openUserForm(userId){
   const form=$('userForm');if(!form)return;
   const user=(Array.isArray(DB.users)?DB.users:[]).find(u=>String(u.userId||'')===String(userId||''))||{};
   form.classList.remove('hidden');
   const roleOptions=(currentRole()==='SUPER_ADMIN'?['SUPER_ADMIN','ADMIN','MANAGER','SALES','VIEWER']:['ADMIN','MANAGER','SALES','VIEWER']).map(r=>`<option value="${r}">${r}</option>`).join('');
-  form.innerHTML=`<div class="grid2"><div class="field"><label>Full Name</label><input id="userFullName" value="${user.fullName||user.displayName||''}"></div><div class="field"><label>Username</label><input id="userUsername" value="${user.username||''}" ${user.userId?'disabled':''}></div><div class="field"><label>Password ${user.userId?'(leave blank to keep)':''}</label><input id="userPassword" type="password"></div><div class="field"><label>Email</label><input id="userEmail" value="${user.email||''}"></div><div class="field"><label>Phone</label><input id="userPhone" value="${user.phone||''}"></div><div class="field"><label>Role</label><select id="userRole">${roleOptions}</select></div><div class="field"><label>Branch</label><input id="userBranch" value="${user.branch||''}"></div><div class="field"><label>Status</label><select id="userStatus"><option>Active</option><option>Inactive</option><option>Locked</option></select></div></div><div class="actions"><button class="primary" onclick="saveUserForm('${user.userId||''}')">${user.userId?'Update User':'Create User'}</button><button class="ghost" onclick="$('userForm').classList.add('hidden')">Cancel</button></div>`;
+  form.innerHTML=`<div class="grid2"><div class="field"><label>Full Name</label><input id="userFullName" value="${user.fullName||user.displayName||''}"></div><div class="field"><label>Username</label><input id="userUsername" value="${user.username||''}" ${user.userId?'disabled':''}></div><div class="field"><label>Password ${user.userId?'(leave blank to keep)':''}</label><input id="userPassword" type="password"></div><div class="field"><label>Email</label><input id="userEmail" value="${user.email||''}"></div><div class="field"><label>Phone</label><input id="userPhone" value="${user.phone||''}"></div><div class="field"><label>Role</label><select id="userRole">${roleOptions}</select></div><div class="field"><label>Branch</label><input id="userBranch" value="${user.branch||''}"></div><div class="field"><label>Status</label><select id="userStatus"><option>Active</option><option>Inactive</option><option>Locked</option></select></div></div><div class="actions"><button type="button" class="primary" onclick="saveUserForm('${user.userId||''}')">${user.userId?'Update User':'Create User'}</button><button type="button" class="ghost" onclick="$('userForm').classList.add('hidden')">Cancel</button></div>`;
   $('userRole').value=normalizeRole(user.role||'SALES');
   $('userStatus').value=user.status||'Active';
 }
@@ -3079,7 +3181,8 @@ renderUsers=function(){
   const users=(Array.isArray(DB.users)?DB.users:[]).filter(u=>!q||smartMatch(Object.assign({},u,{area:getUserArea(u)}),q,['fullName','displayName','username','role','area','status','email','phone']));
   list.innerHTML=users.length?users.map(u=>{
     const canEdit=canManageUserRole(u.role);
-    return `<div class="row user-row"><div><b>${escapeHtml(u.fullName||u.displayName||u.username||'-')}</b><br><small>${escapeHtml(u.username||'-')} · ${escapeHtml(u.email||'-')}</small><br>${renderPhoneLink(u.phone)||'<small>-</small>'}</div><span class="pill blue">${escapeHtml(u.role||'-')}</span><span>${escapeHtml(getUserArea(u)||'-')}</span><span>${escapeHtml(u.status||'-')}</span><small>${escapeHtml(u.lastLogin||'-')}</small><button class="tiny" ${canEdit?'':'disabled'} onclick="openUserForm('${escapeHtml(u.userId||'')}')">${canEdit?'แก้ไข':'ไม่มีสิทธิ์'}</button></div>`;
+    const userIdJs=jsStringLiteralAttr(u.userId||'');
+    return `<div class="row user-row"><div><b>${escapeHtml(u.fullName||u.displayName||u.username||'-')}</b><br><small>${escapeHtml(u.username||'-')} · ${escapeHtml(u.email||'-')}</small><br>${renderPhoneLink(u.phone)||'<small>-</small>'}</div><span class="pill blue">${escapeHtml(u.role||'-')}</span><span>${escapeHtml(getUserArea(u)||'-')}</span><span>${escapeHtml(u.status||'-')}</span><small>${escapeHtml(u.lastLogin||'-')}</small><button type="button" class="tiny" ${canEdit?'':'disabled'} onclick="openUserForm(${userIdJs})">${canEdit?'แก้ไข':'ไม่มีสิทธิ์'}</button></div>`;
   }).join(''):'<p class="loading-text">No users</p>';
 };
 openUserForm=function(userId){
@@ -3089,7 +3192,8 @@ openUserForm=function(userId){
   form.classList.remove('hidden');
   const roleOptions=getManageableRoleOptions(user.role).map(r=>`<option value="${r}">${r}</option>`).join('');
   const passwordHelp=user.userId?'เว้นว่างไว้หากไม่ต้องการเปลี่ยนรหัสผ่าน':'ต้องกรอกรหัสผ่านและยืนยันรหัสผ่าน';
-  form.innerHTML=`<div class="grid2"><div class="field"><label>ชื่อ-นามสกุล</label><input id="userFullName" maxlength="150" value="${escapeHtml(user.fullName||user.displayName||'')}"></div><div class="field"><label>Username</label><input id="userUsername" value="${escapeHtml(user.username||'')}" ${user.userId?'disabled':''}></div><div class="password-pair"><div class="field"><label>รหัสผ่าน ${user.userId?'(ไม่กรอก = ใช้รหัสเดิม)':''}</label><div class="password-field"><input id="userPassword" type="password" autocomplete="new-password" aria-describedby="userPasswordHelp"><button type="button" class="password-toggle" onclick="toggleUserPasswordVisibility('userPassword',this)" aria-label="แสดงรหัสผ่าน" aria-pressed="false">${passwordEyeIcon(false)}</button></div><small id="userPasswordHelp">${passwordHelp}</small></div><div class="field"><label>ยืนยันรหัสผ่าน</label><div class="password-field"><input id="userConfirmPassword" type="password" autocomplete="new-password"><button type="button" class="password-toggle" onclick="toggleUserPasswordVisibility('userConfirmPassword',this)" aria-label="แสดงรหัสผ่าน" aria-pressed="false">${passwordEyeIcon(false)}</button></div></div></div><div class="field"><label>Email</label><input id="userEmail" value="${escapeHtml(user.email||'')}"></div><div class="field"><label>เบอร์โทรศัพท์</label><input id="userPhone" type="tel" inputmode="tel" autocomplete="tel" value="${escapeHtml(user.phone||'')}"></div><div class="field"><label>สิทธิ์ผู้ใช้งาน</label><select id="userRole">${roleOptions}</select></div><div class="field"><label>Area</label><input id="userArea" value="${escapeHtml(getUserArea(user))}"><small>พื้นที่ที่ใช้กำหนดขอบเขตข้อมูล Dashboard รายงาน และผู้ใช้งาน</small></div><div class="field"><label>สถานะ</label><select id="userStatus"><option>Active</option><option>Inactive</option><option>Locked</option></select></div></div><div class="actions"><button id="saveUserButton" class="primary" onclick="saveUserForm('${escapeHtml(user.userId||'')}')">${user.userId?'บันทึกผู้ใช้งาน':'สร้างผู้ใช้งาน'}</button><button class="ghost" onclick="$('userForm').classList.add('hidden')">ยกเลิก</button></div>`;
+  const userIdJs=jsStringLiteralAttr(user.userId||'');
+  form.innerHTML=`<div class="grid2"><div class="field"><label>ชื่อ-นามสกุล</label><input id="userFullName" maxlength="150" value="${escapeHtml(user.fullName||user.displayName||'')}"></div><div class="field"><label>Username</label><input id="userUsername" value="${escapeHtml(user.username||'')}" ${user.userId?'disabled':''}></div><div class="password-pair"><div class="field"><label>รหัสผ่าน ${user.userId?'(ไม่กรอก = ใช้รหัสเดิม)':''}</label><div class="password-field"><input id="userPassword" type="password" autocomplete="new-password" aria-describedby="userPasswordHelp"><button type="button" class="password-toggle" onclick="toggleUserPasswordVisibility('userPassword',this)" aria-label="แสดงรหัสผ่าน" aria-pressed="false">${passwordEyeIcon(false)}</button></div><small id="userPasswordHelp">${passwordHelp}</small></div><div class="field"><label>ยืนยันรหัสผ่าน</label><div class="password-field"><input id="userConfirmPassword" type="password" autocomplete="new-password"><button type="button" class="password-toggle" onclick="toggleUserPasswordVisibility('userConfirmPassword',this)" aria-label="แสดงรหัสผ่าน" aria-pressed="false">${passwordEyeIcon(false)}</button></div></div></div><div class="field"><label>Email</label><input id="userEmail" value="${escapeHtml(user.email||'')}"></div><div class="field"><label>เบอร์โทรศัพท์</label><input id="userPhone" type="tel" inputmode="tel" autocomplete="tel" value="${escapeHtml(user.phone||'')}"></div><div class="field"><label>สิทธิ์ผู้ใช้งาน</label><select id="userRole">${roleOptions}</select></div><div class="field"><label>Area</label><input id="userArea" value="${escapeHtml(getUserArea(user))}"><small>พื้นที่ที่ใช้กำหนดขอบเขตข้อมูล Dashboard รายงาน และผู้ใช้งาน</small></div><div class="field"><label>สถานะ</label><select id="userStatus"><option>Active</option><option>Inactive</option><option>Locked</option></select></div></div><div class="actions"><button type="button" id="saveUserButton" class="primary" onclick="saveUserForm(${userIdJs})">${user.userId?'บันทึกผู้ใช้งาน':'สร้างผู้ใช้งาน'}</button><button type="button" class="ghost" onclick="$('userForm').classList.add('hidden')">ยกเลิก</button></div>`;
   $('userRole').value=normalizeRole(user.role||'SALES');
   $('userStatus').value=user.status||'Active';
 };
@@ -3126,7 +3230,7 @@ function normalizeQuoteProductPreferenceId(value){return String(value||'').trim(
 function getFavoriteProductIdSet(){return new Set(FAVORITE_PRODUCTS.map(product=>normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(product))).filter(Boolean))}
 function getPinnedProductIdSet(){return new Set(PINNED_PRODUCTS.map(product=>normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(product))).filter(Boolean))}
 function getPinnedProductOrderMap(){const map=new Map();PINNED_PRODUCTS.forEach((product,index)=>{const id=normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(product));if(id)map.set(id,Number(product.pinnedSortOrder||index+1)||index+1)});return map}
-function canManageQuoteProductPreferences(){return currentRole()!=='VIEWER'&&canAccessPage('quote')}
+function canManageQuoteProductPreferences(){return canCreateQuotationsUi()}
 function decorateQuotePreferenceProduct(product){const item=Object.assign({},product||{});const id=normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(item));const favoriteIds=getFavoriteProductIdSet();const pinnedOrders=getPinnedProductOrderMap();item.isFavoriteProduct=favoriteIds.has(id)||Boolean(item.isFavoriteProduct);item.isPinnedProduct=pinnedOrders.has(id)||Boolean(item.isPinnedProduct);item.pinnedSortOrder=pinnedOrders.get(id)||Number(item.pinnedSortOrder||0)||0;return item}
 function productPreferenceRank(product){const item=decorateQuotePreferenceProduct(product);if(item.isPinnedProduct)return item.pinnedSortOrder||1;return item.isFavoriteProduct?1000:2000}
 function findQuoteProductById(productId){const id=normalizeQuoteProductPreferenceId(productId);return DB.products.find(product=>normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(product))===id)||null}
@@ -3139,7 +3243,7 @@ function renderQuoteProductPreferenceCard(product,options){
   const idAttr=htmlAttr(rawId);
   const recordKey=registerProductRecordSelection(item,'quote');
   const recordKeyAttr=htmlAttr(recordKey);
-  const jsId=escapeHtml(JSON.stringify(rawId));
+  const jsId=jsStringLiteralAttr(rawId);
   const productUnit=normalizeProductBusinessUnitForUi(item);
   const opts=options||{};
   const source=String(opts.source||(opts.pinned?'PINNED':'FAVORITE')).toUpperCase();
@@ -3173,7 +3277,7 @@ function toggleProductPreferenceSection(type){
   updateProductPreferenceCollapseUi(type,collapsed);
   if(type==='pinned'&&!collapsed)bindPinnedProductDragAndDrop();
 }
-function renderQuotePreferenceSectionHeader(type,icon,title,count,limit,collapsed){return `<div class="quote-preference-head"><button class="quote-section-toggle" data-no-drag onclick="toggleProductPreferenceSection('${type}')" aria-expanded="${!collapsed}" title="${collapsed?'Expand':'Collapse'} ${title}"><span>${collapsed?'▸':'▾'}</span></button><b>${icon} ${title}</b><small>${count} / ${limit}</small></div>`}
+function renderQuotePreferenceSectionHeader(type,icon,title,count,limit,collapsed){return `<div class="quote-preference-head"><button type="button" class="quote-section-toggle" data-no-drag onclick="toggleProductPreferenceSection('${type}')" aria-expanded="${!collapsed}" title="${collapsed?'Expand':'Collapse'} ${title}"><span>${collapsed?'▸':'▾'}</span></button><b>${icon} ${title}</b><small>${count} / ${limit}</small></div>`}
 function renderQuoteProductPreferenceSections(){ensureProductPreferenceContainers();const pinnedBox=$('pinnedProducts');const favoriteBox=$('favoriteProducts');if(pinnedBox){const pinned=PINNED_PRODUCTS.map(decorateQuotePreferenceProduct);const collapsed=isProductPreferenceCollapsed('pinned');pinnedBox.classList.toggle('is-collapsed',collapsed);pinnedBox.innerHTML=renderQuotePreferenceSectionHeader('pinned','📌','Pinned Products',pinned.length,5,collapsed)+`<div class="quote-preference-body">${pinned.length?`<div id="pinnedProductGrid" class="quote-preference-list">${pinned.map(product=>renderQuoteProductPreferenceCard(product,{pinned:true,source:'PINNED'})).join('')}</div>`:'<div class="quote-preference-empty">ยังไม่มีสินค้าปักหมุด</div>'}</div>`;if(!collapsed)bindPinnedProductDragAndDrop()}if(favoriteBox){const pinnedIds=getPinnedProductIdSet();const favorites=FAVORITE_PRODUCTS.map(decorateQuotePreferenceProduct).filter(product=>!pinnedIds.has(normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(product))));const collapsed=isProductPreferenceCollapsed('favorite');favoriteBox.classList.toggle('is-collapsed',collapsed);favoriteBox.innerHTML=renderQuotePreferenceSectionHeader('favorite','♥','Favorite Products',FAVORITE_PRODUCTS.length,20,collapsed)+`<div class="quote-preference-body">${favorites.length?`<div class="quote-preference-list">${favorites.map(product=>renderQuoteProductPreferenceCard(product,{source:'FAVORITE'})).join('')}</div>`:'<div class="quote-preference-empty">ยังไม่มีสินค้ารายการโปรด</div>'}</div>`;}}
 async function toggleFavoriteProduct(productId){if(!canManageQuoteProductPreferences())return;const id=String(productId||'').trim();const isFavorite=getFavoriteProductIdSet().has(normalizeQuoteProductPreferenceId(id));if(!isFavorite&&FAVORITE_PRODUCTS.length>=20){toast('เพิ่มสินค้ารายการโปรดได้สูงสุด 20 รายการ');return;}const response=await callApi(isFavorite?'removeFavoriteProduct':'addFavoriteProduct',{productId:id});toast(response.message||(response.ok?'บันทึกแล้ว':'บันทึกไม่สำเร็จ'));if(response&&response.ok)await loadProductPreferences(true);renderQuoteProductPicker();return response}
 async function togglePinnedProduct(productId){if(!canManageQuoteProductPreferences())return;const id=String(productId||'').trim();const isPinned=getPinnedProductIdSet().has(normalizeQuoteProductPreferenceId(id));if(!isPinned&&PINNED_PRODUCTS.length>=5){toast('ปักหมุดสินค้าได้สูงสุด 5 รายการ');return;}const response=await callApi(isPinned?'removePinnedProduct':'addPinnedProduct',{productId:id});toast(response.message||(response.ok?'บันทึกแล้ว':'บันทึกไม่สำเร็จ'));if(response&&response.ok)await loadProductPreferences(true);renderQuoteProductPicker();return response}
@@ -3181,8 +3285,6 @@ async function persistPinnedProductOrder(){const grid=$('pinnedProductGrid');if(
 function bindPinnedProductDragAndDrop(){const grid=$('pinnedProductGrid');if(!grid||grid.dataset.bound)return;grid.dataset.bound='true';let dragged=null;grid.addEventListener('dragstart',event=>{dragged=event.target.closest('.pinned-product-card');if(!dragged)return;dragged.classList.add('is-dragging');event.dataTransfer.effectAllowed='move'});grid.addEventListener('dragover',event=>{event.preventDefault();const target=event.target.closest('.pinned-product-card');if(dragged&&target&&target!==dragged)grid.insertBefore(dragged,target)});grid.addEventListener('dragend',()=>{if(dragged)dragged.classList.remove('is-dragging');dragged=null;persistPinnedProductOrder()});let timer=null,touchCard=null;grid.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'||event.target.closest('button,a,[data-no-drag]'))return;touchCard=event.target.closest('.pinned-product-card');if(touchCard)timer=setTimeout(()=>{touchCard.classList.add('is-dragging');try{touchCard.setPointerCapture(event.pointerId)}catch(error){}},350)});grid.addEventListener('pointermove',event=>{if(!touchCard||!touchCard.classList.contains('is-dragging'))return;event.preventDefault();const target=document.elementFromPoint(event.clientX,event.clientY)?.closest('.pinned-product-card');if(target&&target!==touchCard)grid.insertBefore(touchCard,target)});const finish=()=>{clearTimeout(timer);if(touchCard&&touchCard.classList.contains('is-dragging')){touchCard.classList.remove('is-dragging');persistPinnedProductOrder()}touchCard=null};grid.addEventListener('pointerup',finish);grid.addEventListener('pointercancel',finish)}
 const baseFilterQuoteProductsByBusinessUnitForPreferences=filterQuoteProductsByBusinessUnit;
 filterQuoteProductsByBusinessUnit=function(query,businessUnit){return baseFilterQuoteProductsByBusinessUnitForPreferences(query,businessUnit).map(decorateQuotePreferenceProduct).sort((a,b)=>productPreferenceRank(a)-productPreferenceRank(b)||rankQuoteProductBusinessUnit(a,businessUnit)-rankQuoteProductBusinessUnit(b,businessUnit)||rankQuoteProduct(a,query)-rankQuoteProduct(b,query)||String(a.productName||'').localeCompare(String(b.productName||''),'th'))};
-const baseRenderQuoteProductPickerForPreferences=renderQuoteProductPicker;
-renderQuoteProductPicker=function(){const requestId=++quoteProductSearchSequence;ensureProductPreferenceContainers();if(!productPreferencesLoaded&&!productPreferencesPromise&&USER)loadProductPreferences();const q=$('productSearch')?.value||'';const picker=$('productPicker');if(!picker)return;if(!isQuoteBusinessUnitReadyForProducts()){picker.innerHTML='<div class="row quote-empty">กรุณาเลือก BU ก่อนแสดงสินค้า</div>';renderQuoteProductPreferenceSections();return;}const businessUnit=getSelectedQuoteBusinessUnitForProducts();const businessUnitLabel=quoteBusinessUnitLabel(businessUnit);if(!productsLoaded&&!DB.products.length){picker.innerHTML=`<div class="row quote-empty">กำลังโหลดสินค้า โดยเรียง ${businessUnitLabel} ก่อน...</div>`;if(document.activeElement===$('productSearch')){loadProducts().then(()=>{if(requestId===quoteProductSearchSequence&&businessUnit===getSelectedQuoteBusinessUnitForProducts())renderQuoteProductPicker();});}renderQuoteProductPreferenceSections();return;}const matchesAll=filterQuoteProductsByBusinessUnit(q,businessUnit);const limited=limitList(matchesAll,QUOTE_PICKER_LIMIT);const notice=limited.limited?`<div class="list-limit">แสดง 30 รายการแรกจากทุก BU โดยเรียง ${businessUnitLabel} และสินค้าปักหมุดก่อน กรุณาค้นหาเพิ่มเติม</div>`:'';picker.innerHTML=limited.items.length?notice+limited.items.map(product=>renderQuoteProductPreferenceCard(product,{source:'SEARCH'})).join(''):`<div class="row quote-empty">ไม่พบสินค้าที่ตรงกับคำค้น</div>`;renderQuoteProductPreferenceSections();};
-window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.addProductCardToQuote=addProductCardToQuote; window.openProductPromotionDetail=openProductPromotionDetail; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
+window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.addProductCardToQuote=addProductCardToQuote; window.openProductPromotionDetail=openProductPromotionDetail; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.resetAuthenticatedFrontendState=resetAuthenticatedFrontendState; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.canCreateQuotationsUi=canCreateQuotationsUi; window.canEditQuotationsUi=canEditQuotationsUi; window.canViewQuotationsUi=canViewQuotationsUi; window.canExportQuotationsUi=canExportQuotationsUi; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
 window.createProductIdentityKey=createProductIdentityKey; window.dedupeExactProducts=dedupeExactProducts; window.dedupeExactProductsWithReport=dedupeExactProductsWithReport; window.cloneProductRecordForSelection=cloneProductRecordForSelection; window.getStableProductRecordKey=getStableProductRecordKey; window.registerProductRecordSelection=registerProductRecordSelection; window.resolveProductRecordSelection=resolveProductRecordSelection;
 window.normalizeSystemIdentitySettings=normalizeSystemIdentitySettings; window.applySystemIdentityToUI=applySystemIdentityToUI; window.renderLoginBranding=renderLoginBranding; window.renderSidebarBranding=renderSidebarBranding; window.refreshPublicSystemSettings=refreshPublicSystemSettings; window.setPublicSystemSettings=setPublicSystemSettings; window.loadSystemIdentitySettingsForSettings=loadSystemIdentitySettingsForSettings; window.saveSystemIdentitySettings=saveSystemIdentitySettings; window.savePersonalGreetingSettings=savePersonalGreetingSettings; window.saveSystemGreetingSettings=saveSystemGreetingSettings; window.canManageSystemIdentitySettings=canManageSystemIdentitySettings; window.applySettingsPermissionUi=applySettingsPermissionUi;

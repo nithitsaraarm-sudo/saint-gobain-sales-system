@@ -88,6 +88,9 @@ function createQuotation(customerId) {
     if (!auth.ok) {
       return auth;
     }
+    if (!canCreateQuotation(auth.data)) {
+      return forbidden('Insufficient permission');
+    }
     const idCheck = requireValue(targetCustomerId, 'customerId');
     if (!idCheck.ok) {
       return idCheck;
@@ -413,7 +416,7 @@ function saveQuotationPayload(payload) {
   try {
     const data = payload || {};
     const requestId = getQuotationSaveRequestId_(data);
-    const auth = requireApiUser(data);
+    const auth = data.currentUser ? success(data.currentUser) : requireApiUser(data);
     if (!auth.ok) {
       return auth;
     }
@@ -865,17 +868,25 @@ function deleteQuotationHeaderLocked_(quoteId, quoteNo) {
     const targetQuoteId = normalizeString(quoteId);
     const targetQuoteNo = normalizeString(quoteNo);
     const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), headers.length)).getDisplayValues();
-    var deleted = 0;
+    const rowsToDelete = [];
     for (var i = values.length - 1; i >= 0; i--) {
       const rowQuoteId = normalizeString(values[i][quoteIdIndex]);
       const rowQuoteNo = quoteNoIndex >= 0 ? normalizeString(values[i][quoteNoIndex]) : '';
       const quoteNoMatches = !targetQuoteNo || quoteNoIndex < 0 || rowQuoteNo === targetQuoteNo;
       if (targetQuoteId && rowQuoteId === targetQuoteId && quoteNoMatches) {
-        sheet.deleteRow(i + 2);
-        deleted += 1;
+        rowsToDelete.push(i + 2);
       }
     }
-    return success({ deleted: deleted });
+    const deleteResult = typeof deleteSheetRowsByRowNumbers_ === 'function'
+      ? deleteSheetRowsByRowNumbers_(sheet, rowsToDelete)
+      : null;
+    if (deleteResult) {
+      return deleteResult;
+    }
+    rowsToDelete.forEach(function (rowNumber) {
+      sheet.deleteRow(rowNumber);
+    });
+    return success({ deleted: rowsToDelete.length });
   } catch (error) {
     logError('deleteQuotationHeaderLocked_', error);
     return fail(error && error.message ? error.message : 'Failed to delete quotation header');
@@ -973,7 +984,8 @@ function isValidQuotationLinePrice_(value) {
 }
 
 function canEditQuotationLineSnapshots_(user) {
-  return !hasRole(user, [USER_ROLES.VIEWER]);
+  const permissions = getUserPermissions(user);
+  return permissions.canCreateQuotations || permissions.canEditQuotations;
 }
 
 function logQuotationAuditAction_(actorId, action, detail) {
@@ -1360,12 +1372,20 @@ function updateQuotationObject(sheetName, headers, idColumn, idValue, object) {
       return fail('Record not found');
     }
     const actualRowIndex = targetRowIndex + 2;
-    activeHeaders.forEach(function (header, index) {
-      if (object[header] !== undefined) {
-        sheet.getRange(actualRowIndex, index + 1).setValue(object[header]);
-      }
-    });
-    return success({ sheetName: sheetName, idColumn: idColumn, idValue: idValue });
+    const updateResult = typeof applyRowObjectUpdate_ === 'function'
+      ? applyRowObjectUpdate_(sheet, actualRowIndex, activeHeaders, object)
+      : null;
+    if (updateResult && !updateResult.ok) {
+      return updateResult;
+    }
+    if (!updateResult) {
+      activeHeaders.forEach(function (header, index) {
+        if (object[header] !== undefined) {
+          sheet.getRange(actualRowIndex, index + 1).setValue(object[header]);
+        }
+      });
+    }
+    return success({ sheetName: sheetName, idColumn: idColumn, idValue: idValue, updatedRuns: updateResult && updateResult.data && updateResult.data.updatedRuns || 0 });
   } catch (error) {
     logError('updateQuotationObject', error);
     return fail(error && error.message ? error.message : 'Failed to update quotation row');
@@ -1388,14 +1408,22 @@ function deleteQuotationLines(quoteId) {
       return success({ deleted: 0 });
     }
     const values = sheet.getRange(2, 1, lastRow - 1, Math.max(sheet.getLastColumn(), headers.length)).getDisplayValues();
-    var deleted = 0;
+    const rowsToDelete = [];
     for (var i = values.length - 1; i >= 0; i--) {
       if (normalizeString(values[i][quoteIdIndex]) === normalizeString(quoteId)) {
-        sheet.deleteRow(i + 2);
-        deleted += 1;
+        rowsToDelete.push(i + 2);
       }
     }
-    return success({ deleted: deleted });
+    const deleteResult = typeof deleteSheetRowsByRowNumbers_ === 'function'
+      ? deleteSheetRowsByRowNumbers_(sheet, rowsToDelete)
+      : null;
+    if (deleteResult) {
+      return deleteResult;
+    }
+    rowsToDelete.forEach(function (rowNumber) {
+      sheet.deleteRow(rowNumber);
+    });
+    return success({ deleted: rowsToDelete.length });
   } catch (error) {
     logError('deleteQuotationLines', error);
     return fail(error && error.message ? error.message : 'Failed to replace quotation lines');
@@ -1571,6 +1599,25 @@ function getLoadQuotationCacheKey(quoteId) {
   return 'loadQuotation:' + normalizeString(quoteId);
 }
 
+function isLoadQuotationCacheForRecord_(cached, quote, requestedQuoteId) {
+  const cachedQuote = cached && cached.quote && typeof cached.quote === 'object' ? cached.quote : {};
+  const expectedIds = [
+    quote && quote.quoteId,
+    quote && quote.quoteNo,
+    requestedQuoteId
+  ].map(normalizeString).filter(Boolean);
+  const cachedIds = [
+    cachedQuote.quoteId,
+    cachedQuote.quoteNo
+  ].map(normalizeString).filter(Boolean);
+  if (!expectedIds.length || !cachedIds.length) {
+    return false;
+  }
+  return cachedIds.some(function (id) {
+    return expectedIds.indexOf(id) >= 0;
+  });
+}
+
 function clearQuotationCaches(quoteId, quoteNo) {
   clearServerCache(getQuotationHistoryCacheKey(null, 50));
   if (quoteId) {
@@ -1586,11 +1633,6 @@ function loadQuotation(payload) {
   try {
     const quoteId = extractQuoteId(payload);
     const cacheKey = getLoadQuotationCacheKey(quoteId);
-    const cached = getServerCache(cacheKey);
-    if (cached) {
-      endPerformanceTimer(timer, 'cache=hit');
-      return success(cached);
-    }
     const quoteResult = getQuotationRow(quoteId);
     if (!quoteResult.ok) {
       endPerformanceTimer(timer, 'quote=false');
@@ -1605,6 +1647,11 @@ function loadQuotation(payload) {
       return permissionResult;
     }
     const targetQuoteId = String(quote.quoteId || quoteId).trim();
+    const cached = getServerCache(cacheKey);
+    if (cached && isLoadQuotationCacheForRecord_(cached, quote, quoteId)) {
+      endPerformanceTimer(timer, 'cache=hit authorized=true');
+      return success(cached);
+    }
     const linesResult = getQuoteLines(targetQuoteId);
     if (!linesResult.ok) {
       endPerformanceTimer(timer, 'lines=false');
@@ -1653,6 +1700,8 @@ function duplicateQuotation(payload) {
     const quote = original.quote || {};
     const totals = original.totals || {};
     const duplicatePayload = {
+      sessionToken: String(payload && (payload.sessionToken || payload.sg_token || payload.token) || '').trim(),
+      currentUser: payload && payload.currentUser,
       customerId: String(quote.customerId || '').trim(),
       customerName: String(quote.customerName || '').trim(),
       quoteType: normalizeQuoteType(quote.quoteType || quote.businessUnit),
@@ -1873,7 +1922,7 @@ function canAccessQuotationRecord(user, quote) {
   if (!user) {
     return success(true);
   }
-  if (hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.VIEWER])) {
+  if (hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.VIEWER])) {
     return success(true);
   }
   if (hasRole(user, [USER_ROLES.SALES])) {
