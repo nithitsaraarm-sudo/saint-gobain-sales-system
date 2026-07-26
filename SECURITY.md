@@ -35,5 +35,22 @@
 - มีขั้นตอน rollback และผู้รับผิดชอบชัดเจน
 - แจ้งทีมที่เกี่ยวข้องเมื่อพบการเปลี่ยนแปลงที่ไม่ได้รับอนุญาต
 
+## Frontend external script hardening
+
+`index.html` loads the pinned `html2canvas@1.4.1` and `jspdf@2.5.1` browser bundles from jsDelivr. These script tags must keep Subresource Integrity (`integrity`) and `crossorigin="anonymous"` so a CDN-side file change is rejected by the browser.
+
+## Content Security Policy migration plan
+
+The current frontend still contains inline event handlers and inline bootstrap scripts. A strict CSP such as `script-src 'self'` cannot be enabled safely until those inline handlers are migrated to delegated `addEventListener` bindings and any required bootstrap script receives a nonce or hash.
+
+Recommended order:
+
+1. Keep all third-party scripts version-pinned with SRI.
+2. Move inline event handlers to JavaScript event delegation.
+3. Move inline startup/configuration scripts into local versioned files or provide a deployment-time nonce.
+4. Add a report-only CSP first, monitor violations, then enforce.
+
+Until CSP enforcement is ready, all dynamic HTML renderers that consume Sheet/API data must escape text and safely encode values used inside inline JavaScript handlers.
+
 ---
 *ต้องการให้ผมช่วยตั้งค่า CSP ตัวอย่างหรือตัวอย่างการ hash password ใน Apps Script ไหมครับ?*

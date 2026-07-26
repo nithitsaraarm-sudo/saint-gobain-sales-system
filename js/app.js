@@ -1043,6 +1043,9 @@ function productSearchText(p){return [p.productId,p.sku,p.productName,p.descript
 function htmlAttr(value){
   return String(value??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
+function jsStringLiteralAttr(value){
+  return htmlAttr(JSON.stringify(String(value??'')));
+}
 let PRODUCT_PROMO_LAST_FOCUS=null, productPromoEscapeBound=false;
 function getProductPromoText(product){
   return normalizeProductPromoText(product&&product.promoText);
@@ -1079,7 +1082,7 @@ function renderProductPromotionTeaser(product,recordKey,context){
   const promoText=getProductPromoText(product);
   const promoLines=getProductPromoLines(product);
   if(!promoLines.length)return '';
-  const jsRecordKey=escapeHtml(JSON.stringify(String(recordKey||'')));
+  const jsRecordKey=jsStringLiteralAttr(recordKey||'');
   const contextAttr=htmlAttr(context||'product');
   const productName=String(product&&product.productName||product&&product.name||'สินค้า').trim()||'สินค้า';
   const ariaLabel=htmlAttr('ดูโปรโมชั่นของสินค้า '+productName);
@@ -1659,7 +1662,7 @@ function renderQuoteProductPicker(){
   const matches=DB.products.filter(p=>smartMatch(p,q,getQuoteProductFields())).slice(0,8);
   picker.innerHTML=matches.length?matches.map(p=>`<div class="row"><div class="product-img">${p.brand==='Weber'?'🟨':'🟦'}</div><div><b>${p.productName||'-'}</b><br><small>${p.brand||'-'} · รหัสสินค้า: ${p.sku||p.productId||p.id||'-'} · ${p.unit||'-'} · ${money(p.listPrice)}</small></div><button class="tiny" style="margin-left:auto" onclick='addCart(${JSON.stringify(p)})'>+ เพิ่ม</button></div>`).join(''):'<div class="row quote-empty">ไม่พบรายการที่ค้นหา</div>';
 }
-function renderPromos(){let q=($('searchPromos')?.value||'').toLowerCase(); $('promoGrid').innerHTML=DB.promotions.filter(p=>JSON.stringify(p).toLowerCase().includes(q)).map(p=>`<div class="card"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${p.brand}</span><h3>${p.productName}</h3><p>${p.description||''}</p><b>${p.discountText||''}</b><p style="color:var(--muted)">${p.startDate||''} - ${p.endDate||''}</p></div>`).join('')}
+function renderPromos(){let q=($('searchPromos')?.value||'').toLowerCase(); const grid=$('promoGrid'); if(!grid)return; grid.innerHTML=DB.promotions.filter(p=>JSON.stringify(p).toLowerCase().includes(q)).map(p=>`<div class="card"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${escapeHtml(p.brand||'-')}</span><h3>${escapeHtml(p.productName||'-')}</h3><p>${escapeHtml(p.description||'')}</p><b>${escapeHtml(p.discountText||'')}</b><p style="color:var(--muted)">${escapeHtml(p.startDate||'')} - ${escapeHtml(p.endDate||'')}</p></div>`).join('')}
 function normalizeQuoteTypeForUi(value){
   const text=String(value||'').trim().toUpperCase();
   return text==='GYPROC'?'GYPROC':'WEBER';
@@ -1697,7 +1700,7 @@ function normalizeQuoteRecord(quote){
 
 function dashboardText(value, fallback){
   const text=String(value??'').trim();
-  return text||fallback||'-';
+  return escapeHtml(text||fallback||'-');
 }
 function dashboardMoney(value){
   return money(parseClientNumber(value));
@@ -1917,10 +1920,11 @@ function renderHistory(){
   const quotes=(Array.isArray(DB.quotes)?DB.quotes:[]).map(normalizeQuoteRecord).filter(q=>smartMatch(q,keyword,getQuoteSearchFields())).sort((a,b)=>new Date(b.createdAt||b.updatedAt||0)-new Date(a.createdAt||a.updatedAt||0));
   const canEdit=canEditQuotationsUi();
   history.innerHTML=quotes.length?quotes.map(q=>{
-    const ref=htmlAttr(q.quoteId||q.quoteNo||'');
+    const refAttr=htmlAttr(q.quoteId||q.quoteNo||'');
+    const refJs=jsStringLiteralAttr(q.quoteId||q.quoteNo||'');
     const quoteNo=htmlAttr(q.quoteNo||'');
-    const editAction=canEdit?`<button class="tiny" data-quote-edit-button data-quote-edit-source="quotation-history" data-quote-id="${ref}" data-quote-no="${quoteNo}" onclick="navigateToQuotationEdit('${ref}',event,{source:'quotation-history'})">แก้ไข</button>`:'';
-    return `<div class="row quote-history-row"><div><b>${q.quoteNo||'-'}</b><br><small>${q.customerName||'-'} · ${q.customerId||'-'}</small></div><span class="quote-type-badge ${quoteTypeClassForUi(q.quoteType)}">${quoteTypeLabelForUi(q.quoteType)}</span><span class="pill ${q.status==='CANCELLED'?'yellow':'blue'}">${q.status||'-'}</span><span>${formatDateTime(q.createdAt)}</span><b style="margin-left:auto">${money(q.grandTotal||q.total)}</b><button class="tiny" onclick="openQuotationDetail('${ref}')">เปิดดู</button>${editAction}</div>`;
+    const editAction=canEdit?`<button class="tiny" data-quote-edit-button data-quote-edit-source="quotation-history" data-quote-id="${refAttr}" data-quote-no="${quoteNo}" onclick="navigateToQuotationEdit(${refJs},event,{source:'quotation-history'})">แก้ไข</button>`:'';
+    return `<div class="row quote-history-row"><div><b>${escapeHtml(q.quoteNo||'-')}</b><br><small>${escapeHtml(q.customerName||'-')} · ${escapeHtml(q.customerId||'-')}</small></div><span class="quote-type-badge ${quoteTypeClassForUi(q.quoteType)}">${escapeHtml(quoteTypeLabelForUi(q.quoteType))}</span><span class="pill ${q.status==='CANCELLED'?'yellow':'blue'}">${escapeHtml(q.status||'-')}</span><span>${escapeHtml(formatDateTime(q.createdAt))}</span><b style="margin-left:auto">${money(q.grandTotal||q.total)}</b><button class="tiny" onclick="openQuotationDetail(${refJs})">เปิดดู</button>${editAction}</div>`;
   }).join(''):'<p style="color:var(--muted)">ยังไม่มีใบเสนอราคา</p>';
 }
 async function refreshQuotationHistory(options){
@@ -1975,19 +1979,21 @@ function buildQuotationDetailHtml(data){
   const quote=normalizeQuoteRecord(data.quote||{});
   const lines=Array.isArray(data.lines)?data.lines:[];
   const totals=data.totals||{};
-  const quoteIdAttr=htmlAttr(quote.quoteId||quote.quoteNo||'');
+  const quoteRef=quote.quoteId||quote.quoteNo||'';
+  const quoteIdAttr=htmlAttr(quoteRef);
+  const quoteIdJs=jsStringLiteralAttr(quoteRef);
   const quoteNoAttr=htmlAttr(quote.quoteNo||'');
   const exportActions=canExportQuotationsUi()?[
-    `<button class="primary" onclick="printQuotation('${quoteIdAttr}')">Print</button>`,
-    `<button class="yellow" onclick="exportQuotationPNG('${quoteIdAttr}')">Save PNG</button>`,
-    `<button class="yellow" onclick="shareQuote('${quoteIdAttr}')">Share</button>`
+    `<button class="primary" onclick="printQuotation(${quoteIdJs})">Print</button>`,
+    `<button class="yellow" onclick="exportQuotationPNG(${quoteIdJs})">Save PNG</button>`,
+    `<button class="yellow" onclick="shareQuote(${quoteIdJs})">Share</button>`
   ].join(''):'';
   const editActions=canEditQuotationsUi()?[
-    `<button class="ghost" data-quote-edit-button data-quote-edit-source="quotation-detail" data-quote-id="${quoteIdAttr}" data-quote-no="${quoteNoAttr}" onclick="navigateToQuotationEdit('${quoteIdAttr}',event,{source:'quotation-detail'})">แก้ไข</button>`,
-    `<button class="yellow" onclick="cancelQuotationFromHistory('${quoteIdAttr}')">Cancel</button>`
+    `<button class="ghost" data-quote-edit-button data-quote-edit-source="quotation-detail" data-quote-id="${quoteIdAttr}" data-quote-no="${quoteNoAttr}" onclick="navigateToQuotationEdit(${quoteIdJs},event,{source:'quotation-detail'})">แก้ไข</button>`,
+    `<button class="yellow" onclick="cancelQuotationFromHistory(${quoteIdJs})">Cancel</button>`
   ].join(''):'';
   const actionsHtml=(exportActions||editActions)?`<div class="actions no-print">${exportActions}${editActions}</div>`:'';
-  return `<div class="section-title"><div><h2>${quote.quoteNo||quote.quoteId||'-'}</h2><p style="color:var(--muted);margin:4px 0 0">${quote.customerName||'-'} · ${quote.customerId||'-'}</p></div><span class="pill ${quote.status==='CANCELLED'?'yellow':'blue'}">${quote.status||'-'}</span></div><div class="quote-detail-meta"><span>วันที่: ${formatDateTime(quote.createdAt)}</span><span>ยอดสุทธิ: ${money(totals.grandTotal||quote.grandTotal)}</span></div><div class="list quote-detail-lines">${lines.length?lines.map((line,index)=>`<div class="row"><div><b>${line.productName||'-'}</b><br><small>${line.productId||'-'} · ${line.unit||'-'}</small></div><span>จำนวน ${line.qty||0}</span><span>ราคา ${money(line.listPrice)}</span><span>ส่วนลด ${line.discountPercent||0}%</span><b style="margin-left:auto">${money(line.grandTotal||line.lineTotal)}</b></div>`).join(''):'<p style="color:var(--muted)">ไม่มีรายการสินค้า</p>'}</div><div class="quote-total-box"><p>Subtotal <b>${money(totals.subtotal||quote.subtotal)}</b></p><p>VAT <b>${money(totals.vat||quote.vat)}</b></p><p>Grand Total <b>${money(totals.grandTotal||quote.grandTotal)}</b></p></div>${actionsHtml}`;
+  return `<div class="section-title"><div><h2>${escapeHtml(quote.quoteNo||quote.quoteId||'-')}</h2><p style="color:var(--muted);margin:4px 0 0">${escapeHtml(quote.customerName||'-')} · ${escapeHtml(quote.customerId||'-')}</p></div><span class="pill ${quote.status==='CANCELLED'?'yellow':'blue'}">${escapeHtml(quote.status||'-')}</span></div><div class="quote-detail-meta"><span>วันที่: ${escapeHtml(formatDateTime(quote.createdAt))}</span><span>ยอดสุทธิ: ${money(totals.grandTotal||quote.grandTotal)}</span></div><div class="list quote-detail-lines">${lines.length?lines.map((line,index)=>`<div class="row"><div><b>${escapeHtml(line.productName||'-')}</b><br><small>${escapeHtml(line.productId||'-')} · ${escapeHtml(line.unit||'-')}</small></div><span>จำนวน ${escapeHtml(line.qty||0)}</span><span>ราคา ${money(line.listPrice)}</span><span>ส่วนลด ${escapeHtml(line.discountPercent||0)}%</span><b style="margin-left:auto">${money(line.grandTotal||line.lineTotal)}</b></div>`).join(''):'<p style="color:var(--muted)">ไม่มีรายการสินค้า</p>'}</div><div class="quote-total-box"><p>Subtotal <b>${money(totals.subtotal||quote.subtotal)}</b></p><p>VAT <b>${money(totals.vat||quote.vat)}</b></p><p>Grand Total <b>${money(totals.grandTotal||quote.grandTotal)}</b></p></div>${actionsHtml}`;
 }
 function renderQuotationDetail(data){
   const box=$('quoteDetail');
@@ -2485,6 +2491,7 @@ function customerFormHtml(customer){
     ? customerSalesUserOptionsHtml(c.assignedSalesUserId||'',salesArea,selectedSalesName)
     : `<option value="${escapeHtml(c.assignedSalesUserId||'')}" selected>${escapeHtml(selectedSalesName||c.assignedSalesUserId||'กำลังโหลดรายชื่อ Sales...')}</option>`;
   const salesUserControl=`<select id="mAssignedSalesUserId" data-original-value="${escapeHtml(c.assignedSalesUserId||'')}" data-dirty="false" ${optionsReady?'':'disabled'} onchange="handleCustomerAssignedSalesChange()">${salesOptions}</select>`;
+  const customerIdJs=jsStringLiteralAttr(c.customerId||'');
   const salesOptionsState=customerFormOptionsError
     ? `<div class="customer-form-options-state error">โหลดรายชื่อ Sales ผู้ดูแลไม่สำเร็จ <button type="button" class="tiny" onclick="retryCustomerFormOptionsModal()">ลองใหม่</button></div>`
     : (!optionsReady?'<div class="customer-form-options-state">กำลังโหลดรายชื่อ Sales ผู้ดูแล...</div>':(!getCustomerFormSalesUsersForArea(salesArea).length?'<div class="customer-form-options-state">ไม่พบ Sales ที่ ACTIVE ในเขตนี้</div>':''));
@@ -2502,7 +2509,7 @@ function customerFormHtml(customer){
   <div class="field"><label>โทร</label><input id="mPhone" type="tel" inputmode="tel" value="${escapeHtml(c.phone==='-'?'':c.phone||'')}"></div>
   <div class="field"><label>ที่อยู่</label><textarea id="mAddress">${escapeHtml(c.address||'')}</textarea></div>
   <div class="field"><label>หมายเหตุ</label><textarea id="mNotes">${escapeHtml(c.notes||'')}</textarea></div>
-  <button id="saveCustomerModalButton" class="primary" onclick="saveCustomerModal('${escapeHtml(c.customerId||'')}')">บันทึก</button>`;
+  <button id="saveCustomerModalButton" class="primary" onclick="saveCustomerModal(${customerIdJs})">บันทึก</button>`;
 }
 function readCustomerModalDraft(){
   const assignedSelect=$('mAssignedSalesUserId');
@@ -2851,9 +2858,10 @@ function toast(msg){const el=document.getElementById('toast'); if(!el)return; el
 
 function isFavoriteCustomer(customerId){return FAVORITE_CUSTOMERS.some(c=>String(c.customerId||'')===String(customerId||''))}
 function renderCustomerCard(c,isFavorite){
-  const id=escapeHtml(c.customerId||'');
-  const quoteButton=currentRole()==='VIEWER'?'':`<button class="ghost" onclick="selectCustomer('${id}')">ออกใบเสนอราคา</button>`;
-  return `<div class="card ${isFavorite?'favorite-card':''}" ${isFavorite?`draggable="true" data-customer-id="${id}"`:''}>
+  const idAttr=htmlAttr(c.customerId||'');
+  const idJs=jsStringLiteralAttr(c.customerId||'');
+  const quoteButton=currentRole()==='VIEWER'?'':`<button class="ghost" onclick="selectCustomer(${idJs})">ออกใบเสนอราคา</button>`;
+  return `<div class="card ${isFavorite?'favorite-card':''}" ${isFavorite?`draggable="true" data-customer-id="${idAttr}"`:''}>
     <div class="customer-card-head"><h3>${escapeHtml(c.customerName||'-')}</h3><div class="customer-brand-badges">${customerBrandBadgesHtml(c)}</div></div>
     <p>รหัสร้านค้า: ${escapeHtml(c.customerCode||c.customerId||c.id||'-')}</p>
     <p>เขตการดูแล: ${escapeHtml(c.salesArea||'-')}${(c.assignedSalesNameSnapshot||c.assignedSalesUsername)?` · Sales: ${escapeHtml(c.assignedSalesNameSnapshot||c.assignedSalesUsername)}`:''}</p>
@@ -2862,8 +2870,8 @@ function renderCustomerCard(c,isFavorite){
     <p>โทร: ${renderPhoneLink(c.phone)||'-'}</p>
     <p>ที่อยู่: ${escapeHtml(c.address||'-')}</p>
     <p>หมายเหตุ: ${escapeHtml(c.notes||'-')}</p>
-    <div class="customer-actions">${quoteButton}${canEditCustomers()?`<button class="ghost" onclick="openCustomerEditModal('${id}')">✏️ แก้ไขข้อมูล</button>`:''}</div>
-    <button class="favorite-toggle" onclick="toggleFavoriteCustomer('${id}')">${isFavorite?'⭐ ยกเลิกปักหมุด':'☆ เพิ่มในร้านค้าโปรด'}</button>
+    <div class="customer-actions">${quoteButton}${canEditCustomers()?`<button class="ghost" onclick="openCustomerEditModal(${idJs})">✏️ แก้ไขข้อมูล</button>`:''}</div>
+    <button class="favorite-toggle" onclick="toggleFavoriteCustomer(${idJs})">${isFavorite?'⭐ ยกเลิกปักหมุด':'☆ เพิ่มในร้านค้าโปรด'}</button>
   </div>`;
 }
 function renderFavoriteCustomers(){
@@ -2955,9 +2963,10 @@ function renderProductCard(product,sourceListIndex){
   const p=product&&typeof product==='object'?product:{};
   const recordKey=registerProductCalculatorRecord(p,sourceListIndex);
   const key=htmlAttr(recordKey);
+  const keyJs=jsStringLiteralAttr(recordKey);
   const brandClass=normalizeProductBusinessUnitForUi(p)==='WEBER'||p.brand==='Weber'?'yellow':'blue';
   const promoHtml=renderProductPromotionTeaser(p,recordKey,'product-list');
-  return `<div class="card product-card-clickable" role="button" tabindex="0" data-product-record-key="${key}" onclick="openProductCalculator('${key}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProductCalculator('${key}')}"><span class="pill ${brandClass}">${escapeHtml(p.brand||'-')}</span><h3>${escapeHtml(p.productName||'-')}</h3><p>รหัสสินค้า: ${escapeHtml(p.sku||p.productId||p.id||'-')}</p><p>${escapeHtml(p.unit||'-')}</p><b>${money(p.listPrice)}</b>${promoHtml}<div class="product-card-actions"><button class="ghost" onclick="addProductCardToQuote('${key}',event)">เพิ่มลงใบเสนอราคา</button></div></div>`;
+  return `<div class="card product-card-clickable" role="button" tabindex="0" data-product-record-key="${key}" onclick="openProductCalculator(${keyJs})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProductCalculator(${keyJs})}"><span class="pill ${brandClass}">${escapeHtml(p.brand||'-')}</span><h3>${escapeHtml(p.productName||'-')}</h3><p>รหัสสินค้า: ${escapeHtml(p.sku||p.productId||p.id||'-')}</p><p>${escapeHtml(p.unit||'-')}</p><b>${money(p.listPrice)}</b>${promoHtml}<div class="product-card-actions"><button class="ghost" onclick="addProductCardToQuote(${keyJs},event)">เพิ่มลงใบเสนอราคา</button></div></div>`;
 }
 function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); if(!productsLoaded&&!DB.products.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} resetProductCalculatorRecordRegistry(); grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>renderProductCard(p,DB.products.indexOf(p))).join('')}
 
@@ -2976,7 +2985,7 @@ function renderQuoteCustomerPicker(forceShow){
   const matchesAll=DB.customers.filter(c=>smartMatch(c,q,getQuoteCustomerFields()));
   const limited=limitList(matchesAll,QUOTE_PICKER_LIMIT);
   picker.classList.add('show');
-  picker.innerHTML=limited.items.length?renderLimitNotice(limited.limited,QUOTE_PICKER_LIMIT)+limited.items.map(c=>`<button type="button" class="quote-option" onclick="chooseQuoteCustomer('${c.customerId}')"><b>${c.customerName||'-'}</b><small>รหัสร้านค้า: ${c.customerCode||c.customerId||'-'} · เขต ${c.salesArea||'-'} · ${c.province||'-'}${c.district?' / '+c.district:''} · ${c.customerType||'-'}</small></button>`).join(''):'<div class="quote-empty">ไม่พบรายการที่ค้นหา</div>';
+  picker.innerHTML=limited.items.length?renderLimitNotice(limited.limited,QUOTE_PICKER_LIMIT)+limited.items.map(c=>{const id=jsStringLiteralAttr(c.customerId||'');return `<button type="button" class="quote-option" onclick="chooseQuoteCustomer(${id})"><b>${escapeHtml(c.customerName||'-')}</b><small>รหัสร้านค้า: ${escapeHtml(c.customerCode||c.customerId||'-')} · เขต ${escapeHtml(c.salesArea||'-')} · ${escapeHtml(c.province||'-')}${c.district?' / '+escapeHtml(c.district):''} · ${escapeHtml(c.customerType||'-')}</small></button>`}).join(''):'<div class="quote-empty">ไม่พบรายการที่ค้นหา</div>';
 }
 
 function renderQuoteProductPicker(){
@@ -3142,7 +3151,8 @@ renderUsers=function(){
   const users=(Array.isArray(DB.users)?DB.users:[]).filter(u=>!q||smartMatch(Object.assign({},u,{area:getUserArea(u)}),q,['fullName','displayName','username','role','area','status','email','phone']));
   list.innerHTML=users.length?users.map(u=>{
     const canEdit=canManageUserRole(u.role);
-    return `<div class="row user-row"><div><b>${escapeHtml(u.fullName||u.displayName||u.username||'-')}</b><br><small>${escapeHtml(u.username||'-')} · ${escapeHtml(u.email||'-')}</small><br>${renderPhoneLink(u.phone)||'<small>-</small>'}</div><span class="pill blue">${escapeHtml(u.role||'-')}</span><span>${escapeHtml(getUserArea(u)||'-')}</span><span>${escapeHtml(u.status||'-')}</span><small>${escapeHtml(u.lastLogin||'-')}</small><button class="tiny" ${canEdit?'':'disabled'} onclick="openUserForm('${escapeHtml(u.userId||'')}')">${canEdit?'แก้ไข':'ไม่มีสิทธิ์'}</button></div>`;
+    const userIdJs=jsStringLiteralAttr(u.userId||'');
+    return `<div class="row user-row"><div><b>${escapeHtml(u.fullName||u.displayName||u.username||'-')}</b><br><small>${escapeHtml(u.username||'-')} · ${escapeHtml(u.email||'-')}</small><br>${renderPhoneLink(u.phone)||'<small>-</small>'}</div><span class="pill blue">${escapeHtml(u.role||'-')}</span><span>${escapeHtml(getUserArea(u)||'-')}</span><span>${escapeHtml(u.status||'-')}</span><small>${escapeHtml(u.lastLogin||'-')}</small><button class="tiny" ${canEdit?'':'disabled'} onclick="openUserForm(${userIdJs})">${canEdit?'แก้ไข':'ไม่มีสิทธิ์'}</button></div>`;
   }).join(''):'<p class="loading-text">No users</p>';
 };
 openUserForm=function(userId){
@@ -3152,7 +3162,8 @@ openUserForm=function(userId){
   form.classList.remove('hidden');
   const roleOptions=getManageableRoleOptions(user.role).map(r=>`<option value="${r}">${r}</option>`).join('');
   const passwordHelp=user.userId?'เว้นว่างไว้หากไม่ต้องการเปลี่ยนรหัสผ่าน':'ต้องกรอกรหัสผ่านและยืนยันรหัสผ่าน';
-  form.innerHTML=`<div class="grid2"><div class="field"><label>ชื่อ-นามสกุล</label><input id="userFullName" maxlength="150" value="${escapeHtml(user.fullName||user.displayName||'')}"></div><div class="field"><label>Username</label><input id="userUsername" value="${escapeHtml(user.username||'')}" ${user.userId?'disabled':''}></div><div class="password-pair"><div class="field"><label>รหัสผ่าน ${user.userId?'(ไม่กรอก = ใช้รหัสเดิม)':''}</label><div class="password-field"><input id="userPassword" type="password" autocomplete="new-password" aria-describedby="userPasswordHelp"><button type="button" class="password-toggle" onclick="toggleUserPasswordVisibility('userPassword',this)" aria-label="แสดงรหัสผ่าน" aria-pressed="false">${passwordEyeIcon(false)}</button></div><small id="userPasswordHelp">${passwordHelp}</small></div><div class="field"><label>ยืนยันรหัสผ่าน</label><div class="password-field"><input id="userConfirmPassword" type="password" autocomplete="new-password"><button type="button" class="password-toggle" onclick="toggleUserPasswordVisibility('userConfirmPassword',this)" aria-label="แสดงรหัสผ่าน" aria-pressed="false">${passwordEyeIcon(false)}</button></div></div></div><div class="field"><label>Email</label><input id="userEmail" value="${escapeHtml(user.email||'')}"></div><div class="field"><label>เบอร์โทรศัพท์</label><input id="userPhone" type="tel" inputmode="tel" autocomplete="tel" value="${escapeHtml(user.phone||'')}"></div><div class="field"><label>สิทธิ์ผู้ใช้งาน</label><select id="userRole">${roleOptions}</select></div><div class="field"><label>Area</label><input id="userArea" value="${escapeHtml(getUserArea(user))}"><small>พื้นที่ที่ใช้กำหนดขอบเขตข้อมูล Dashboard รายงาน และผู้ใช้งาน</small></div><div class="field"><label>สถานะ</label><select id="userStatus"><option>Active</option><option>Inactive</option><option>Locked</option></select></div></div><div class="actions"><button id="saveUserButton" class="primary" onclick="saveUserForm('${escapeHtml(user.userId||'')}')">${user.userId?'บันทึกผู้ใช้งาน':'สร้างผู้ใช้งาน'}</button><button class="ghost" onclick="$('userForm').classList.add('hidden')">ยกเลิก</button></div>`;
+  const userIdJs=jsStringLiteralAttr(user.userId||'');
+  form.innerHTML=`<div class="grid2"><div class="field"><label>ชื่อ-นามสกุล</label><input id="userFullName" maxlength="150" value="${escapeHtml(user.fullName||user.displayName||'')}"></div><div class="field"><label>Username</label><input id="userUsername" value="${escapeHtml(user.username||'')}" ${user.userId?'disabled':''}></div><div class="password-pair"><div class="field"><label>รหัสผ่าน ${user.userId?'(ไม่กรอก = ใช้รหัสเดิม)':''}</label><div class="password-field"><input id="userPassword" type="password" autocomplete="new-password" aria-describedby="userPasswordHelp"><button type="button" class="password-toggle" onclick="toggleUserPasswordVisibility('userPassword',this)" aria-label="แสดงรหัสผ่าน" aria-pressed="false">${passwordEyeIcon(false)}</button></div><small id="userPasswordHelp">${passwordHelp}</small></div><div class="field"><label>ยืนยันรหัสผ่าน</label><div class="password-field"><input id="userConfirmPassword" type="password" autocomplete="new-password"><button type="button" class="password-toggle" onclick="toggleUserPasswordVisibility('userConfirmPassword',this)" aria-label="แสดงรหัสผ่าน" aria-pressed="false">${passwordEyeIcon(false)}</button></div></div></div><div class="field"><label>Email</label><input id="userEmail" value="${escapeHtml(user.email||'')}"></div><div class="field"><label>เบอร์โทรศัพท์</label><input id="userPhone" type="tel" inputmode="tel" autocomplete="tel" value="${escapeHtml(user.phone||'')}"></div><div class="field"><label>สิทธิ์ผู้ใช้งาน</label><select id="userRole">${roleOptions}</select></div><div class="field"><label>Area</label><input id="userArea" value="${escapeHtml(getUserArea(user))}"><small>พื้นที่ที่ใช้กำหนดขอบเขตข้อมูล Dashboard รายงาน และผู้ใช้งาน</small></div><div class="field"><label>สถานะ</label><select id="userStatus"><option>Active</option><option>Inactive</option><option>Locked</option></select></div></div><div class="actions"><button id="saveUserButton" class="primary" onclick="saveUserForm(${userIdJs})">${user.userId?'บันทึกผู้ใช้งาน':'สร้างผู้ใช้งาน'}</button><button class="ghost" onclick="$('userForm').classList.add('hidden')">ยกเลิก</button></div>`;
   $('userRole').value=normalizeRole(user.role||'SALES');
   $('userStatus').value=user.status||'Active';
 };
@@ -3202,7 +3213,7 @@ function renderQuoteProductPreferenceCard(product,options){
   const idAttr=htmlAttr(rawId);
   const recordKey=registerProductRecordSelection(item,'quote');
   const recordKeyAttr=htmlAttr(recordKey);
-  const jsId=escapeHtml(JSON.stringify(rawId));
+  const jsId=jsStringLiteralAttr(rawId);
   const productUnit=normalizeProductBusinessUnitForUi(item);
   const opts=options||{};
   const source=String(opts.source||(opts.pinned?'PINNED':'FAVORITE')).toUpperCase();
