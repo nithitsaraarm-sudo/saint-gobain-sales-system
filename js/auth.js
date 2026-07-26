@@ -19,6 +19,19 @@ function toastMessage(message) {
   }
 }
 
+function isDemoLoginEnabled() {
+  const env = String(window.APP_ENV || 'production').trim().toLowerCase();
+  return env !== 'production' && window.ENABLE_DEMO_LOGIN === true;
+}
+
+function applyDemoLoginVisibility() {
+  const enabled = isDemoLoginEnabled();
+  document.querySelectorAll('[data-demo-login="true"]').forEach(function (element) {
+    element.hidden = !enabled;
+    element.classList.toggle('hidden', !enabled);
+  });
+}
+
 function saveSession(user, sessionToken) {
   try {
     ['sg_bootstrap_cache', 'sg_quotation_history_cache', 'sg_quotation_cache'].forEach(function (key) {
@@ -139,6 +152,10 @@ async function login() {
 
 async function startTestMode() {
   try {
+    if (!isDemoLoginEnabled()) {
+      toastMessage('Demo Login is disabled');
+      return { ok: false, code: 'FORBIDDEN', message: 'Demo Login is disabled' };
+    }
     const response = await callApi('demoLogin', {});
     if (!response.ok) {
       toastMessage(response.message || 'เข้าสู่ระบบไม่สำเร็จ');
@@ -363,8 +380,11 @@ window.clearSession = clearSession;
 window.loadBootstrap = loadBootstrap;
 window.updateProfile = updateProfile;
 window.changePassword = changePassword;
+window.isDemoLoginEnabled = isDemoLoginEnabled;
+window.applyDemoLoginVisibility = applyDemoLoginVisibility;
 
 document.addEventListener('DOMContentLoaded', function () {
+  applyDemoLoginVisibility();
   try {
     const remembered = localStorage.getItem('rememberLogin') === 'true';
     const username = localStorage.getItem('rememberUsername') || '';

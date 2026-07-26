@@ -148,6 +148,9 @@ function getSheetDataCacheKey(sheetName) {
   if (typeof getUsersSheetName === 'function' && name === String(getUsersSheetName() || '')) {
     return 'sheetData:users';
   }
+  if (name === String(SHEET_NAMES.PROMOTIONS || '') || name === String(typeof PROMOTIONS_SHEET !== 'undefined' ? PROMOTIONS_SHEET : '')) {
+    return 'sheetData:promotions';
+  }
   return '';
 }
 

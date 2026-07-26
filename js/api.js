@@ -33,6 +33,8 @@ const READ_ACTIONS = [
   'getCustomerFormOptions',
   'products',
   'getProducts',
+  'promotions',
+  'getPromotions',
   'searchQuoteProducts',
   'product',
   'discount',
@@ -710,6 +712,9 @@ function mockApi(action, payload) {
     return window.__mockPublicSettings;
   };
   if (action === 'demoLogin') {
+    if (APP_ENV === 'development' && window.ENABLE_DEMO_LOGIN === true) {
+      return { ok: true, data: { sessionToken: 'mock-demo-token', user: { userId: 'LOCAL_DEMO', username: 'demo', fullName: 'Local Demo User', displayName: 'Local Demo User', role: 'VIEWER', branch: '', phone: '' } } };
+    }
     return { ok: false, code: 'FORBIDDEN', message: 'Demo Login is disabled' };
   }
   if (action === 'login') {
@@ -724,10 +729,9 @@ function mockApi(action, payload) {
   switch (action) {
     case 'login':
       return { ok: true, data: { username: data.username || 'local', displayName: 'Local User', position: '', phone: '' } };
-    case 'demoLogin':
-      return { ok: false, code: 'FORBIDDEN', message: 'Demo Login is disabled' };
     case 'bootstrap':
-      return { ok: true, data: { settings: Object.assign({}, mockPublicSettings(), { welcomeText: 'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ', vatRate: 7 }), publicSettings: mockPublicSettings(), counts: { customers: 0, products: 0 }, quotes: [], quoteLines: [], sheetInitialized: true } };
+      window.__mockPromotions = window.__mockPromotions || [];
+      return { ok: true, data: { settings: Object.assign({}, mockPublicSettings(), { welcomeText: 'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ', vatRate: 7 }), publicSettings: mockPublicSettings(), counts: { customers: 0, products: 0 }, quotes: [], quoteLines: [], promotions: window.__mockPromotions, sheetInitialized: true } };
     case 'getPublicSystemSettings':
       return { ok: true, data: mockPublicSettings(), message: 'Mock public settings loaded' };
     case 'getSystemIdentitySettings':
@@ -744,6 +748,10 @@ function mockApi(action, payload) {
       return { ok: true, data: [] };
     case 'products':
       return { ok: true, data: [] };
+    case 'promotions':
+    case 'getPromotions':
+      window.__mockPromotions = window.__mockPromotions || [];
+      return { ok: true, data: window.__mockPromotions };
     case 'discount':
       return { ok: true, data: { customerId: data.customerId || '', groupCode: data.groupCode || '', discountGroup: '', discountPercent: 0, source: 'mock' }, message: 'Mock discount' };
     case 'quotation':
@@ -809,8 +817,21 @@ function mockApi(action, payload) {
       return {ok:true,data:data,message:'Pinned products reordered'};
     case 'saveProduct':
       return { ok: true, data: data, message: 'Mock product saved' };
-    case 'savePromotion':
-      return { ok: true, data: data, message: 'Mock promotion saved' };
+    case 'savePromotion': {
+      window.__mockPromotions = window.__mockPromotions || [];
+      const mockPromotion = Object.assign({
+        promotionId: 'PROMO-MOCK-' + Date.now(),
+        createdAt: new Date().toISOString()
+      }, data, {
+        updatedAt: new Date().toISOString(),
+        active: data.active === false ? false : true
+      });
+      window.__mockPromotions = window.__mockPromotions.filter(function (promotion) {
+        return String(promotion.promotionId || '') !== String(mockPromotion.promotionId || '');
+      }).concat([mockPromotion]);
+      invalidateBootstrapApiCache();
+      return { ok: true, data: mockPromotion, message: 'Mock promotion saved' };
+    }
     case 'createQuotation':
       return { ok: true, data: { quoteId: 'QT-MOCK-' + Date.now() }, message: 'Mock quotation created' };
     case 'loadQuotation':

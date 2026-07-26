@@ -77,6 +77,12 @@ function api(action, payload) {
       case 'getProducts':
         if (!permissions.canViewProducts) return forbidden('Insufficient permission');
         return authorizeAction(getProducts, []);
+      case 'promotions':
+      case 'getPromotions':
+        if (!permissions.canViewPromotions) return forbidden('Insufficient permission');
+        if (!payload || typeof payload !== 'object') payload = {};
+        payload.currentUser = user;
+        return authorizeAction(getPromotions, [payload]);
       case 'searchQuoteProducts':
         if (!permissions.canCreateQuotations) return forbidden('Insufficient permission');
         if (payload && typeof payload === 'object') payload.currentUser = user;
@@ -133,6 +139,8 @@ function api(action, payload) {
         return authorizeAction(saveProduct, [payload]);
       case 'savePromotion':
         if (!permissions.canManagePromotions) return forbidden('Insufficient permission');
+        if (!payload || typeof payload !== 'object') payload = {};
+        payload.currentUser = user;
         return authorizeAction(savePromotion, [payload]);
       case 'updateSettings':
         if (!permissions.canManageSettings) return forbidden('Insufficient permission');

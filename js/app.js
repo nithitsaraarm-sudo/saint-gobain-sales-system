@@ -2826,8 +2826,12 @@ async function saveModal(type){
     description: document.getElementById('mDesc').value,
     discountText: document.getElementById('mDiscount').value
   });
+  if(!r||!r.ok){
+    toast(r&&r.message?r.message:'บันทึกไม่สำเร็จ');
+    return r||{ok:false,message:'บันทึกไม่สำเร็จ'};
+  }
   closeModal();
-  toast('บันทึกแล้ว');
+  toast(r.message||'บันทึกแล้ว');
   if(type==='customer'){
     clearCustomersFrontendCache();
     invalidateBootstrapCustomerCacheIfNeeded();
@@ -3074,7 +3078,8 @@ function canAccessPage(page){
 }
 function applyRolePermissions(){
   document.querySelectorAll('.nav button[data-page]').forEach(btn=>{const page=btn.getAttribute('data-page');btn.classList.toggle('hidden',!canAccessPage(page));});
-  document.querySelectorAll('.main-action').forEach(btn=>{btn.classList.toggle('hidden',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0);});
+  document.querySelectorAll('[data-permission]').forEach(btn=>{const permission=btn.getAttribute('data-permission');const allowed=permissionFlag(permission,false);btn.classList.toggle('hidden',!allowed);btn.hidden=!allowed;});
+  document.querySelectorAll('.main-action:not([data-permission])').forEach(btn=>{btn.classList.toggle('hidden',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0);});
   const quoteActions=document.querySelector('#page-quote .actions');
   if(quoteActions)quoteActions.classList.toggle('hidden',currentRole()==='VIEWER');
   applySettingsPermissionUi();
