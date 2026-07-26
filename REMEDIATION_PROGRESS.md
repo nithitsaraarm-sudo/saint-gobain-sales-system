@@ -21,7 +21,7 @@ If remaining weekly usage is shown as 30% or lower in the product UI, stop after
 | Phase 2 — Canonical RBAC and Permission Alignment | Completed | `064bdcf243e2fc26c6cbefa8a73964aa9d517071` |
 | Phase 3 — Incomplete and Misleading Features | Completed | `8f306fdf9e67136332e0a5446852b158babd08c2` |
 | Phase 4 — Version, Environment, and Deployment Configuration | Completed | `89f6b53e54f82bf2af2627ac6482b537ec50eb5b` |
-| Phase 5 — External Script and Frontend Security Hardening | Pending | - |
+| Phase 5 — External Script and Frontend Security Hardening | Completed | `fc256877e42a970cecf5353bac4c95868bbf0d2c` |
 | Phase 6 — Apps Script Performance and Data Safety | Pending | - |
 | Phase 7 — Frontend Cache and State Reliability | Pending | - |
 | Phase 8 — Controlled Maintainability Refactor | Pending | - |
@@ -189,6 +189,32 @@ Validation results:
 - `rg "0\\.5\\.25|APP_CONFIG|APP_VERSION|CACHE_NAME|manifest\\.json\\?v=|main\\.css\\?v=|GAS_WEB_APP_URL|API_URL_NOT_CONFIGURED"` confirmed the canonical version/config wiring.
 - `git diff --check` passed; only expected Windows LF/CRLF warnings were reported.
 - No private credentials were added; the Apps Script Web App URL remains public deployment configuration.
+
+## Phase 5 Completion Notes
+
+Completed commit: `fc256877e42a970cecf5353bac4c95868bbf0d2c`
+
+Files changed:
+
+- `SECURITY.md`
+- `index.html`
+- `js/app.js`
+
+Implemented fixes:
+
+- Added Subresource Integrity and `crossorigin="anonymous"` to the pinned `html2canvas@1.4.1` and `jspdf@2.5.1` CDN scripts.
+- Added `jsStringLiteralAttr()` for safe inline JavaScript string-literal arguments used by active renderers that still rely on inline handlers.
+- Escaped dynamic Sheet/API output in active promotion, dashboard text, quotation history, quotation detail, customer card, quotation customer picker, product card, product promotion, product preference, and active user admin render paths touched in this phase.
+- Preserved backend/API/business logic and did not change permissions, routes, quotation save logic, or Apps Script schemas.
+- Added a CSP migration note in `SECURITY.md` documenting why strict CSP should wait until inline handlers are migrated to delegated listeners.
+
+Validation results:
+
+- `git diff --check` passed; only expected Windows LF/CRLF warnings were reported.
+- Static search confirmed both external CDN scripts now include `integrity` and `crossorigin`.
+- Static search confirmed `escapeHtml(JSON.stringify(...))` no longer appears; active inline JavaScript string arguments now use `jsStringLiteralAttr()`.
+- Static search still finds unsafe-looking patterns in legacy duplicate renderer definitions that are overridden later in `js/app.js`; full duplicate-definition cleanup remains pending for Phase 8 / Phase 10 to avoid mixing a broad refactor into this security-hardening phase.
+- `where.exe node`, `where.exe deno`, and `where.exe bun` all failed because no local JavaScript runtime is installed; browser/runtime smoke tests must be run manually.
 
 ## Rollback Notes
 
