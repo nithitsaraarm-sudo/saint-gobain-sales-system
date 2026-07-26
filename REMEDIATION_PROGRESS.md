@@ -23,7 +23,7 @@ If remaining weekly usage is shown as 30% or lower in the product UI, stop after
 | Phase 4 — Version, Environment, and Deployment Configuration | Completed | `89f6b53e54f82bf2af2627ac6482b537ec50eb5b` |
 | Phase 5 — External Script and Frontend Security Hardening | Completed | `fc256877e42a970cecf5353bac4c95868bbf0d2c` |
 | Phase 6 — Apps Script Performance and Data Safety | Completed | `fb7e3e4cb59ebab9ebf50ed0a2c9608d652524c3` |
-| Phase 7 — Frontend Cache and State Reliability | Pending | - |
+| Phase 7 — Frontend Cache and State Reliability | Completed | `2caeaca4fecec848dc7ef771a8d6080a50a6d79f` |
 | Phase 8 — Controlled Maintainability Refactor | Pending | - |
 | Phase 9 — UX Reliability and Accessibility | Pending | - |
 | Phase 10 — Documentation Synchronization | Pending | - |
@@ -245,6 +245,35 @@ Validation results:
 - Static search confirmed grouped row delete paths now call `deleteSheetRowsByRowNumbers_()` and `deleteRows(start, count)`.
 - Remaining `setValue()` / `deleteRow()` hits in the touched files are fallback branches or unrelated existing low-volume code paths.
 - No JavaScript runtime or Apps Script local runner is installed in this environment; live Google Apps Script performance smoke tests must be run after deployment.
+
+## Phase 7 Completion Notes
+
+Completed commit: `2caeaca4fecec848dc7ef771a8d6080a50a6d79f`
+
+Files changed:
+
+- `js/api.js`
+- `js/auth.js`
+- `js/app.js`
+
+Implemented fixes:
+
+- Added owner/session scope metadata to private frontend localStorage caches.
+- Scoped private cache records by app version, user id, role, area, and session-token suffix.
+- Kept public system settings cache unscoped so login branding still works before authentication.
+- Added `clearPrivateApiCaches()` to remove exact private cache keys and prefixed private cache keys such as user-scoped customer/discount caches.
+- Called private-cache clearing and authenticated in-memory state reset on login/session replacement and logout.
+- Added `resetAuthenticatedFrontendState()` to clear DB, cart, customers/products loaded flags, quote-history state, favorite customers, favorite/pinned products, product selection records, profile image temporary data, and pending detail promises.
+- Updated app-version cache clearing to remove prefixed private caches as well as exact cache keys.
+
+Validation results:
+
+- `git diff --check` passed; only expected Windows LF/CRLF warnings were reported.
+- Static search confirmed `setCache()` stores `scope: getCacheScope(cacheKey)` and `getCache()` rejects mismatched private scopes.
+- Static search confirmed `saveSession()` and `clearSession()` call `clearPrivateApiCaches()` and `resetAuthenticatedFrontendState()`.
+- Static search confirmed `clearAppCaches()` also clears private prefixed caches.
+- No backend/API contract, permission logic, or database schema was changed.
+- `where.exe node`, `where.exe deno`, and `where.exe bun` were previously confirmed unavailable; browser/runtime smoke tests must be run manually.
 
 ## Rollback Notes
 
