@@ -18,7 +18,7 @@ If remaining weekly usage is shown as 30% or lower in the product UI, stop after
 |---|---|---|
 | Phase 0 — Initial repository check and audit baseline | Completed | `0cb62334d62341a78ba6f3b1194ca42c985c1c47` |
 | Phase 1 — Critical Security Fixes | Completed | `4ed7abba5628b1f3b4dae490a2ae823e5586a7a3` |
-| Phase 2 — Canonical RBAC and Permission Alignment | Pending | - |
+| Phase 2 — Canonical RBAC and Permission Alignment | Completed | `064bdcf243e2fc26c6cbefa8a73964aa9d517071` |
 | Phase 3 — Incomplete and Misleading Features | Pending | - |
 | Phase 4 — Version, Environment, and Deployment Configuration | Pending | - |
 | Phase 5 — External Script and Frontend Security Hardening | Pending | - |
@@ -84,6 +84,41 @@ Validation results:
 - `rg "cache=hit authorized=true|canAccessQuotationRecord|getServerCache\\(cacheKey\\)" appscript\\Quotation.gs` confirms `canAccessQuotationRecord()` runs before the load-quotation cache hit.
 - `rg "case 'discount'|validateDiscountCustomerScope_|authorizeAction\\(getDiscount" appscript\\Api.gs` confirms discount API scope validation runs before `getDiscount()`.
 - `rg "cache\\.put|caches\\.match|isApprovedStaticAsset|isSensitiveRequestUrl|isNavigationRequest" service-worker.js` confirms service worker caching is static-asset scoped.
+- `where.exe node` failed because Node.js is not installed in this local environment; no JavaScript runtime test runner was available.
+
+## Phase 2 Completion Notes
+
+Completed commit: `064bdcf243e2fc26c6cbefa8a73964aa9d517071`
+
+Files changed:
+
+- `appscript/Permission.gs`
+- `appscript/Api.gs`
+- `appscript/Code.gs`
+- `appscript/Quotation.gs`
+- `appscript/Customer.gs`
+- `js/app.js`
+- `js/quotation.js`
+- `index.html`
+- `RBAC_PERMISSION_AUDIT.md`
+
+Implemented fixes:
+
+- Made backend permission helpers the canonical RBAC source for quotation create/edit/view/export, products, promotions, reports, customer form options, and customer assignment options.
+- Chose and documented the MANAGER policy as oversight/read-only for quotation history/detail, reports, scoped customers, and settings profile.
+- Removed MANAGER quotation-create/edit/cancel drift across API, Apps Script helpers, and frontend route/action guards.
+- Kept VIEWER read-only and kept SALES quotation access constrained by existing ownership/customer-scope checks.
+- Reduced customer assignment/sales-user metadata exposure so only SUPER_ADMIN/ADMIN receive assignment option lists.
+- Aligned frontend buttons, routes, modal entry points, settings data-entry access, and quotation workflow actions with backend permission flags.
+- Preserved area-based customer filtering and SUPER_ADMIN hierarchy protection.
+
+Validation results:
+
+- `git diff --check` passed; only expected Windows LF/CRLF warnings were reported.
+- Static searches confirmed quotation create/edit permissions now exclude MANAGER while quotation view/history remains available to read roles.
+- Static searches confirmed `products`, `searchQuoteProducts`, `loadQuotation`, `getQuotationHistory`, customer form options, and assignment-option API cases use canonical permission flags.
+- Static searches confirmed frontend edit/cancel/duplicate/export/settings/data-entry visibility and direct-action guards use the same permission flags.
+- Static searches confirmed the RBAC audit no longer contains outdated drift labels for the implemented MANAGER quotation policy.
 - `where.exe node` failed because Node.js is not installed in this local environment; no JavaScript runtime test runner was available.
 
 ## Rollback Notes
