@@ -108,7 +108,7 @@ function resetAuthenticatedFrontendState(){
 
 function checkAppVersion(){
   try{
-    const newVersion=String(window.APP_VERSION||'0.5.25').trim();
+    const newVersion=String(window.APP_VERSION||'0.5.26').trim();
     console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
     const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
     if(oldVersion===newVersion){
@@ -1686,6 +1686,7 @@ function chooseQuoteCustomer(customerId){
   if(customer&&quoteUnit==='GYPROC'&&!customer.sellsGyproc)toast('ร้านค้านี้ยังไม่ได้ระบุว่าจำหน่าย Gyproc');
   const picker=$('quoteCustomerPicker');
   if(picker)picker.classList.remove('show');
+  if(typeof window.scheduleQuotationDraftAutosave==='function')window.scheduleQuotationDraftAutosave('customer_selection');
 }
 function renderPromos(){let q=($('searchPromos')?.value||'').toLowerCase(); const grid=$('promoGrid'); if(!grid)return; grid.innerHTML=DB.promotions.filter(p=>JSON.stringify(p).toLowerCase().includes(q)).map(p=>`<div class="card"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${escapeHtml(p.brand||'-')}</span><h3>${escapeHtml(p.productName||'-')}</h3><p>${escapeHtml(p.description||'')}</p><b>${escapeHtml(p.discountText||'')}</b><p style="color:var(--muted)">${escapeHtml(p.startDate||'')} - ${escapeHtml(p.endDate||'')}</p></div>`).join('')}
 function normalizeQuoteTypeForUi(value){
@@ -2879,7 +2880,7 @@ async function saveModal(type){
   }
   await loadData({force:true});
 }
-function toast(msg){const el=document.getElementById('toast'); if(!el)return; el.textContent=msg; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),2600)}
+function toast(msg, options){if(typeof showToast==='function')return showToast(Object.assign({type:'info',message:msg},options||{}));const el=document.getElementById('toast'); if(!el)return; el.textContent=msg; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),2600)}
 
 function isFavoriteCustomer(customerId){return FAVORITE_CUSTOMERS.some(c=>String(c.customerId||'')===String(customerId||''))}
 function renderCustomerCard(c,isFavorite){
@@ -3142,7 +3143,7 @@ renderAll=function(){baseRenderAllForAuth();renderUsers();applyRolePermissions()
 const baseGoForAuth=go;
 go=function(page,btn){if(!canAccessPage(page)){toast('ไม่มีสิทธิ์เข้าใช้งานหน้านี้');return;}const result=baseGoForAuth(page,btn);applyRolePermissions();return result;};
 const baseEnsurePageDataForAuth=ensurePageData;
-ensurePageData=function(page){if(page==='users'){return loadUsers();}if(page==='customers'){return baseEnsurePageDataForAuth(page).then(response=>{scheduleFavoriteCustomersLoad();return response;});}if(page==='quote'){return Promise.all([baseEnsurePageDataForAuth(page),loadProductPreferences()]).then(async responses=>{if(typeof window.initializePendingQuotationContext==='function'){const pending=await window.initializePendingQuotationContext();if(pending&&pending.ok===false)return pending;}return {ok:true,data:responses};});}return baseEnsurePageDataForAuth(page);};
+ensurePageData=function(page){if(page==='users'){return loadUsers();}if(page==='customers'){return baseEnsurePageDataForAuth(page).then(response=>{scheduleFavoriteCustomersLoad();return response;});}if(page==='quote'){return Promise.all([baseEnsurePageDataForAuth(page),loadProductPreferences()]).then(async responses=>{if(typeof window.initializePendingQuotationContext==='function'){const pending=await window.initializePendingQuotationContext();if(pending&&pending.ok===false)return pending;}if(typeof window.initializeQuotationDraftRecovery==='function'){const recovery=await window.initializeQuotationDraftRecovery();if(recovery&&recovery.ok===false)return recovery;}return {ok:true,data:responses};});}return baseEnsurePageDataForAuth(page);};
 async function loadUsers(){
   if(['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0)return {ok:false,message:'Insufficient permission'};
   const response=await callApi('loadUsers',{});
