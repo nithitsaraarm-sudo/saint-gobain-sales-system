@@ -1,8 +1,8 @@
 window.APP_CONFIG = Object.assign({
   appName: "Saint-Gobain Sales System",
-  version: "0.5.26",
+  version: "0.5.40",
   environment: "production",
-  cacheVersion: "0.5.26",
+  cacheVersion: "0.5.40",
   enableDemoLogin: false,
   gasWebAppUrl: "https://script.google.com/macros/s/AKfycbyuhRP2aIYI11vzMsIzGr2ncuhrflHb1u9flm_OwjpjZOJOTXvAg1HQu4iq62ZwjJn3RQ/exec"
 }, window.APP_CONFIG || {});
@@ -18,6 +18,7 @@ window.DEFAULT_PAGE_SIZE = 50;
 
 window.APP_CACHE_KEYS = [
   "sg_products_cache",
+  "sg_product_promotions_cache",
   "sg_customers_cache",
   "sg_bootstrap_cache",
   "sg_public_settings_cache",

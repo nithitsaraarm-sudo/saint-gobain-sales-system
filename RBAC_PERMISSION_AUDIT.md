@@ -3,6 +3,38 @@
 วันที่ตรวจ: 2026-07-26  
 สถานะ: Audit-only / ไม่มีการแก้ไขโค้ดระบบจาก audit นี้
 
+## V1 final RBAC addendum — 2026-07-29
+
+Current static implementation was re-inspected for the V1 pre-release audit. Roles found in code are `SUPER_ADMIN`, `ADMIN`, `MANAGER`, `SALES`, and `VIEWER`; no `PC` role was found in the inspected constants/permission paths.
+
+Current high-level matrix:
+
+| Feature group | SUPER_ADMIN | ADMIN | MANAGER | SALES | VIEWER |
+|---|---|---|---|---|---|
+| Dashboard/home | Yes | Yes | Yes | Yes | Yes |
+| Customers view/search | All areas | Scoped | Scoped | Assigned/area scoped | Scoped read-only |
+| Customers add/edit/assignment | Yes | Yes | No | No | No |
+| Products view | Yes | Yes | No | Yes | No |
+| Products manage | Yes | Yes | No | No | No |
+| Promotions view | Yes | Yes | No | Yes | No |
+| Promotions manage | Yes | Yes | No | No | No |
+| Quotation create/edit/cancel | Yes | Yes | No | Yes, own/scope | No |
+| Quotation history/detail/export | Yes | Yes | Yes | Own/scope | Yes |
+| Reports | Yes | Yes | Yes | No | Yes |
+| Users | Yes | Yes, lower role/area scoped | No | No | No |
+| System identity/settings | Yes | No | No | No | No |
+| Own profile/password | Yes | Yes | Yes | Yes | Yes |
+
+Static evidence observed:
+
+- `appscript/Api.gs` requires `requireApiUser()` for non-public actions and applies role checks per action.
+- `appscript/Permission.gs` is the canonical permission flag source returned through bootstrap data.
+- `appscript/Customer.gs` enforces area and assigned-sales visibility in backend customer reads.
+- `appscript/Quotation.gs` checks customer access before save and quotation ownership/scope before load/history access.
+- `js/app.js` applies route/sidebar guards, but frontend hiding is treated only as defense in depth.
+
+Release status: **not ready for real-user UAT/Pilot until runtime RBAC/data-isolation tests pass**. See `FINAL_V1_PRE_RELEASE_AUDIT.md`, `TEST_CASES.md`, and `KNOWN_ISSUES.md`.
+
 ## Remediation Status Addendum — 2026-07-26
 
 This file remains the original RBAC/security audit baseline. The findings are preserved for evidence, while remediation status is tracked here and in `REMEDIATION_PROGRESS.md`.

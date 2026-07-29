@@ -1,5 +1,54 @@
 # Saint-Gobain Sales System - Work History
 
+## 2026-07-29 - Quotation local draft expiration
+
+### Branch
+
+`audit/full-remediation`
+
+### Files changed
+
+- `js/quotation.js`
+- `TEST_CASES.md`
+- `REMEDIATION_PROGRESS.md`
+- `WORK_HISTORY.md`
+
+### Summary
+
+- Added a 14-day TTL policy for local quotation drafts.
+- Draft expiration runs before the recovery modal is shown.
+- Expired, invalid-timestamp, missing-timestamp, empty, and corrupted current-user draft entries are removed silently from the exact scoped `localStorage` key.
+- Future timestamps are logged and allowed to continue existing recovery behavior.
+- Valid draft recovery, autosave, saved quotations, quotation APIs, Google Sheets, and quotation numbering were not changed.
+- Added manual/browser/PWA test coverage rows `DRAFT-TTL-01` through `DRAFT-TTL-12`.
+
+## 2026-07-29 - V1 final pre-release audit documentation package
+
+### Branch
+
+`audit/full-remediation`
+
+### Files changed
+
+- `FINAL_V1_PRE_RELEASE_AUDIT.md`
+- `UAT_CHECKLIST.md`
+- `PILOT_GO_LIVE_PLAN.md`
+- `KNOWN_ISSUES.md`
+- `RELEASE_NOTES_V1.md`
+- `ROLLBACK_PLAN_V1.md`
+- `RELEASE_READINESS.md`
+- `TEST_CASES.md`
+- `RBAC_PERMISSION_AUDIT.md`
+- `SECURITY.md`
+- `REMEDIATION_PROGRESS.md`
+
+### Summary
+
+- Performed a final static pre-release audit of the V1 candidate at version `0.5.26`.
+- Recorded release decision as `NOT READY` for real-user UAT/Pilot because runtime API, RBAC, mobile/PWA, production smoke, concurrency, and backup/restore evidence is still blocked/not run.
+- Created business-readable UAT checklist, pilot plan, release notes, known issues, and rollback plan.
+- No application code, API behavior, database schema, permissions, or configuration was changed in this phase.
+
 ไฟล์นี้ใช้เก็บประวัติการทำงานเชิงพัฒนา เพื่อส่งต่อให้ Codex/ผู้พัฒนาคนถัดไปเข้าใจบริบทล่าสุดได้เร็วกว่าอ่าน diff ทั้งหมด
 
 > หมายเหตุ: `CHANGELOG.md` มีอยู่แล้วและเหมาะสำหรับบันทึกการเปลี่ยนแปลงระดับ release ส่วนไฟล์นี้ใช้เป็น working notes / handoff notes ระหว่างพัฒนา
@@ -276,3 +325,149 @@ Data / Export:
 
 - `CHANGELOG.md` = ประวัติการเปลี่ยนแปลงระดับ release
 - `WORK_HISTORY.md` = ประวัติการทำงานละเอียดสำหรับ handoff / sync Codex
+
+## 2026-07-29 — Customer Card action buttons audit/fix
+
+Scope:
+
+- Fixed only the Customer Card action buttons: Details, Edit, Favorite.
+- No backend, API, Google Sheet schema, RBAC policy, or area-permission logic was changed.
+
+Audit result:
+
+- Renderer: `js/app.js` → `renderCustomerCard(c, isFavorite)`.
+- Handler location: `js/app.js` customer UI/action helpers.
+- Existing customer cards relied on inline `onclick` handlers for quote/edit/favorite actions.
+- The card did not have a true Details action button/workflow; the first action was actually quotation selection.
+- Per-button loading/error handling was inconsistent and a failed/undefined inline handler could appear as a silent no-op.
+
+Implementation:
+
+- Replaced Customer Card inline action markup with a scoped `data-customer-action` delegated click flow.
+- Added `renderCustomerActionButtonHtml()` for the card action buttons.
+- Added `bindCustomerCardActions()` and `handleCustomerAction()` to centralize validation, busy state, error handling, and action routing.
+- Added `openCustomerDetailsModal()` so Details opens an existing customer detail view from the scoped customer list.
+- Kept Edit behind existing `canEditCustomers()` UI permission and existing edit modal workflow.
+- Kept Favorite backend validation and added optimistic UI update with rollback on API failure.
+- Added customer detail modal CSS only; existing `.icon-action-button` design/touch target remains the base.
+- Bumped app/service-worker version to `0.5.38` so updated UI assets are picked up by PWA/browser cache.
+
+Files changed:
+
+- `js/app.js`
+- `css/main.css`
+- `index.html`
+- `js/api.js`
+- `js/config.js`
+- `service-worker.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Validation notes:
+
+- Static repository checks were added to `TEST_CASES.md`.
+- Runtime browser/device/API validation is still required on Desktop Chrome/Edge, Android Chrome, iPhone Safari, and PWA with live Apps Script credentials.
+- Rollback command for this phase:
+
+```powershell
+git checkout -- js/app.js css/main.css index.html js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
+```
+
+## 2026-07-29 — Product Card action buttons audit/fix
+
+Scope:
+
+- Fixed Product Card action buttons: Favorite and Add Product.
+- Covered Product List and Quotation product search / Favorite Products / Pinned Products surfaces that use the same product action component.
+- No backend, API, Google Sheet schema, RBAC policy, or quotation/product business rules were changed.
+
+Audit result:
+
+- Product Card renderer: `js/app.js` → `renderProductCard(product, sourceListIndex)`.
+- Shared Add Product component: `js/app.js` → `createAddProductButton(options)`.
+- Quotation product card renderer: `js/app.js` → `renderQuoteProductPreferenceCard(product, options)`.
+- Legacy quotation search fallback: `js/quotation.js` → `renderProductPicker()`.
+- Existing Product Card action buttons relied on inline `onclick` while the full card also had a card-level `onclick` for the calculator.
+- Failure paths could appear silent when product resolution or add handler routing failed.
+- CSS did not contain an overlay/z-index/pointer-events blocker for the product card action row; however quote preference buttons had touch targets below the 44px requirement on some breakpoints.
+
+Implementation:
+
+- Added delegated product action flow with `data-product-action="favorite"` and `data-product-action="add"`.
+- Added `bindProductCardActions()` and `handleProductAction()` to centralize validation, propagation control, duplicate-click prevention, busy state, and error handling.
+- Updated `renderProductCard()` to route Favorite/Add through product record keys instead of inline handlers.
+- Updated `renderQuoteProductPreferenceCard()` and the legacy `js/quotation.js` fallback picker to use the same Add Product action component without inline add handlers.
+- Updated `toggleFavoriteProduct()` with optimistic UI update, duplicate-request lock, rollback on API failure, and toast feedback.
+- Updated `addProductCardToQuote()` so missing product records or missing handlers show user feedback instead of failing silently.
+- Kept Add Product on the existing `addProductToQuoteByReference()` quotation workflow, preserving BU/customer/product validation.
+- Raised quote product favorite/pinned touch targets to 44px and added focus/disabled states.
+- Bumped app/service-worker version to `0.5.39` so browser/PWA cache picks up the action handler changes.
+
+Files changed:
+
+- `js/app.js`
+- `js/quotation.js`
+- `css/main.css`
+- `index.html`
+- `js/api.js`
+- `js/config.js`
+- `service-worker.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Validation notes:
+
+- Static scan confirmed no inline `toggleFavoriteProduct`, `addProductCardToQuote`, or `addProductToQuoteByReference(event)` handlers remain for product favorite/add actions.
+- `git diff --check` passed with only line-ending warnings.
+- Runtime browser/device/API validation is still required on Desktop Chrome/Edge, Android Chrome, iPhone Safari, and PWA with live Apps Script credentials.
+- Rollback command for this phase:
+
+```powershell
+git checkout -- js/app.js js/quotation.js css/main.css index.html js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
+```
+
+## 2026-07-29 — Product Card calculator click guard
+
+Scope:
+
+- Fixed Product Card click behavior so the card opens the price calculator only from non-action areas.
+- Preserved existing Add Product, Favorite, quotation add, custom-price, and calculator business flows.
+- No backend, API, Google Sheet schema, RBAC policy, pricing, discount, VAT, or quotation formula changes were made.
+
+Audit result:
+
+- Product Card renderer: `js/app.js` → `renderProductCard(product, sourceListIndex)`.
+- Card-level calculator handler was still inline on the Product Card: `onclick="openProductCalculator(...)"`.
+- Add/Favorite actions were correctly rendered with delegated `data-product-action` buttons, but the click event bubbled to the Product Card before the document-level delegated handler could stop it.
+- Result: clicking the blue Add Product button could also trigger the card-level calculator action.
+- No CSS overlay, `pointer-events: none`, or z-index blocker was found for the Product Card action buttons.
+
+Implementation:
+
+- Added `isProductCardInteractiveClick(event)` with an interactive target guard for `button`, `a`, form controls, `[data-action]`, `[data-product-action]`, and `[role="button"]`.
+- Added `handleProductCardCalculatorClick(event, recordKey)` so card clicks open the calculator only when the click starts from a non-interactive area.
+- Updated `renderProductCard()` to use the guarded calculator click handler instead of calling `openProductCalculator()` directly from the card inline handler.
+- Kept keyboard behavior for the card itself: Enter/Space on the card still opens the calculator, while button keyboard activation remains scoped to the button action.
+- Bumped app/service-worker version to `0.5.40` so browser/PWA cache picks up the corrected click handler.
+
+Files changed:
+
+- `js/app.js`
+- `index.html`
+- `js/api.js`
+- `js/config.js`
+- `service-worker.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Validation notes:
+
+- Static scan confirmed Product Card calculator click now routes through `handleProductCardCalculatorClick()`.
+- Static scan confirmed no inline product favorite/add handlers were reintroduced.
+- `git diff --check` passed with only line-ending warnings.
+- Runtime browser/device/API validation is still required on Desktop Chrome/Edge, Android Chrome, iPhone Safari, and PWA with live Apps Script credentials.
+- Rollback command for this phase:
+
+```powershell
+git checkout -- js/app.js index.html js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
+```

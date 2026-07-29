@@ -264,6 +264,9 @@ function saveProduct(payload) {
       listPrice: String(data.listPrice || 0),
       imageUrl: String(data.imageUrl || ''),
       notes: String(data.notes || ''),
+      promoCode: sanitizeProductPromotionMetadata_(data.promoCode || data.promotionCode),
+      promoStartDate: sanitizeProductPromotionMetadata_(data.promoStartDate),
+      promoEndDate: sanitizeProductPromotionMetadata_(data.promoEndDate),
       promoText: normalizeProductPromoText_(getProductPromoTextValue_(data)),
       active: 'TRUE',
       createdAt: now,
@@ -420,6 +423,14 @@ function getProductPromoTextValue_(source) {
   return item.promoText || '';
 }
 
+function sanitizeProductPromotionMetadata_(value) {
+  if (value === null || value === undefined) return '';
+  const text = String(value).replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const lowered = text.toLowerCase();
+  if (!text || lowered === 'null' || lowered === 'undefined') return '';
+  return text;
+}
+
 function normalizeProductObject(row) {
   const source = row && typeof row === 'object' ? row : {};
   const productId = String(source.productId || '').trim();
@@ -449,6 +460,9 @@ function normalizeProductObject(row) {
     imageUrl: String(source.imageUrl || '').trim(),
     active: String(source.active || source.status || '').trim(),
     notes: String(source.notes || '').trim(),
+    promoCode: sanitizeProductPromotionMetadata_(source.promoCode || source.promotionCode),
+    promoStartDate: sanitizeProductPromotionMetadata_(source.promoStartDate),
+    promoEndDate: sanitizeProductPromotionMetadata_(source.promoEndDate),
     promoText: normalizeProductPromoText_(getProductPromoTextValue_(source))
   });
 }
@@ -522,6 +536,257 @@ function dedupeExactProducts(products) {
     }
   });
   return result;
+}
+
+function getProductPromotionCodeValue_(product) {
+  const item = product && typeof product === 'object' ? product : {};
+  const fields = ['promotionCode', 'promoCode', 'promotionId', 'promoId'];
+  for (var i = 0; i < fields.length; i++) {
+    const value = item[fields[i]];
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      return String(value).trim();
+    }
+  }
+  return '';
+}
+
+function hashProductPromotionText_(value) {
+  const text = String(value || '').trim();
+  var hash = 0;
+  for (var i = 0; i < text.length; i++) {
+    hash = ((hash << 5) - hash) + text.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(36).toUpperCase();
+}
+
+function getProductPromotionFallbackCode_(promoText) {
+  return 'PROMO-' + ('000000' + hashProductPromotionText_(promoText || 'promotion')).slice(-6);
+}
+
+function normalizeProductPromotionGroupText_(value) {
+  return normalizeProductPromoText_(value).replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function getProductPromotionGroupKey_(product, promoText) {
+  const code = getProductPromotionCodeValue_(product);
+  if (code) {
+    return 'code:' + normalizeProductPromotionGroupText_(code);
+  }
+  return 'text:' + normalizeProductPromotionGroupText_(promoText);
+}
+
+function createProductPromotionDedupeKey_(product) {
+  const item = product && typeof product === 'object' ? product : {};
+  const productPart = createProductIdentityKey(item);
+  const promoText = normalizeProductPromoText_(getProductPromoTextValue_(item));
+  const promotionPart = getProductPromotionCodeValue_(item) || promoText;
+  if (!productPart.replace(/\|/g, '').trim() && !String(promotionPart || '').trim()) return '';
+  return productPart + '|promotion:' + normalizeProductPromotionGroupText_(promotionPart);
+}
+
+function dedupeExactPromotionProducts_(products) {
+  const list = Array.isArray(products) ? products : [];
+  const result = [];
+  const byKey = {};
+  list.forEach(function (product) {
+    const item = product && typeof product === 'object' ? product : {};
+    const key = createProductPromotionDedupeKey_(item);
+    if (!key.replace(/[|:]/g, '')) {
+      result.push(item);
+      return;
+    }
+    if (!byKey[key]) {
+      byKey[key] = { index: result.length, product: item };
+      result.push(item);
+      return;
+    }
+    if (getProductCompletenessScore_(item) > getProductCompletenessScore_(byKey[key].product)) {
+      byKey[key].product = item;
+      result[byKey[key].index] = item;
+    }
+  });
+  return result;
+}
+
+function getProductPromotionBrandKey_(product) {
+  const item = product && typeof product === 'object' ? product : {};
+  const text = String(item.productBusinessUnit || item.businessUnit || item.quoteType || item.bu || item.brand || '').trim().toUpperCase();
+  if (text.indexOf('GYPROC') >= 0) return 'GYPROC';
+  if (text.indexOf('WEBER') >= 0) return 'WEBER';
+  return 'UNKNOWN';
+}
+
+function getProductPromotionBrandLabel_(product) {
+  const brandKey = getProductPromotionBrandKey_(product);
+  if (brandKey === 'GYPROC') return 'Gyproc';
+  if (brandKey === 'WEBER') return 'Weber';
+  return String(product && product.brand || product && product.businessUnit || '-').trim() || '-';
+}
+
+function productPromotionBrandLabelFromKeys_(brandKeys) {
+  const keys = Array.isArray(brandKeys) ? brandKeys : [];
+  if (keys.indexOf('WEBER') >= 0 && keys.indexOf('GYPROC') >= 0) return 'Multi Brand';
+  if (keys.indexOf('GYPROC') >= 0) return 'Gyproc';
+  if (keys.indexOf('WEBER') >= 0) return 'Weber';
+  return '-';
+}
+
+function summarizeProductPromotionText_(text) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return '-';
+  return clean.length > 150 ? clean.slice(0, 147).trim() + '...' : clean;
+}
+
+function buildProductPromotionSnapshot_(product) {
+  const item = product && typeof product === 'object' ? product : {};
+  const productCode = String(item.productCode || item.sku || item.productId || item.id || item.itemCode || '').trim();
+  const identityKey = createProductIdentityKey(item);
+  return {
+    productIdentityKey: identityKey,
+    sourceProductIdentityKey: identityKey,
+    sourceProductRecordKey: 'product-record:promotion-dashboard:identity:' + identityKey,
+    productId: String(item.productId || item.sku || item.id || productCode).trim(),
+    productCode: productCode,
+    sku: String(item.sku || productCode).trim(),
+    productName: String(item.productName || item.itemName || item.name || '').trim(),
+    brand: getProductPromotionBrandLabel_(item),
+    productBusinessUnit: getProductPromotionBrandKey_(item),
+    businessUnit: getProductPromotionBrandKey_(item),
+    unit: String(item.unit || item.uom || item.unitName || '').trim(),
+    rawListPrice: String(item.rawListPrice === undefined ? (item.listPrice === undefined ? item.price : item.listPrice) : item.rawListPrice).trim(),
+    listPrice: parseProductListPrice(item.listPrice || item.price || 0),
+    priceType: String(item.priceType || item.priceListType || '').trim(),
+    priceList: String(item.priceList || item.priceListId || item.priceListName || '').trim(),
+    promotionId: String(item.promotionId || item.promoId || '').trim(),
+    promoCode: sanitizeProductPromotionMetadata_(item.promoCode || item.promotionCode),
+    promotionCode: getProductPromotionCodeValue_(item),
+    promoStartDate: sanitizeProductPromotionMetadata_(item.promoStartDate),
+    promoEndDate: sanitizeProductPromotionMetadata_(item.promoEndDate),
+    priceSource: String(item.priceSource || item.priceListSource || item.promotionSource || '').trim(),
+    discountGroup: String(item.discountGroup || '').trim(),
+    groupCode: String(item.groupCode || item.group || item.category || '').trim(),
+    imageUrl: String(item.imageUrl || '').trim(),
+    promoText: normalizeProductPromoText_(getProductPromoTextValue_(item))
+  };
+}
+
+function createProductPromotionDashboard_(products) {
+  const sourceProducts = Array.isArray(products) ? products : [];
+  const dedupedProducts = dedupeExactPromotionProducts_(sourceProducts);
+  const groupsByKey = {};
+  const groupOrder = [];
+  dedupedProducts.forEach(function (product) {
+    const promoText = normalizeProductPromoText_(getProductPromoTextValue_(product));
+    if (!promoText) return;
+    const groupKey = getProductPromotionGroupKey_(product, promoText);
+    if (!groupKey.replace(/^(code|text):/, '')) return;
+    if (!groupsByKey[groupKey]) {
+      const promotionCode = getProductPromotionCodeValue_(product) || getProductPromotionFallbackCode_(promoText);
+      groupsByKey[groupKey] = {
+        promotionKey: groupKey,
+        promotionCode: promotionCode,
+        promotionText: promoText,
+        promotionSummary: summarizeProductPromotionText_(promoText),
+        fullPromotionText: promoText,
+        sourceOrder: groupOrder.length,
+        brandKeysMap: {},
+        promoStartDateMap: {},
+        promoEndDateMap: {},
+        products: []
+      };
+      groupOrder.push(groupKey);
+    }
+    const group = groupsByKey[groupKey];
+    const snapshot = buildProductPromotionSnapshot_(product);
+    group.brandKeysMap[getProductPromotionBrandKey_(product)] = true;
+    if (snapshot.promoStartDate) {
+      group.promoStartDateMap[snapshot.promoStartDate] = true;
+    }
+    if (snapshot.promoEndDate) {
+      group.promoEndDateMap[snapshot.promoEndDate] = true;
+    }
+    if (group.fullPromotionText.indexOf(promoText) < 0) {
+      group.fullPromotionText += '\n\n' + promoText;
+    }
+    group.products.push(snapshot);
+  });
+  const groups = groupOrder.map(function (key) {
+    const group = groupsByKey[key];
+    const products = dedupeExactPromotionProducts_(group.products);
+    const brandKeys = Object.keys(group.brandKeysMap).filter(function (brandKey) { return brandKey; });
+    const startDates = Object.keys(group.promoStartDateMap).filter(function (value) { return value; });
+    const endDates = Object.keys(group.promoEndDateMap).filter(function (value) { return value; });
+    const promoStartDate = startDates.length === 1 ? startDates[0] : '';
+    const promoEndDate = endDates.length === 1 ? endDates[0] : '';
+    return {
+      promotionKey: group.promotionKey,
+      promotionCode: group.promotionCode,
+      brand: productPromotionBrandLabelFromKeys_(brandKeys),
+      brandKeys: brandKeys,
+      sourceOrder: group.sourceOrder,
+      promoStartDate: promoStartDate,
+      promoEndDate: promoEndDate,
+      startDate: promoStartDate,
+      endDate: promoEndDate,
+      promotionText: group.promotionText,
+      promotionSummary: group.promotionSummary,
+      fullPromotionText: group.fullPromotionText,
+      productCount: products.length,
+      products: products
+    };
+  }).sort(function (a, b) {
+    return String(a.promotionCode || '').localeCompare(String(b.promotionCode || ''), 'th') || String(a.brand || '').localeCompare(String(b.brand || ''), 'th');
+  });
+  const summary = {
+    totalPromotions: groups.length,
+    productsInPromotion: groups.reduce(function (sum, group) { return sum + Number(group.productCount || 0); }, 0),
+    weberPromotions: groups.filter(function (group) { return group.brandKeys.indexOf('WEBER') >= 0; }).length,
+    gyprocPromotions: groups.filter(function (group) { return group.brandKeys.indexOf('GYPROC') >= 0; }).length,
+    multiBrandPromotions: groups.filter(function (group) { return group.brandKeys.indexOf('WEBER') >= 0 && group.brandKeys.indexOf('GYPROC') >= 0; }).length,
+    sourceCount: sourceProducts.length,
+    deduplicatedSourceCount: dedupedProducts.length,
+    deduplicatedCount: dedupedProducts.length,
+    removedDuplicateCount: Math.max(0, sourceProducts.length - dedupedProducts.length)
+  };
+  return {
+    groups: groups,
+    summary: summary,
+    products: groups.reduce(function (acc, group) { return acc.concat(group.products); }, [])
+  };
+}
+
+function getProductPromotions(payload) {
+  const timer = startPerformanceTimer('product.promotions');
+  try {
+    const data = payload && typeof payload === 'object' ? payload : {};
+    const auth = data.currentUser ? success(data.currentUser) : requireApiUser(data);
+    if (!auth.ok) {
+      endPerformanceTimer(timer, 'auth=false');
+      return auth;
+    }
+    const permissions = getUserPermissions(auth.data);
+    if (!permissions.canViewPromotions || !permissions.canViewProducts) {
+      endPerformanceTimer(timer, 'permission=false');
+      return forbidden('Insufficient permission');
+    }
+    const productsResult = getProducts();
+    if (!productsResult.ok) {
+      endPerformanceTimer(timer, 'products=false');
+      return productsResult;
+    }
+    const dashboard = createProductPromotionDashboard_(productsResult.data || []);
+    endPerformanceTimer(timer, 'groups=' + dashboard.groups.length + ' products=' + dashboard.summary.productsInPromotion);
+    return success(dashboard, 'Product promotions loaded');
+  } catch (error) {
+    endPerformanceTimer(timer, 'error=true');
+    logError('getProductPromotions', error);
+    return fail(error && error.message ? error.message : 'Failed to load product promotions');
+  }
+}
+
+function getPromotionDashboard(payload) {
+  return getProductPromotions(payload);
 }
 
 function productDuplicateRecordFromRow_(headers, rowValues, rowNumber) {

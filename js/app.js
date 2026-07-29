@@ -19,6 +19,9 @@ let customersLoaded=false, productsLoaded=false, customersPromise=null, customer
 let customerFormOptionsLoaded=false, customerFormOptionsPromise=null, customerFormOptionsError='';
 let FAVORITE_CUSTOMERS=[], FAVORITE_CUSTOMER_ROWS=[], favoriteCustomersPromise=null, favoriteCustomersLoadSeq=0;
 let FAVORITE_PRODUCTS=[], PINNED_PRODUCTS=[], productPreferencesLoaded=false, productPreferencesPromise=null;
+const PRODUCT_FAVORITE_PENDING=new Set(), PRODUCT_ADD_PENDING=new Set(), PRODUCT_ACTION_PENDING=new Set();
+let PROMOTION_DASHBOARD={groups:[],summary:{totalPromotions:0,productsInPromotion:0,weberPromotions:0,gyprocPromotions:0,multiBrandPromotions:0},products:[]};
+let promotionDashboardLoaded=false, promotionDashboardPromise=null, promotionDashboardRefreshPromise=null, promotionDashboardError='', promotionDashboardTodayKey='', promotionLegacyTitleFallbackLogged=false;
 const openQuotationDetailPromises={};
 const LIST_RENDER_LIMIT=Number(window.DEFAULT_PAGE_SIZE||50), QUOTE_PICKER_LIMIT=30, SEARCH_DEBOUNCE_MS=300;
 const APP_VERSION_STORAGE_KEY='sg_app_version';
@@ -28,8 +31,9 @@ const SIDEBAR_MODE_EXPANDED='expanded';
 const SIDEBAR_MODE_MINI='mini';
 const PINNED_PRODUCTS_COLLAPSED_KEY='sg_pinned_products_collapsed';
 const FAVORITE_PRODUCTS_COLLAPSED_KEY='sg_favorite_products_collapsed';
+const PRODUCT_PROMOTIONS_CACHE_KEY='sg_product_promotions_cache';
 const PRODUCT_PROMO_CACHE_SCHEMA_KEY='sg_product_promo_cache_schema';
-const PRODUCT_PROMO_CACHE_SCHEMA_VERSION='1';
+const PRODUCT_PROMO_CACHE_SCHEMA_VERSION='4';
 const $=id=>document.getElementById(id); const money=n=>Number(n||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
 let sidebarDrawerFocusReturn=null, sidebarDrawerHistoryPushed=false, sidebarDrawerClosingFromHistory=false;
 
@@ -75,6 +79,9 @@ function resetAuthenticatedFrontendState(){
   PRODUCT_CALC_RECORD_SEQUENCE=0;
   PRODUCT_SELECTION_RECORDS=new Map();
   PRODUCT_SELECTION_RECORD_SEQUENCE=0;
+  PRODUCT_FAVORITE_PENDING.clear();
+  PRODUCT_ADD_PENDING.clear();
+  PRODUCT_ACTION_PENDING.clear();
   bootstrapLoaded=false;
   bootstrapPromise=null;
   quoteHistoryLoaded=false;
@@ -98,6 +105,13 @@ function resetAuthenticatedFrontendState(){
   PINNED_PRODUCTS=[];
   productPreferencesLoaded=false;
   productPreferencesPromise=null;
+  PROMOTION_DASHBOARD={groups:[],summary:{totalPromotions:0,productsInPromotion:0,weberPromotions:0,gyprocPromotions:0,multiBrandPromotions:0},products:[]};
+  promotionDashboardLoaded=false;
+  promotionDashboardPromise=null;
+  promotionDashboardRefreshPromise=null;
+  promotionDashboardError='';
+  promotionDashboardTodayKey='';
+  promotionLegacyTitleFallbackLogged=false;
   Object.keys(openQuotationDetailPromises).forEach(key=>delete openQuotationDetailPromises[key]);
   revokeProfileImageObjectUrl();
   PROFILE_IMAGE_DATA='';
@@ -108,7 +122,7 @@ function resetAuthenticatedFrontendState(){
 
 function checkAppVersion(){
   try{
-    const newVersion=String(window.APP_VERSION||'0.5.26').trim();
+    const newVersion=String(window.APP_VERSION||'0.5.40').trim();
     console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
     const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
     if(oldVersion===newVersion){
@@ -136,10 +150,12 @@ function ensureProductPromoCacheSchema(){
     if(current===PRODUCT_PROMO_CACHE_SCHEMA_VERSION)return;
     if(typeof clearCache==='function'){
       clearCache('sg_products_cache');
+      clearCache(PRODUCT_PROMOTIONS_CACHE_KEY);
       const bootstrap=typeof getCache==='function'?getCache('sg_bootstrap_cache'):null;
       if(bootstrap&&Array.isArray(bootstrap.products))clearCache('sg_bootstrap_cache');
     }else{
       localStorage.removeItem('sg_products_cache');
+      localStorage.removeItem(PRODUCT_PROMOTIONS_CACHE_KEY);
       try{
         const cachedBootstrap=JSON.parse(localStorage.getItem('sg_bootstrap_cache')||'null');
         const bootstrap=cachedBootstrap&&cachedBootstrap.data?cachedBootstrap.data:cachedBootstrap;
@@ -326,6 +342,7 @@ function normalizeDb(data){
     counts:source.counts&&typeof source.counts==='object'?source.counts:(existing.counts&&typeof existing.counts==='object'?existing.counts:{}),
     customers:Array.isArray(source.customers)?source.customers.map(normalizeCustomer):(Array.isArray(existing.customers)?existing.customers:[]),
     products:Array.isArray(source.products)?dedupeExactProducts(source.products.map(normalizeProduct),'normalizeDb.products'):(Array.isArray(existing.products)?existing.products:[]),
+    productPromotions:source.productPromotions&&typeof source.productPromotions==='object'?source.productPromotions:(existing.productPromotions&&typeof existing.productPromotions==='object'?existing.productPromotions:{groups:[],summary:{},products:[]}),
     promotions:Array.isArray(source.promotions)?source.promotions:[],
     quotes:Array.isArray(source.quotes)?source.quotes:[],
     quoteLines:Array.isArray(source.quoteLines)?source.quoteLines:(Array.isArray(existing.quoteLines)?existing.quoteLines:[])
@@ -360,6 +377,9 @@ function normalizeProduct(product){
     imageUrl:String(p.imageUrl||'').trim(),
     active:String(p.active||p.status||'').trim(),
     notes:String(p.notes||'').trim(),
+    promoCode:normalizeProductPromotionMetadata(p.promoCode||p.promotionCode),
+    promoStartDate:normalizeProductPromotionMetadata(p.promoStartDate),
+    promoEndDate:normalizeProductPromotionMetadata(p.promoEndDate),
     promoText:normalizeProductPromoText(getProductPromoTextValue(p))
   };
 }
@@ -379,6 +399,14 @@ function getProductPromoTextValue(product){
     if(Object.prototype.hasOwnProperty.call(item,fields[i])&&String(item[fields[i]]??'').trim()!=='')return item[fields[i]];
   }
   return item.promoText||'';
+}
+
+function normalizeProductPromotionMetadata(value){
+  if(value===null||value===undefined)return '';
+  const text=String(value).replace(/[\r\n\t]+/g,' ').replace(/\s+/g,' ').trim();
+  const lowered=text.toLowerCase();
+  if(!text||lowered==='null'||lowered==='undefined')return '';
+  return text;
 }
 
 function normalizeProductIdentityPart(value){
@@ -417,7 +445,7 @@ function createProductIdentityKey(product){
 }
 function getProductCompletenessScore(product){
   const item=product&&typeof product==='object'?product:{};
-  const fields=['productId','sku','productCode','productName','description','brand','businessUnit','productBusinessUnit','discountGroup','groupCode','unit','rawListPrice','listPrice','priceType','priceList','promotionId','priceSource','promoText','imageUrl','notes','active'];
+  const fields=['productId','sku','productCode','productName','description','brand','businessUnit','productBusinessUnit','discountGroup','groupCode','unit','rawListPrice','listPrice','priceType','priceList','promotionId','promoCode','promoStartDate','promoEndDate','priceSource','promoText','imageUrl','notes','active'];
   return fields.reduce((score,field)=>score+(item[field]!==undefined&&item[field]!==null&&String(item[field]).trim()!==''?1:0),0);
 }
 function shouldReplaceDedupedProduct(current,candidate){
@@ -676,8 +704,8 @@ function getCustomerSearchFields(){
 }
 function customerBrandBadgesHtml(customer){
   const badges=[];
-  if(customer&&customer.sellsWeber)badges.push('<span class="pill yellow">Weber</span>');
-  if(customer&&customer.sellsGyproc)badges.push('<span class="pill blue">Gyproc</span>');
+  if(customer&&customer.sellsWeber)badges.push(renderBrandLogoHtml('WEBER','compact',{className:'customer-brand-logo',ariaLabel:'แบรนด์ Weber'}));
+  if(customer&&customer.sellsGyproc)badges.push(renderBrandLogoHtml('GYPROC','compact',{className:'customer-brand-logo',ariaLabel:'แบรนด์ Gyproc'}));
   if(!badges.length)badges.push('<span class="pill">ต้องตรวจสอบแบรนด์</span>');
   return badges.join(' ');
 }
@@ -1093,11 +1121,49 @@ let PRODUCT_PROMO_LAST_FOCUS=null, productPromoEscapeBound=false;
 function getProductPromoText(product){
   return normalizeProductPromoText(product&&product.promoText);
 }
+function getPromotionDisplayLines(value){
+  if(value===null||value===undefined)return [];
+  const text=String(value).replace(/\r\n/g,'\n').replace(/\r/g,'\n').trim();
+  const lowered=text.toLowerCase();
+  if(!text||lowered==='null'||lowered==='undefined')return [];
+  return text.split(/[;\n]+/).map(line=>line.trim()).filter(Boolean);
+}
+function getPromotionDisplayText(value){
+  return getPromotionDisplayLines(value).join('\n');
+}
+function renderPromotionLinesHtml(value,mode,options){
+  const lines=getPromotionDisplayLines(value);
+  if(!lines.length)return '';
+  const displayMode=mode==='full'?'full':'compact';
+  const opts=options||{};
+  const limit=displayMode==='compact'?Math.max(1,Number(opts.maxLines||3)||3):lines.length;
+  const visibleLines=displayMode==='compact'?lines.slice(0,limit):lines;
+  const containerTag=String(opts.containerTag||'div').toLowerCase()==='span'?'span':'div';
+  const lineTag=String(opts.lineTag||'div').toLowerCase()==='span'?'span':'div';
+  const className='promotion-lines promotion-lines--'+displayMode+(opts.className?' '+String(opts.className):'');
+  const attrs=[];
+  if(opts.tabIndex!==undefined)attrs.push('tabindex="'+htmlAttr(opts.tabIndex)+'"');
+  if(opts.role)attrs.push('role="'+htmlAttr(opts.role)+'"');
+  if(displayMode==='compact'&&visibleLines.length<lines.length)attrs.push('aria-label="'+htmlAttr(lines.join('\n'))+'"');
+  const attrText=attrs.length?' '+attrs.join(' '):'';
+  return `<${containerTag} class="${htmlAttr(className)}"${attrText}>${visibleLines.map(line=>`<${lineTag} class="promotion-line">${escapeHtml(line)}</${lineTag}>`).join('')}</${containerTag}>`;
+}
+function renderPromotionLinesElement(value,mode,className,options){
+  const lines=getPromotionDisplayLines(value);
+  if(!lines.length)return null;
+  const displayMode=mode==='full'?'full':'compact';
+  const opts=options||{};
+  const limit=displayMode==='compact'?Math.max(1,Number(opts.maxLines||3)||3):lines.length;
+  const visibleLines=displayMode==='compact'?lines.slice(0,limit):lines;
+  const wrap=createUiElement('div','promotion-lines promotion-lines--'+displayMode+(className?' '+className:''));
+  if(opts.tabIndex!==undefined)wrap.tabIndex=Number(opts.tabIndex);
+  if(opts.role)wrap.setAttribute('role',String(opts.role));
+  if(displayMode==='compact'&&visibleLines.length<lines.length)wrap.setAttribute('aria-label',lines.join('\n'));
+  visibleLines.forEach(line=>wrap.appendChild(createUiElement('div','promotion-line',line)));
+  return wrap;
+}
 function getProductPromoLines(product){
-  return String(getProductPromoText(product)||'')
-    .split(';')
-    .map(line=>line.trim())
-    .filter(Boolean);
+  return getPromotionDisplayLines(getProductPromoText(product));
 }
 function hasProductPromotion(product){
   return getProductPromoLines(product).length>0;
@@ -1129,9 +1195,12 @@ function renderProductPromotionTeaser(product,recordKey,context){
   const contextAttr=htmlAttr(context||'product');
   const productName=String(product&&product.productName||product&&product.name||'สินค้า').trim()||'สินค้า';
   const ariaLabel=htmlAttr('ดูโปรโมชั่นของสินค้า '+productName);
-  const promoSummary=context==='product-list'
-    ? `<span class="product-promo-list" role="list">${promoLines.map(line=>`<span class="product-promo-line" role="listitem">${escapeHtml(line)}</span>`).join('')}</span>`
-    : `<span class="product-promo-summary">${escapeHtml(promoText)}</span>`;
+  const promoSummary=renderPromotionLinesHtml(promoText,'compact',{
+    className:context==='product-list'?'product-promo-list':'product-promo-summary',
+    containerTag:'span',
+    lineTag:'span',
+    maxLines:context==='product-list'?3:2
+  });
   return `<div class="product-promo-teaser" data-no-drag data-context="${contextAttr}"><button type="button" class="product-promo-button" data-no-drag onclick='openProductPromotionDetail(${jsRecordKey},event)' aria-label="${ariaLabel}"><span class="product-promo-badge" aria-hidden="true">🎁 มีโปรโมชั่น</span>${promoSummary}<span class="product-promo-detail-link">ดูรายละเอียด</span></button></div>`;
 }
 function ensureProductPromoEscapeHandler(){
@@ -1170,7 +1239,8 @@ function openProductPromotionDetail(productReference,event){
   const brand=product.brand||quoteBusinessUnitLabel(normalizeProductBusinessUnitForUi(product))||'-';
   const code=product.sku||product.productId||product.productCode||product.id||'-';
   body.classList.add('product-promo-modal-body');
-  body.innerHTML=`<div class="product-promo-detail"><div class="product-promo-detail-meta"><span class="pill ${brand==='Weber'?'yellow':'blue'}">${escapeHtml(brand)}</span><div><b>${escapeHtml(product.productName||product.name||'-')}</b><small>รหัสสินค้า: ${escapeHtml(code)} • ${escapeHtml(product.unit||'-')} • ${money(product.listPrice||product.price||0)}</small></div></div><div class="product-promo-full" tabindex="0">${escapeHtml(promoText)}</div><div class="actions product-promo-actions"><button type="button" class="primary" onclick="closeModal()">ปิด</button></div></div>`;
+  const promoFullHtml=renderPromotionLinesHtml(promoText,'full',{className:'product-promo-full',tabIndex:0});
+  body.innerHTML=`<div class="product-promo-detail"><div class="product-promo-detail-meta">${renderBrandLogoHtml(product,'detail',{className:'product-detail-brand-logo',fallbackLabel:brand})}<div><b>${escapeHtml(product.productName||product.name||'-')}</b><small>รหัสสินค้า: ${escapeHtml(code)} • ${escapeHtml(product.unit||'-')} • ${money(product.listPrice||product.price||0)}</small></div></div>${promoFullHtml}<div class="actions product-promo-actions"><button type="button" class="primary" onclick="closeModal()">ปิด</button></div></div>`;
   modal.classList.remove('customer-modal');
   modal.classList.add('product-promo-modal','show');
   document.body.classList.add('product-promo-scroll-locked');
@@ -1337,7 +1407,6 @@ function renderProductCalculator(){
     });
   }
   const productId=product.productId||product.sku||product.id||'-';
-  const imageUrl=String(product.imageUrl||'').trim();
   const originalUnitPrice=PRODUCT_CALC_STATE&&PRODUCT_CALC_STATE.originalUnitPrice!==undefined?PRODUCT_CALC_STATE.originalUnitPrice:getProductCalculatorPrice(product);
   const priceSource=String(product.priceSource||product.priceListSource||product.promotionSource||'').trim();
   const resultHtml=hasError
@@ -1350,9 +1419,9 @@ function renderProductCalculator(){
     </div>`;
   capture.innerHTML=`
     <div class="product-calc-head">
-      <div class="product-calc-img">${imageUrl?`<img src="${htmlAttr(imageUrl)}" alt="">`:'📦'}</div>
+      <div class="product-calc-img">${renderProductThumbnailHtml(product,{variant:'calculator',className:'product-calc-thumbnail'})}</div>
       <div>
-        <span class="pill ${product.brand==='Weber'?'yellow':'blue'}">${escapeHtml(product.brand||'-')}</span>
+        ${renderBrandLogoHtml(product,'detail',{className:'product-calc-brand-logo'})}
         <h2>${escapeHtml(product.productName||'-')}</h2>
         <p>รหัสสินค้า: ${escapeHtml(productId)}</p>
         <p>หน่วย: ${escapeHtml(product.unit||'-')}</p>
@@ -1399,21 +1468,49 @@ async function saveProductCalculatorImage(){
   toast('บันทึกรูปภาพแล้ว');
   return canvas;
 }
-function addProductCardToQuote(productId,event){
+async function addProductCardToQuote(productId,event){
   if(event&&typeof event.stopPropagation==='function')event.stopPropagation();
-  const resolved=resolveProductCalculatorRecord(productId);
-  const product=resolved&&resolved.product?cloneProductForCalculator(resolved.product):null;
-  if(product&&typeof addCart==='function'){
-    debugProductCalculator('add_to_quote',{
-      recordKey:resolved.recordKey||'',
-      productCode:product.productCode||product.sku||product.productId||product.id||'',
-      productName:product.productName||product.name||'',
-      cardPrice:getProductCalculatorPrice(product),
-      brand:product.brand||product.businessUnit||product.productBusinessUnit||'',
-      unit:product.unit||'',
-      sourceListIndex:resolved.sourceListIndex??null
-    });
-    addCart(product);
+  if(event&&typeof event.preventDefault==='function')event.preventDefault();
+  const key=String(productId||'').trim();
+  if(!key){
+    toast('ไม่พบรหัสสินค้า');
+    return {ok:false,code:'PRODUCT_REFERENCE_REQUIRED'};
+  }
+  if(PRODUCT_ADD_PENDING.has(key))return {ok:false,code:'PRODUCT_ADD_PENDING'};
+  PRODUCT_ADD_PENDING.add(key);
+  const button=event&&event.target&&event.target.closest?event.target.closest('.app-add-product-button,[data-product-record-key],[data-product-id]'):null;
+  setProductActionButtonBusy(button,true);
+  try{
+    if(typeof window.addProductToQuoteByReference==='function'&&button&&button.dataset){
+      return await window.addProductToQuoteByReference(button,button.dataset.productSource||'SEARCH',1);
+    }
+    const resolved=resolveProductCalculatorRecord(productId);
+    const product=resolved&&resolved.product?cloneProductForCalculator(resolved.product):null;
+    if(!product){
+      toast('ไม่พบข้อมูลสินค้า กรุณารีเฟรชรายการสินค้า');
+      return {ok:false,code:'PRODUCT_REFERENCE_NOT_FOUND'};
+    }
+    if(product&&typeof addCart==='function'){
+      debugProductCalculator('add_to_quote',{
+        recordKey:resolved.recordKey||'',
+        productCode:product.productCode||product.sku||product.productId||product.id||'',
+        productName:product.productName||product.name||'',
+        cardPrice:getProductCalculatorPrice(product),
+        brand:product.brand||product.businessUnit||product.productBusinessUnit||'',
+        unit:product.unit||'',
+        sourceListIndex:resolved.sourceListIndex??null
+      });
+      return await addCart(product);
+    }
+    toast('ไม่สามารถเพิ่มสินค้าได้');
+    return {ok:false,code:'PRODUCT_ADD_HANDLER_MISSING'};
+  }catch(error){
+    console.warn('[PRODUCT_ACTION] add failed',{productReference:key,message:String(error&&error.message?error.message:error)});
+    toast('เพิ่มสินค้าไม่สำเร็จ');
+    return {ok:false,message:String(error&&error.message?error.message:error)};
+  }finally{
+    setProductActionButtonBusy(button,false);
+    setTimeout(()=>PRODUCT_ADD_PENDING.delete(key),450);
   }
 }
 function getProductDiscount(customerId, product){
@@ -1468,6 +1565,7 @@ function setProductsData(items){
   DB.products=dedupeExactProducts(Array.isArray(items)?items.map(normalizeProduct):[],'setProductsData');
   productsLoaded=true;
   if(typeof setCache==='function')setCache('sg_products_cache',DB.products,15);
+  setPromotionDashboardData(buildPromotionDashboardFromProducts(DB.products),'products-data');
 }
 function renderCustomerViews(){
   renderHome();
@@ -1478,6 +1576,7 @@ function renderCustomerViews(){
 function renderProductViews(){
   renderHome();
   renderProducts();
+  renderPromos();
   renderQuoteProductPicker();
 }
 async function loadCustomers(options){
@@ -1605,6 +1704,7 @@ async function loadProducts(options){
 function ensurePageData(page){
   if(page==='customers'){renderCustomers();return loadCustomers();}
   if(page==='products'){renderProducts();return loadProducts();}
+  if(page==='promos'){renderPromos();return loadPromotionDashboard();}
   if(page==='quote'){
     renderQuote();
     return Promise.resolve({ok:true});
@@ -1653,13 +1753,181 @@ function normalizeProductBusinessUnitForUi(product){
   if(text.indexOf('WEBER')>=0)return'WEBER';
   return'';
 }
+const BRAND_LOGO_ASSETS={WEBER:{src:'images/weber-logo.png',label:'Weber'},GYPROC:{src:'images/gyproc-logo.png',label:'Gyproc'}};
+function normalizeBrandKeyForUi(value){
+  const item=value&&typeof value==='object'?value:{};
+  const text=String(item.productBusinessUnit||item.businessUnit||item.quoteType||item.bu||item.brand||value||'').trim().toUpperCase();
+  const hasWeber=text.indexOf('WEBER')>=0;
+  const hasGyproc=text.indexOf('GYPROC')>=0;
+  if(hasWeber&&!hasGyproc)return 'WEBER';
+  if(hasGyproc&&!hasWeber)return 'GYPROC';
+  return '';
+}
+function getBrandFallbackLabel(value){
+  const key=normalizeBrandKeyForUi(value);
+  if(key&&BRAND_LOGO_ASSETS[key])return BRAND_LOGO_ASSETS[key].label;
+  const item=value&&typeof value==='object'?value:{};
+  return String(item.brand||item.businessUnit||item.quoteType||value||'-').trim()||'-';
+}
+function getBrandLogoClass(variant,className){
+  const safeVariant=String(variant||'standard').replace(/[^a-z0-9_-]/gi,'').toLowerCase()||'standard';
+  return 'sg-brand-logo-badge sg-brand-logo--'+safeVariant+(className?' '+String(className):'');
+}
+function renderBrandLogoHtml(value,variant,options){
+  const opts=options||{};
+  const key=normalizeBrandKeyForUi(value);
+  const config=key?BRAND_LOGO_ASSETS[key]:null;
+  const fallback=String(opts.fallbackLabel||getBrandFallbackLabel(value)||'-').trim()||'-';
+  const label=String(opts.ariaLabel||('แบรนด์ '+fallback)).trim();
+  const className=getBrandLogoClass(variant,opts.className);
+  if(!config){
+    return `<span class="${htmlAttr(className+' is-fallback')}" role="img" aria-label="${htmlAttr(label)}"><span class="sg-brand-logo-fallback">${escapeHtml(fallback)}</span></span>`;
+  }
+  return `<span class="${htmlAttr(className)}" role="img" aria-label="${htmlAttr(label)}"><img class="sg-brand-logo-img" src="${htmlAttr(config.src)}" alt="" aria-hidden="true" loading="lazy" decoding="async" onerror="this.hidden=true;this.nextElementSibling.hidden=false;this.closest('.sg-brand-logo-badge').classList.add('is-fallback')"><span class="sg-brand-logo-fallback" hidden>${escapeHtml(fallback)}</span></span>`;
+}
+function renderBrandLogoElement(value,variant,options){
+  const opts=options||{};
+  const key=normalizeBrandKeyForUi(value);
+  const config=key?BRAND_LOGO_ASSETS[key]:null;
+  const fallback=String(opts.fallbackLabel||getBrandFallbackLabel(value)||'-').trim()||'-';
+  const label=String(opts.ariaLabel||('แบรนด์ '+fallback)).trim();
+  const wrap=createUiElement('span',getBrandLogoClass(variant,opts.className));
+  wrap.setAttribute('role','img');
+  wrap.setAttribute('aria-label',label);
+  if(!config){
+    wrap.classList.add('is-fallback');
+    wrap.appendChild(createUiElement('span','sg-brand-logo-fallback',fallback));
+    return wrap;
+  }
+  const img=document.createElement('img');
+  img.className='sg-brand-logo-img';
+  img.src=config.src;
+  img.alt='';
+  img.setAttribute('aria-hidden','true');
+  img.loading='lazy';
+  img.decoding='async';
+  const fallbackNode=createUiElement('span','sg-brand-logo-fallback',fallback);
+  fallbackNode.hidden=true;
+  img.addEventListener('error',()=>{
+    img.hidden=true;
+    fallbackNode.hidden=false;
+    wrap.classList.add('is-fallback');
+  },{once:true});
+  wrap.append(img,fallbackNode);
+  return wrap;
+}
+const PRODUCT_PLACEHOLDER_ASSET='assets/icons/sidebar/product.png';
+function getSafeImageUrlForUi(value){
+  const raw=String(value||'').trim();
+  if(!raw)return '';
+  const lower=raw.toLowerCase();
+  if(lower.indexOf('javascript:')===0||lower.indexOf('data:')===0||lower.indexOf('vbscript:')===0)return '';
+  try{
+    const parsed=new URL(raw,window.location&&window.location.href?window.location.href:undefined);
+    if(parsed.protocol==='http:'||parsed.protocol==='https:')return parsed.href;
+    if(parsed.protocol==='file:'&&window.location&&window.location.protocol==='file:'&&raw.indexOf('..')<0)return raw;
+  }catch(error){}
+  if(raw.indexOf('..')>=0||raw.indexOf('\\')>=0||raw.indexOf('//')===0)return '';
+  if(/^[A-Za-z0-9_./?=&%:#-]+$/.test(raw))return raw;
+  return '';
+}
+function getProductImageSource(product){
+  const item=product&&typeof product==='object'?product:{};
+  const fields=['imageUrl','productImageUrl','productImage','image','thumbnailUrl','photoUrl'];
+  for(let i=0;i<fields.length;i++){
+    const safe=getSafeImageUrlForUi(item[fields[i]]);
+    if(safe)return safe;
+  }
+  return '';
+}
+function getProductDisplayCode(product){
+  const item=product&&typeof product==='object'?product:{};
+  return String(item.productCode||item.sku||item.productId||item.id||item.itemCode||'').trim();
+}
+function getProductDisplayBrandText(product){
+  const item=product&&typeof product==='object'?product:{};
+  const key=normalizeProductBusinessUnitForUi(item)||normalizeBrandKeyForUi(item);
+  if(key&&BRAND_LOGO_ASSETS[key])return BRAND_LOGO_ASSETS[key].label;
+  return String(item.brand||item.businessUnit||item.productBusinessUnit||'').trim();
+}
+function renderGenericProductPlaceholderHtml(label){
+  const safeLabel=String(label||'สินค้า').trim()||'สินค้า';
+  return `<span class="product-thumbnail-generic" role="img" aria-label="${htmlAttr(safeLabel)}"><img src="${htmlAttr(PRODUCT_PLACEHOLDER_ASSET)}" alt="" aria-hidden="true" loading="lazy" decoding="async" onerror="this.hidden=true;this.nextElementSibling.hidden=false"><span class="material-symbols-rounded" aria-hidden="true" hidden>inventory_2</span></span>`;
+}
+function renderProductThumbnailHtml(product,options){
+  const item=product&&typeof product==='object'?product:{};
+  const opts=options||{};
+  const variant=String(opts.variant||'card').replace(/[^a-z0-9_-]/gi,'').toLowerCase()||'card';
+  const className='product-thumbnail product-thumbnail--'+variant+(opts.className?' '+String(opts.className):'');
+  const name=String(item.productName||item.name||getProductDisplayCode(item)||'สินค้า').trim()||'สินค้า';
+  const imageUrl=getProductImageSource(item);
+  const fallback=normalizeBrandKeyForUi(item)
+    ? renderBrandLogoHtml(item,'compact',{className:'product-thumbnail-brand-logo',ariaLabel:'แบรนด์ '+getBrandFallbackLabel(item)})
+    : renderGenericProductPlaceholderHtml('สินค้า');
+  if(!imageUrl){
+    return `<span class="${htmlAttr(className+' is-fallback')}" data-product-thumbnail="fallback">${fallback}</span>`;
+  }
+  const alt=String(opts.alt||('รูปสินค้า '+name)).trim();
+  return `<span class="${htmlAttr(className)}" data-product-thumbnail="image"><span class="product-thumbnail-placeholder" aria-hidden="true"></span><img class="product-thumbnail-img" src="${htmlAttr(imageUrl)}" alt="${htmlAttr(alt)}" loading="lazy" decoding="async" onload="this.classList.add('is-loaded');if(this.previousElementSibling)this.previousElementSibling.hidden=true" onerror="this.hidden=true;if(this.previousElementSibling)this.previousElementSibling.hidden=true;if(this.nextElementSibling)this.nextElementSibling.hidden=false"><span class="product-thumbnail-fallback" hidden>${fallback}</span></span>`;
+}
+function statusBadgeVariantForUi(value){
+  const text=String(value||'').trim().toUpperCase();
+  if(text==='CANCELLED'||text==='EXPIRED'||text==='LOCKED'||text==='INACTIVE')return 'danger';
+  if(text==='DRAFT'||text==='PENDING'||text.indexOf('UNSAVED')>=0)return 'warning';
+  if(text==='SAVED'||text==='ACTIVE'||text==='APPROVED')return 'success';
+  if(text==='UPCOMING')return 'info';
+  return 'neutral';
+}
+function renderStatusBadgeHtml(value,variant,options){
+  const text=String(value||'-').trim()||'-';
+  const safeVariant=String(variant||statusBadgeVariantForUi(text)).replace(/[^a-z0-9_-]/gi,'').toLowerCase()||'neutral';
+  const label=String(options&&options.ariaLabel||('สถานะ: '+text)).trim();
+  return `<span class="status-badge status-badge--${htmlAttr(safeVariant)}" aria-label="${htmlAttr(label)}">${escapeHtml(text)}</span>`;
+}
+function renderIconActionButtonHtml(options){
+  const opts=options||{};
+  const variant=String(opts.variant||'neutral').replace(/[^a-z0-9_-]/gi,'').toLowerCase()||'neutral';
+  const label=String(opts.label||opts.ariaLabel||opts.title||'Action').trim();
+  const icon=String(opts.icon||'more_horiz').replace(/[^a-z0-9_]/gi,'');
+  const pressed=opts.pressed===true||opts.pressed===false;
+  const disabled=opts.disabled?' disabled aria-disabled="true"':'';
+  const loading=opts.loading?' is-loading':'';
+  const active=opts.pressed?' is-active':'';
+  const onClick=opts.onClick?' onclick="'+htmlAttr(opts.onClick)+'"':'';
+  const extra=opts.className?' '+String(opts.className):'';
+  const attrHtml=renderHtmlAttributes(opts.attributes);
+  return `<button type="button" class="icon-action-button icon-action-${htmlAttr(variant)}${active}${loading}${htmlAttr(extra)}"${attrHtml}${onClick}${disabled} aria-label="${htmlAttr(opts.ariaLabel||label)}" title="${htmlAttr(opts.title||label)}"${pressed?' aria-pressed="'+String(!!opts.pressed)+'"':''}><span class="material-symbols-rounded" aria-hidden="true">${escapeHtml(icon)}</span><span class="sr-only">${escapeHtml(label)}</span></button>`;
+}
+function getAddProductButtonIconHtml(){
+  return '<svg class="app-add-product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="8" cy="21" r="1"></circle><circle cx="19" cy="21" r="1"></circle><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"></path><path d="M12 8h6"></path><path d="M15 5v6"></path></svg>';
+}
+function renderHtmlAttributes(attributes){
+  const attrs=attributes&&typeof attributes==='object'?attributes:{};
+  return Object.keys(attrs).map(name=>{
+    const safeName=String(name||'').replace(/[^A-Za-z0-9_:\-]/g,'');
+    if(!safeName||attrs[name]===false||attrs[name]===undefined||attrs[name]===null)return '';
+    if(attrs[name]===true)return ' '+safeName;
+    return ' '+safeName+'="'+htmlAttr(attrs[name])+'"';
+  }).join('');
+}
+function createAddProductButton(options){
+  const opts=options||{};
+  const attributes=Object.assign({},opts.attributes||{});
+  if(attributes['data-product-action']===undefined)attributes['data-product-action']='add';
+  const attrHtml=renderHtmlAttributes(attributes);
+  const onClick=opts.onClick?' onclick="'+htmlAttr(opts.onClick)+'"':'';
+  const disabled=opts.disabled?' disabled aria-disabled="true"':'';
+  const loading=opts.loading?' is-loading':'';
+  const extra=opts.className?' '+htmlAttr(String(opts.className)):'';
+  return '<button type="button" class="app-add-product-button'+loading+extra+'" aria-label="'+htmlAttr(opts.ariaLabel||'เพิ่มสินค้า')+'" title="'+htmlAttr(opts.title||'เพิ่มสินค้า')+'"'+attrHtml+onClick+disabled+'>'+getAddProductButtonIconHtml()+'<span class="app-add-product-label">เพิ่ม</span></button>';
+}
 function quoteBusinessUnitLabel(value){return String(value||'').toUpperCase()==='GYPROC'?'Gyproc':'Weber'}
 function getSelectedQuoteBusinessUnitForProducts(){return typeof window.getCurrentQuoteBusinessUnit==='function'?window.getCurrentQuoteBusinessUnit():'WEBER'}
 function isQuoteBusinessUnitReadyForProducts(){return typeof window.isQuoteBusinessUnitSelected==='function'?window.isQuoteBusinessUnitSelected():true}
 function isActiveProductForQuote(product){const status=String(product&&(product.active||product.status)||'').trim().toLowerCase();return !status||status==='true'||status==='yes'||status==='1'||status==='active'}
 function productMatchesQuoteBusinessUnit(product,businessUnit){return normalizeProductBusinessUnitForUi(product)===String(businessUnit||'').toUpperCase()}
 function quoteBusinessUnitClass(value){return String(value||'').toUpperCase()==='GYPROC'?'gyproc':'weber'}
-function quoteProductBusinessUnitBadge(product,primaryBusinessUnit){const productUnit=normalizeProductBusinessUnitForUi(product);if(!productUnit)return'<span class="quote-product-bu">BU -</span>';const label=quoteBusinessUnitLabel(productUnit);const cross=productUnit&&String(productUnit).toUpperCase()!==String(primaryBusinessUnit||'').toUpperCase()?'<small class="quote-cross-bu-note">สินค้าร่วมข้าม BU</small>':'';return `<span class="quote-product-bu ${quoteBusinessUnitClass(productUnit)}">${label}</span>${cross}`}
+function quoteProductBusinessUnitBadge(product,primaryBusinessUnit){const productUnit=normalizeProductBusinessUnitForUi(product);if(!productUnit)return'<span class="quote-product-bu">BU -</span>';const cross=productUnit&&String(productUnit).toUpperCase()!==String(primaryBusinessUnit||'').toUpperCase()?'<small class="quote-cross-bu-note">สินค้าร่วมข้าม BU</small>':'';return renderBrandLogoHtml(productUnit,'compact',{className:'quote-product-bu-logo'})+cross}
 function rankQuoteProduct(product,query){const q=String(query||'').trim().toLowerCase();if(!q)return 1000;const sku=String(product.productId||product.sku||product.id||product.productCode||'').trim().toLowerCase();const name=String(product.productName||product.name||'').trim().toLowerCase();const brand=String(product.brand||'').trim().toLowerCase();const description=String(product.description||product.itemDesc||'').trim().toLowerCase();if(sku===q)return 0;if(name===q)return 1;if(name.indexOf(q)===0)return 2;if(name.indexOf(q)>=0)return 3;if(brand.indexOf(q)>=0||description.indexOf(q)>=0)return 4;return 9}
 function rankQuoteProductBusinessUnit(product,businessUnit){const unit=normalizeProductBusinessUnitForUi(product);const primary=String(businessUnit||'').toUpperCase();if(unit&&primary&&unit===primary)return 0;if(unit)return 1;return 2}
 function filterQuoteProductsByBusinessUnit(query,businessUnit){const fields=getQuoteProductFields();const q=String(query||'').trim();return DB.products.filter(isActiveProductForQuote).filter(p=>!q||smartMatch(p,q,fields)).sort((a,b)=>rankQuoteProductBusinessUnit(a,businessUnit)-rankQuoteProductBusinessUnit(b,businessUnit)||rankQuoteProduct(a,q)-rankQuoteProduct(b,q)||String(a.productName||'').localeCompare(String(b.productName||''),'th'))}
@@ -1688,7 +1956,948 @@ function chooseQuoteCustomer(customerId){
   if(picker)picker.classList.remove('show');
   if(typeof window.scheduleQuotationDraftAutosave==='function')window.scheduleQuotationDraftAutosave('customer_selection');
 }
-function renderPromos(){let q=($('searchPromos')?.value||'').toLowerCase(); const grid=$('promoGrid'); if(!grid)return; grid.innerHTML=DB.promotions.filter(p=>JSON.stringify(p).toLowerCase().includes(q)).map(p=>`<div class="card"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${escapeHtml(p.brand||'-')}</span><h3>${escapeHtml(p.productName||'-')}</h3><p>${escapeHtml(p.description||'')}</p><b>${escapeHtml(p.discountText||'')}</b><p style="color:var(--muted)">${escapeHtml(p.startDate||'')} - ${escapeHtml(p.endDate||'')}</p></div>`).join('')}
+function createUiElement(tag,className,text){
+  const el=document.createElement(tag);
+  if(className)el.className=className;
+  if(text!==undefined&&text!==null)el.textContent=String(text);
+  return el;
+}
+function clearNode(node){
+  if(node&&typeof node.replaceChildren==='function')node.replaceChildren();
+  else if(node)while(node.firstChild)node.removeChild(node.firstChild);
+}
+function createPromotionActionIcon(iconName){
+  const namespace='http://www.w3.org/2000/svg';
+  const svg=document.createElementNS(namespace,'svg');
+  svg.setAttribute('class','promotion-action-icon');
+  svg.setAttribute('viewBox','0 0 24 24');
+  svg.setAttribute('fill','none');
+  svg.setAttribute('stroke','currentColor');
+  svg.setAttribute('stroke-width','2');
+  svg.setAttribute('stroke-linecap','round');
+  svg.setAttribute('stroke-linejoin','round');
+  svg.setAttribute('aria-hidden','true');
+  svg.setAttribute('focusable','false');
+  const nodes=iconName==='package'
+    ? [
+      {tag:'path',attrs:{d:'m7.5 4.27 9 5.15'}},
+      {tag:'path',attrs:{d:'M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z'}},
+      {tag:'path',attrs:{d:'m3.3 7 8.7 5 8.7-5'}},
+      {tag:'path',attrs:{d:'M12 22V12'}}
+    ]
+    : [
+      {tag:'path',attrs:{d:'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'}},
+      {tag:'path',attrs:{d:'M14 2v6h6'}},
+      {tag:'path',attrs:{d:'M16 13H8'}},
+      {tag:'path',attrs:{d:'M16 17H8'}},
+      {tag:'path',attrs:{d:'M10 9H8'}}
+    ];
+  nodes.forEach(config=>{
+    const node=document.createElementNS(namespace,config.tag);
+    Object.keys(config.attrs).forEach(name=>node.setAttribute(name,config.attrs[name]));
+    svg.appendChild(node);
+  });
+  return svg;
+}
+function setPromotionActionButtonContent(button,iconName,label){
+  clearNode(button);
+  button.append(createPromotionActionIcon(iconName),createUiElement('span','promotion-action-label',label));
+}
+function getPromotionProductBrandKey(product){
+  const unit=normalizeProductBusinessUnitForUi(product);
+  const text=String(unit||product&&product.brand||'').trim().toUpperCase();
+  if(text.indexOf('GYPROC')>=0)return 'GYPROC';
+  if(text.indexOf('WEBER')>=0)return 'WEBER';
+  return 'UNKNOWN';
+}
+function getPromotionProductBrandLabel(product){
+  const key=getPromotionProductBrandKey(product);
+  if(key==='GYPROC')return 'Gyproc';
+  if(key==='WEBER')return 'Weber';
+  return String(product&&product.brand||product&&product.businessUnit||'-').trim()||'-';
+}
+function promotionBrandLabelFromKeys(keys){
+  const list=Array.isArray(keys)?keys.filter(key=>key&&key!=='UNKNOWN'):[];
+  if(list.indexOf('WEBER')>=0&&list.indexOf('GYPROC')>=0)return 'Multi Brand';
+  if(list.indexOf('GYPROC')>=0)return 'Gyproc';
+  if(list.indexOf('WEBER')>=0)return 'Weber';
+  return '-';
+}
+function promotionBrandClass(label){
+  const text=String(label||'').toUpperCase();
+  if(text.indexOf('WEBER')>=0)return 'yellow';
+  if(text.indexOf('GYPROC')>=0)return 'blue';
+  return 'blue';
+}
+function getPromotionBrandLogoKey(group){
+  const item=group&&typeof group==='object'?group:{brand:group};
+  const brandKeys=Array.isArray(item.brandKeys)?item.brandKeys.map(key=>String(key||'').trim().toUpperCase()).filter(Boolean):[];
+  const uniqueKeys=Array.from(new Set(brandKeys.filter(key=>key==='WEBER'||key==='GYPROC')));
+  if(uniqueKeys.length===1)return uniqueKeys[0];
+  const text=String(item.brand||'').trim().toUpperCase();
+  if(text.indexOf('WEBER')>=0&&text.indexOf('GYPROC')<0)return 'WEBER';
+  if(text.indexOf('GYPROC')>=0&&text.indexOf('WEBER')<0)return 'GYPROC';
+  return '';
+}
+function getPromotionBrandFallbackText(group){
+  const item=group&&typeof group==='object'?group:{brand:group};
+  const text=String(item.brand||'').trim();
+  if(text)return text;
+  return promotionBrandLabelFromKeys(Array.isArray(item.brandKeys)?item.brandKeys:[]);
+}
+function renderPromotionBrandLogo(group){
+  const key=getPromotionBrandLogoKey(group);
+  return renderBrandLogoElement(key||getPromotionBrandFallbackText(group),'standard',{className:'promotion-brand-logo-badge',fallbackLabel:getPromotionBrandFallbackText(group)||'-'});
+}
+function getPromotionProductCode(product){
+  const item=product&&typeof product==='object'?product:{};
+  return String(item.productCode||item.sku||item.productId||item.id||item.itemCode||'').trim();
+}
+function getPromotionCodeValue(product){
+  const item=product&&typeof product==='object'?product:{};
+  const fields=['promotionCode','promoCode','promotionId','promoId'];
+  for(let i=0;i<fields.length;i++){
+    const value=item[fields[i]];
+    if(value!==undefined&&value!==null&&String(value).trim())return String(value).trim();
+  }
+  return '';
+}
+function hashStringForPromotionCode(value){
+  const text=String(value||'').trim();
+  let hash=0;
+  for(let i=0;i<text.length;i++){
+    hash=((hash<<5)-hash)+text.charCodeAt(i);
+    hash|=0;
+  }
+  return Math.abs(hash).toString(36).toUpperCase().padStart(6,'0').slice(-6);
+}
+function fallbackPromotionCode(promoText){
+  return 'PROMO-'+hashStringForPromotionCode(promoText||'promotion');
+}
+function normalizePromotionTextForGroup(value){
+  return normalizeProductPromoText(value).replace(/\s+/g,' ').trim().toLowerCase();
+}
+function createPromotionGroupKey(product,promoText){
+  const code=getPromotionCodeValue(product);
+  if(code)return 'code:'+normalizePromotionTextForGroup(code);
+  return 'text:'+normalizePromotionTextForGroup(promoText);
+}
+function createPromotionProductDedupeKey(product){
+  const item=product&&typeof product==='object'?product:{};
+  const productPart=createProductIdentityKey(item);
+  const promoText=getProductPromoText(item);
+  const promotionPart=getPromotionCodeValue(item)||promoText;
+  if(!productPart.replace(/\|/g,'').trim()&&!String(promotionPart||'').trim())return '';
+  return productPart+'|promotion:'+normalizePromotionTextForGroup(promotionPart);
+}
+function dedupeExactPromotionProducts(products,source){
+  const list=Array.isArray(products)?products:[];
+  const result=[];
+  const byKey=new Map();
+  list.forEach((product,index)=>{
+    const item=product&&typeof product==='object'?product:{};
+    const key=createPromotionProductDedupeKey(item);
+    if(!key.replace(/[|:]/g,'')){
+      result.push(item);
+      return;
+    }
+    if(!byKey.has(key)){
+      byKey.set(key,{index:result.length,product:item,sourceIndexes:[index]});
+      result.push(item);
+      return;
+    }
+    const entry=byKey.get(key);
+    entry.sourceIndexes.push(index);
+    if(shouldReplaceDedupedProduct(entry.product,item)){
+      entry.product=item;
+      result[entry.index]=item;
+    }
+  });
+  if(typeof console!=='undefined'&&typeof console.info==='function'){
+    const removedDuplicateCount=Math.max(0,list.length-result.length);
+    if(removedDuplicateCount>0||getProductDedupeDebugEnabled()){
+      console.info('[PROMOTION_DEDUPE]',{
+        source:source||'promotionDashboard',
+        sourceCount:list.length,
+        deduplicatedCount:result.length,
+        removedDuplicateCount
+      });
+    }
+  }
+  return result;
+}
+function summarizePromotionText(text){
+  const clean=String(text||'').replace(/\s+/g,' ').trim();
+  if(!clean)return '-';
+  return clean.length>150?clean.slice(0,147).trim()+'...':clean;
+}
+function getPromotionTextForDashboard(group,products){
+  const item=group&&typeof group==='object'?group:{};
+  const directText=String(item.promotionText||item.fullPromotionText||item.promoText||'').trim();
+  if(directText)return directText;
+  const productText=(Array.isArray(products)?products:[]).map(product=>String(product&&product.promoText||product&&product.promotionText||'').trim()).find(Boolean)||'';
+  if(productText)return productText;
+  const legacyTitle=String(item.promotionTitle||item.promoTitle||'').trim();
+  if(legacyTitle){
+    if(!promotionLegacyTitleFallbackLogged&&typeof console!=='undefined'&&typeof console.info==='function'){
+      console.info('[PROMOTION_LEGACY_FALLBACK]',{field:'promotionTitle',action:'normalized-to-promotionText'});
+      promotionLegacyTitleFallbackLogged=true;
+    }
+    return legacyTitle;
+  }
+  return '';
+}
+const PROMOTION_DATE_MISSING_TEXT='ไม่มีข้อมูลวันที่';
+const PROMOTION_MS_PER_DAY=24*60*60*1000;
+const PROMOTION_STATUS_CONFIG={
+  NO_DATE:{value:'NO_DATE',label:'No Date',thaiLabel:'ไม่มีข้อมูลวันที่',className:'no-date',sortRank:3},
+  EXPIRED:{value:'EXPIRED',label:'Expired',thaiLabel:'หมดอายุแล้ว',className:'expired',sortRank:4},
+  UPCOMING:{value:'UPCOMING',label:'Upcoming',thaiLabel:'ยังไม่เริ่ม',className:'upcoming',sortRank:2},
+  ENDING_SOON:{value:'ENDING_SOON',label:'Ending Soon',thaiLabel:'ใกล้หมดอายุ',className:'ending-soon',sortRank:0},
+  ACTIVE:{value:'ACTIVE',label:'Active',thaiLabel:'กำลังใช้งาน',className:'active',sortRank:1}
+};
+const PROMOTION_THAI_MONTHS={
+  'ม.ค':1,'ม.ค.':1,'มกราคม':1,
+  'ก.พ':2,'ก.พ.':2,'กุมภาพันธ์':2,
+  'มี.ค':3,'มี.ค.':3,'มีนาคม':3,
+  'เม.ย':4,'เม.ย.':4,'เมษายน':4,
+  'พ.ค':5,'พ.ค.':5,'พฤษภาคม':5,
+  'มิ.ย':6,'มิ.ย.':6,'มิถุนายน':6,
+  'ก.ค':7,'ก.ค.':7,'กรกฎาคม':7,
+  'ส.ค':8,'ส.ค.':8,'สิงหาคม':8,
+  'ก.ย':9,'ก.ย.':9,'กันยายน':9,
+  'ต.ค':10,'ต.ค.':10,'ตุลาคม':10,
+  'พ.ย':11,'พ.ย.':11,'พฤศจิกายน':11,
+  'ธ.ค':12,'ธ.ค.':12,'ธันวาคม':12
+};
+function padPromotionDatePart(value){
+  return String(value).padStart(2,'0');
+}
+function createPromotionDateInfo(year,month,day,raw){
+  let y=Number(year),m=Number(month),d=Number(day);
+  if(y>2400)y-=543;
+  if(!Number.isFinite(y)||!Number.isFinite(m)||!Number.isFinite(d))return {valid:false,raw:String(raw||'').trim()};
+  if(y<1900||y>2200||m<1||m>12||d<1||d>31)return {valid:false,raw:String(raw||'').trim()};
+  const localDate=new Date(y,m-1,d);
+  if(localDate.getFullYear()!==y||localDate.getMonth()!==m-1||localDate.getDate()!==d)return {valid:false,raw:String(raw||'').trim()};
+  const dateKey=y+'-'+padPromotionDatePart(m)+'-'+padPromotionDatePart(d);
+  return {valid:true,raw:String(raw||dateKey).trim(),year:y,month:m,day:d,dateKey,time:localDate.getTime()};
+}
+function normalizePromotionDateOnly(value){
+  if(value instanceof Date&&!Number.isNaN(value.getTime())){
+    return createPromotionDateInfo(value.getFullYear(),value.getMonth()+1,value.getDate(),value.toISOString());
+  }
+  const raw=String(value===null||value===undefined?'':value).trim();
+  if(!raw||['null','undefined','-'].indexOf(raw.toLowerCase())>=0)return {valid:false,raw:''};
+  let match=raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s].*)?$/);
+  if(match)return createPromotionDateInfo(match[1],match[2],match[3],raw);
+  match=raw.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if(match)return createPromotionDateInfo(match[3],match[2],match[1],raw);
+  match=raw.match(/^(\d{1,2})\s*([ก-๙.]+)\s*(\d{4})$/);
+  if(match){
+    const month=PROMOTION_THAI_MONTHS[String(match[2]||'').replace(/\s+/g,'').trim()];
+    if(month)return createPromotionDateInfo(match[3],month,match[1],raw);
+  }
+  const parsed=new Date(raw);
+  if(!Number.isNaN(parsed.getTime())){
+    return createPromotionDateInfo(parsed.getFullYear(),parsed.getMonth()+1,parsed.getDate(),raw);
+  }
+  return {valid:false,raw};
+}
+function getPromotionTodayInfo(){
+  const now=new Date();
+  return createPromotionDateInfo(now.getFullYear(),now.getMonth()+1,now.getDate(),now.toISOString());
+}
+function formatPromotionDateThai(dateInfo){
+  const info=dateInfo&&dateInfo.valid?dateInfo:null;
+  if(!info)return PROMOTION_DATE_MISSING_TEXT;
+  const date=new Date(info.year,info.month-1,info.day);
+  try{
+    return new Intl.DateTimeFormat('th-TH-u-ca-buddhist',{day:'2-digit',month:'short',year:'numeric'}).format(date);
+  }catch(error){
+    const months=['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+    return padPromotionDatePart(info.day)+' '+months[info.month-1]+' '+(info.year+543);
+  }
+}
+function getPromotionRawDateValue(item,type){
+  const source=item&&typeof item==='object'?item:{};
+  const fields=type==='end'
+    ? ['endDate','promoEndDate','promotionEndDate','promotionEnd','validTo','expireDate','expiryDate']
+    : ['startDate','promoStartDate','promotionStartDate','promotionStart','validFrom'];
+  for(let i=0;i<fields.length;i++){
+    if(Object.prototype.hasOwnProperty.call(source,fields[i])&&String(source[fields[i]]??'').trim())return source[fields[i]];
+  }
+  return '';
+}
+function resolvePromotionGroupDateValue(group,products,type){
+  const values=[];
+  const addValue=value=>{
+    const text=String(value===null||value===undefined?'':value).trim();
+    if(text)values.push(text);
+  };
+  addValue(getPromotionRawDateValue(group,type));
+  (Array.isArray(products)?products:[]).forEach(product=>addValue(getPromotionRawDateValue(product,type)));
+  if(!values.length)return '';
+  const validDates=values.map(normalizePromotionDateOnly).filter(info=>info.valid);
+  const invalidCount=values.length-validDates.length;
+  const uniqueDateKeys=Array.from(new Set(validDates.map(info=>info.dateKey)));
+  if(invalidCount>0||uniqueDateKeys.length!==1){
+    if(typeof console!=='undefined'&&typeof console.warn==='function'){
+      console.warn('[PROMOTION_DATE]',{
+        issue:invalidCount>0?'invalid-date':'conflicting-date',
+        type:type||'start',
+        promotionCode:group&&group.promotionCode||group&&group.promoCode||'',
+        values:values.slice(0,5)
+      });
+    }
+    return '';
+  }
+  return uniqueDateKeys[0];
+}
+function calculatePromotionStatus(startDateValue,endDateValue,todayInfo){
+  const today=todayInfo&&todayInfo.valid?todayInfo:getPromotionTodayInfo();
+  const startDate=normalizePromotionDateOnly(startDateValue);
+  const endDate=normalizePromotionDateOnly(endDateValue);
+  let status=PROMOTION_STATUS_CONFIG.NO_DATE;
+  let remainingDays=null;
+  if(startDate.valid&&endDate.valid&&startDate.time<=endDate.time){
+    if(today.time>endDate.time){
+      status=PROMOTION_STATUS_CONFIG.EXPIRED;
+      remainingDays=Math.round((endDate.time-today.time)/PROMOTION_MS_PER_DAY);
+    }else if(today.time<startDate.time){
+      status=PROMOTION_STATUS_CONFIG.UPCOMING;
+      remainingDays=Math.round((startDate.time-today.time)/PROMOTION_MS_PER_DAY);
+    }else{
+      remainingDays=Math.round((endDate.time-today.time)/PROMOTION_MS_PER_DAY);
+      status=remainingDays>=0&&remainingDays<=7?PROMOTION_STATUS_CONFIG.ENDING_SOON:PROMOTION_STATUS_CONFIG.ACTIVE;
+    }
+  }else if(startDate.valid&&endDate.valid&&startDate.time>endDate.time&&typeof console!=='undefined'&&typeof console.warn==='function'){
+    console.warn('[PROMOTION_DATE]',{issue:'start-after-end',startDate:startDate.dateKey,endDate:endDate.dateKey});
+  }
+  return {
+    value:status.value,
+    label:status.label,
+    thaiLabel:status.thaiLabel,
+    className:status.className,
+    sortRank:status.sortRank,
+    remainingDays:Number.isFinite(remainingDays)?remainingDays:null,
+    startDate,
+    endDate,
+    hasValidDateRange:startDate.valid&&endDate.valid&&startDate.time<=endDate.time
+  };
+}
+function applyPromotionStatusToGroup(group,todayInfo){
+  const item=group&&typeof group==='object'?group:{};
+  const status=calculatePromotionStatus(item.startDate||item.promoStartDate,item.endDate||item.promoEndDate,todayInfo);
+  return Object.assign({},item,{
+    startDate:status.startDate.valid?status.startDate.dateKey:'',
+    endDate:status.endDate.valid?status.endDate.dateKey:'',
+    startDateLabel:formatPromotionDateThai(status.startDate),
+    endDateLabel:formatPromotionDateThai(status.endDate),
+    promotionStatus:status.value,
+    promotionStatusLabel:status.label,
+    promotionStatusThaiLabel:status.thaiLabel,
+    promotionStatusClass:status.className,
+    promotionStatusSortRank:status.sortRank,
+    promotionRemainingDays:status.remainingDays,
+    hasPromotionDateRange:status.hasValidDateRange
+  });
+}
+function getPromotionDateSortTime(group,type){
+  const info=normalizePromotionDateOnly(type==='end'?group&&group.endDate:group&&group.startDate);
+  return info.valid?info.time:null;
+}
+function sortPromotionGroupsByStatus(groups){
+  return (Array.isArray(groups)?groups:[]).map((group,index)=>({group,index})).sort((a,b)=>{
+    const rankDiff=Number(a.group.promotionStatusSortRank??PROMOTION_STATUS_CONFIG.NO_DATE.sortRank)-Number(b.group.promotionStatusSortRank??PROMOTION_STATUS_CONFIG.NO_DATE.sortRank);
+    if(rankDiff)return rankDiff;
+    const status=String(a.group.promotionStatus||'').toUpperCase();
+    if(status==='ENDING_SOON'||status==='ACTIVE'){
+      const aEnd=getPromotionDateSortTime(a.group,'end'),bEnd=getPromotionDateSortTime(b.group,'end');
+      if(aEnd!==null&&bEnd!==null&&aEnd!==bEnd)return aEnd-bEnd;
+    }else if(status==='UPCOMING'){
+      const aStart=getPromotionDateSortTime(a.group,'start'),bStart=getPromotionDateSortTime(b.group,'start');
+      if(aStart!==null&&bStart!==null&&aStart!==bStart)return aStart-bStart;
+    }else if(status==='EXPIRED'){
+      const aEnd=getPromotionDateSortTime(a.group,'end'),bEnd=getPromotionDateSortTime(b.group,'end');
+      if(aEnd!==null&&bEnd!==null&&aEnd!==bEnd)return bEnd-aEnd;
+    }
+    const sourceDiff=Number(a.group.sourceOrder??a.index)-Number(b.group.sourceOrder??b.index);
+    if(sourceDiff)return sourceDiff;
+    return a.index-b.index;
+  }).map(entry=>entry.group);
+}
+function refreshPromotionStatusesForToday(force){
+  const today=getPromotionTodayInfo();
+  if(!force&&promotionDashboardTodayKey===today.dateKey)return;
+  const groups=Array.isArray(PROMOTION_DASHBOARD.groups)?PROMOTION_DASHBOARD.groups:[];
+  PROMOTION_DASHBOARD=Object.assign({},PROMOTION_DASHBOARD,{
+    groups:sortPromotionGroupsByStatus(groups.map(group=>applyPromotionStatusToGroup(group,today))),
+  });
+  PROMOTION_DASHBOARD.summary=Object.assign({},PROMOTION_DASHBOARD.summary||{},buildPromotionDashboardSummary(PROMOTION_DASHBOARD.groups));
+  DB.productPromotions=PROMOTION_DASHBOARD;
+  promotionDashboardTodayKey=today.dateKey;
+}
+function getPromotionStatusDisplayText(group){
+  const thai=String(group&&group.promotionStatusThaiLabel||'').trim()||PROMOTION_STATUS_CONFIG.NO_DATE.thaiLabel;
+  const label=String(group&&group.promotionStatusLabel||'').trim()||PROMOTION_STATUS_CONFIG.NO_DATE.label;
+  return label+' • '+thai;
+}
+function getPromotionStatusAriaLabel(group){
+  let label='สถานะโปรโมชั่น: '+String(group&&group.promotionStatusThaiLabel||PROMOTION_STATUS_CONFIG.NO_DATE.thaiLabel);
+  if(Number.isFinite(Number(group&&group.promotionRemainingDays))&&String(group&&group.promotionStatus||'').toUpperCase()!=='EXPIRED'){
+    label+=' เหลือ '+Number(group.promotionRemainingDays)+' วัน';
+  }
+  return label;
+}
+function normalizePromotionProductForDashboard(product){
+  const item=normalizeProduct(product);
+  const identityKey=createProductIdentityKey(item);
+  const recordKey=item.sourceProductRecordKey||getStableProductRecordKey(item,'promotion-dashboard');
+  return Object.assign({},item,{
+    productIdentityKey:identityKey,
+    sourceProductIdentityKey:item.sourceProductIdentityKey||identityKey,
+    sourceProductRecordKey:recordKey,
+    productCode:getPromotionProductCode(item),
+    brand:getPromotionProductBrandLabel(item),
+    promoText:getProductPromoText(item)
+  });
+}
+function normalizePromotionGroupForDashboard(group,index){
+  const item=group&&typeof group==='object'?group:{};
+  const products=dedupeExactPromotionProducts((Array.isArray(item.products)?item.products:[]).map(normalizePromotionProductForDashboard),'promotionDashboard.groupProducts');
+  const brandKeys=Array.isArray(item.brandKeys)&&item.brandKeys.length
+    ? item.brandKeys.map(key=>String(key||'').trim().toUpperCase()).filter(Boolean)
+    : Array.from(new Set(products.map(getPromotionProductBrandKey))).filter(Boolean);
+  const promotionText=getPromotionTextForDashboard(item,products);
+  const code=String(item.promotionCode||item.promoCode||item.promotionId||'').trim()||fallbackPromotionCode(promotionText);
+  const promotionKey=String(item.promotionKey||item.key||'').trim()||('code:'+normalizePromotionTextForGroup(code)+'|text:'+normalizePromotionTextForGroup(promotionText));
+  const brand=String(item.brand||'').trim()||promotionBrandLabelFromKeys(brandKeys);
+  const sourceOrder=Number.isFinite(Number(item.sourceOrder))?Number(item.sourceOrder):Number(index||0);
+  const startDate=resolvePromotionGroupDateValue(item,products,'start');
+  const endDate=resolvePromotionGroupDateValue(item,products,'end');
+  return applyPromotionStatusToGroup({
+    promotionKey,
+    promotionCode:code,
+    brand,
+    brandKeys,
+    startDate,
+    endDate,
+    promoStartDate:startDate,
+    promoEndDate:endDate,
+    promotionText,
+    promotionSummary:String(item.promotionSummary||item.summary||'').trim(),
+    fullPromotionText:String(item.fullPromotionText||promotionText).trim(),
+    productCount:Number(item.productCount||products.length)||products.length,
+    sourceOrder,
+    products
+  },getPromotionTodayInfo());
+}
+function buildPromotionDashboardSummary(groups){
+  const list=Array.isArray(groups)?groups:[];
+  const statusCount=status=>list.filter(group=>String(group&&group.promotionStatus||'').toUpperCase()===status).length;
+  return {
+    totalPromotions:list.length,
+    productsInPromotion:list.reduce((sum,group)=>sum+Number(group.productCount||group.products?.length||0),0),
+    weberPromotions:list.filter(group=>(group.brandKeys||[]).indexOf('WEBER')>=0).length,
+    gyprocPromotions:list.filter(group=>(group.brandKeys||[]).indexOf('GYPROC')>=0).length,
+    multiBrandPromotions:list.filter(group=>(group.brandKeys||[]).indexOf('WEBER')>=0&&(group.brandKeys||[]).indexOf('GYPROC')>=0).length,
+    activePromotions:statusCount('ACTIVE'),
+    endingSoonPromotions:statusCount('ENDING_SOON'),
+    upcomingPromotions:statusCount('UPCOMING'),
+    expiredPromotions:statusCount('EXPIRED'),
+    noDatePromotions:statusCount('NO_DATE')
+  };
+}
+function buildPromotionDashboardFromProducts(products){
+  const sourceList=(Array.isArray(products)?products:[]).map(normalizeProduct);
+  const list=dedupeExactPromotionProducts(sourceList,'promotionDashboard.sourceProducts');
+  const groupsByKey=new Map();
+  list.forEach(product=>{
+    const promoText=getProductPromoText(product);
+    if(!promoText)return;
+    const groupKey=createPromotionGroupKey(product,promoText);
+    if(!groupKey.replace(/^(code|text):/,''))return;
+    if(!groupsByKey.has(groupKey)){
+      const code=getPromotionCodeValue(product)||fallbackPromotionCode(promoText);
+      groupsByKey.set(groupKey,{
+        promotionKey:groupKey,
+        promotionCode:code,
+        promotionText:promoText,
+        fullPromotionText:promoText,
+        sourceOrder:groupsByKey.size,
+        brandKeys:new Set(),
+        products:[]
+      });
+    }
+    const group=groupsByKey.get(groupKey);
+    group.brandKeys.add(getPromotionProductBrandKey(product));
+    if(group.fullPromotionText.indexOf(promoText)<0){
+      group.fullPromotionText=group.fullPromotionText+'\n\n'+promoText;
+    }
+    group.products.push(normalizePromotionProductForDashboard(product));
+  });
+  const groups=Array.from(groupsByKey.values()).map(group=>{
+    const products=dedupeExactPromotionProducts(group.products,'promotionDashboard.products');
+    const brandKeys=Array.from(group.brandKeys).filter(Boolean);
+    return normalizePromotionGroupForDashboard(Object.assign({},group,{
+      brandKeys,
+      brand:promotionBrandLabelFromKeys(brandKeys),
+      productCount:products.length,
+      products
+    }));
+  });
+  const sortedGroups=sortPromotionGroupsByStatus(groups);
+  const summary=Object.assign(buildPromotionDashboardSummary(groups),{
+    sourceCount:sourceList.length,
+    deduplicatedCount:list.length,
+    removedDuplicateCount:Math.max(0,sourceList.length-list.length)
+  });
+  return {groups:sortedGroups,summary,products:sortedGroups.reduce((acc,group)=>acc.concat(group.products),[])};
+}
+function normalizePromotionDashboardData(data){
+  const source=data&&typeof data==='object'?data:{};
+  if(Array.isArray(source.groups)){
+    const groups=sortPromotionGroupsByStatus(source.groups.map(normalizePromotionGroupForDashboard));
+    return {groups,summary:Object.assign({},source.summary||{},buildPromotionDashboardSummary(groups)),products:groups.reduce((acc,group)=>acc.concat(group.products),[])};
+  }
+  if(Array.isArray(source.products))return buildPromotionDashboardFromProducts(source.products);
+  if(Array.isArray(data))return buildPromotionDashboardFromProducts(data);
+  return {groups:[],summary:buildPromotionDashboardSummary([]),products:[]};
+}
+function setPromotionDashboardData(data,source){
+  PROMOTION_DASHBOARD=normalizePromotionDashboardData(data);
+  DB.productPromotions=PROMOTION_DASHBOARD;
+  promotionDashboardLoaded=true;
+  promotionDashboardError='';
+  promotionDashboardTodayKey=getPromotionTodayInfo().dateKey;
+  if(typeof setCache==='function')setCache(PRODUCT_PROMOTIONS_CACHE_KEY,PROMOTION_DASHBOARD,15);
+  const info=PROMOTION_DASHBOARD.summary||{};
+  if(typeof console!=='undefined'&&typeof console.info==='function'){
+    console.info('[PROMOTION_DASHBOARD]',{
+      source:source||'unknown',
+      totalPromotions:info.totalPromotions||0,
+      productsInPromotion:info.productsInPromotion||0,
+      activePromotions:info.activePromotions||0,
+      endingSoonPromotions:info.endingSoonPromotions||0,
+      noDatePromotions:info.noDatePromotions||0,
+      sourceCount:info.sourceCount||0,
+      deduplicatedCount:info.deduplicatedCount||info.deduplicatedSourceCount||0,
+      removedDuplicateCount:info.removedDuplicateCount||Math.max(0,Number(info.sourceCount||0)-Number(info.deduplicatedCount||info.deduplicatedSourceCount||0))
+    });
+  }
+  return PROMOTION_DASHBOARD;
+}
+function invalidatePromotionDashboardCache(clearPersistent){
+  PROMOTION_DASHBOARD={groups:[],summary:buildPromotionDashboardSummary([]),products:[]};
+  DB.productPromotions=PROMOTION_DASHBOARD;
+  promotionDashboardLoaded=false;
+  promotionDashboardError='';
+  promotionDashboardTodayKey='';
+  if(clearPersistent&&typeof clearCache==='function')clearCache(PRODUCT_PROMOTIONS_CACHE_KEY);
+}
+async function loadPromotionDashboard(options){
+  const force=!!(options&&options.force);
+  const background=!!(options&&options.background);
+  if(promotionDashboardLoaded&&!force)return {ok:true,data:PROMOTION_DASHBOARD,cached:true};
+  if(promotionDashboardPromise&&!force)return promotionDashboardPromise;
+  if(!force&&productsLoaded&&Array.isArray(DB.products)&&DB.products.length){
+    const data=setPromotionDashboardData(buildPromotionDashboardFromProducts(DB.products),'products-cache');
+    renderPromotionViews();
+    return {ok:true,data,cached:true};
+  }
+  if(!force&&typeof getCache==='function'){
+    const cachedProducts=getCache('sg_products_cache');
+    if(Array.isArray(cachedProducts)){
+      setProductsData(cachedProducts);
+      renderPromotionViews();
+      return {ok:true,data:PROMOTION_DASHBOARD,cached:true};
+    }
+  }
+  if(!force&&typeof getCache==='function'){
+    const cached=getCache(PRODUCT_PROMOTIONS_CACHE_KEY);
+    if(cached&&typeof cached==='object'&&Array.isArray(cached.groups)){
+      const data=setPromotionDashboardData(cached,'frontend-cache');
+      renderPromotionViews();
+      return {ok:true,data,cached:true};
+    }
+  }
+  promotionDashboardPromise=(async()=>{
+    try{
+      promotionDashboardError='';
+      if(!background)renderPromos();
+      const response=await callApi('getProductPromotions',force?{force:true}:{});
+      if(response&&response.ok){
+        const data=setPromotionDashboardData(response.data||{},'api');
+        renderPromotionViews();
+        return {ok:true,data:data};
+      }
+      if(Array.isArray(DB.products)&&DB.products.length){
+        const data=setPromotionDashboardData(buildPromotionDashboardFromProducts(DB.products),'products-fallback');
+        renderPromotionViews();
+        return {ok:true,data:data,fallback:true};
+      }
+      promotionDashboardError=response&&response.message?response.message:'Unable to load promotions.';
+      renderPromotionViews();
+      return response||{ok:false,message:promotionDashboardError};
+    }catch(error){
+      promotionDashboardError=String(error&&error.message?error.message:error||'Unable to load promotions.');
+      renderPromotionViews();
+      return {ok:false,message:promotionDashboardError};
+    }finally{
+      promotionDashboardPromise=null;
+    }
+  })();
+  return promotionDashboardPromise;
+}
+function setPromotionRefreshButtonLoading(isLoading){
+  const button=document.querySelector('.promotion-refresh-button');
+  if(!button)return;
+  if(button.dataset.originalText===undefined)button.dataset.originalText=button.textContent||'รีเฟรช';
+  button.disabled=!!isLoading;
+  button.setAttribute('aria-busy',String(!!isLoading));
+  button.textContent=isLoading?'กำลังรีเฟรช...':button.dataset.originalText;
+}
+function refreshPromotionDashboard(){
+  if(promotionDashboardRefreshPromise)return promotionDashboardRefreshPromise;
+  promotionDashboardRefreshPromise=(async()=>{
+    setPromotionRefreshButtonLoading(true);
+    try{
+      invalidatePromotionDashboardCache(true);
+      return await loadPromotionDashboard({force:true});
+    }finally{
+      setPromotionRefreshButtonLoading(false);
+      promotionDashboardRefreshPromise=null;
+    }
+  })();
+  return promotionDashboardRefreshPromise;
+}
+function getPromotionDashboardGroups(){
+  refreshPromotionStatusesForToday(false);
+  return Array.isArray(PROMOTION_DASHBOARD.groups)?PROMOTION_DASHBOARD.groups:[];
+}
+function getPromotionDashboardGroupByKey(key){
+  const target=String(key||'').trim();
+  return getPromotionDashboardGroups().find(group=>String(group.promotionKey||'').trim()===target)||null;
+}
+function isPromotionsPageActive(){
+  const page=$('page-promos');
+  return !!(page&&page.classList.contains('active'));
+}
+function refreshPromotionDashboardForCurrentDay(){
+  if(!promotionDashboardLoaded||!isPromotionsPageActive())return;
+  const before=promotionDashboardTodayKey;
+  refreshPromotionStatusesForToday(false);
+  if(before!==promotionDashboardTodayKey)renderPromotionViews();
+}
+if(typeof window!=='undefined'&&!window.__promotionDateRefreshBound){
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshPromotionDashboardForCurrentDay();});
+  window.addEventListener('focus',refreshPromotionDashboardForCurrentDay);
+  window.__promotionDateRefreshBound=true;
+}
+function renderPromotionViews(){
+  renderPromos();
+  renderHome();
+}
+function appendPromotionSummaryCard(container,label,value,helper){
+  const card=createUiElement('div','promotion-summary-card');
+  const small=createUiElement('small','',label);
+  const strong=createUiElement('b','',value);
+  card.append(small,strong);
+  if(helper)card.appendChild(createUiElement('span','',helper));
+  container.appendChild(card);
+}
+function renderPromotionSummary(){
+  const root=$('promotionSummary');
+  if(!root)return;
+  clearNode(root);
+  const summary=PROMOTION_DASHBOARD.summary||buildPromotionDashboardSummary(getPromotionDashboardGroups());
+  appendPromotionSummaryCard(root,'Total Promotions',summary.totalPromotions||0,'กลุ่มโปรโมชัน');
+  appendPromotionSummaryCard(root,'Products in Promotion',summary.productsInPromotion||0,'สินค้าในโปร');
+  appendPromotionSummaryCard(root,'Weber Promotions',summary.weberPromotions||0,'กลุ่มที่มี Weber');
+  appendPromotionSummaryCard(root,'Gyproc Promotions',summary.gyprocPromotions||0,'กลุ่มที่มี Gyproc');
+}
+function renderPromotionState(message,type,withRetry){
+  const state=$('promotionState');
+  if(!state)return;
+  clearNode(state);
+  state.className='promotion-state'+(type?' '+type:'');
+  state.hidden=!message&&!withRetry;
+  if(message)state.appendChild(createUiElement('span','',message));
+  if(withRetry){
+    const button=createUiElement('button','ghost','Retry');
+    button.type='button';
+    button.onclick=refreshPromotionDashboard;
+    button.setAttribute('aria-label','Retry loading promotions');
+    state.appendChild(button);
+  }
+}
+function renderPromotionSkeleton(grid){
+  clearNode(grid);
+  for(let i=0;i<4;i++){
+    const card=createUiElement('div','card promotion-card promotion-skeleton');
+    card.setAttribute('aria-hidden','true');
+    card.append(createUiElement('div','promotion-skeleton-line short'),createUiElement('div','promotion-skeleton-line'),createUiElement('div','promotion-skeleton-line'),createUiElement('div','promotion-skeleton-actions'));
+    grid.appendChild(card);
+  }
+}
+function getPromotionSearchFields(group){
+  const products=Array.isArray(group&&group.products)?group.products:[];
+  return [
+    group&&group.promotionCode,
+    group&&group.promotionText,
+    group&&group.fullPromotionText,
+    group&&group.brand,
+    group&&group.promotionStatusLabel,
+    group&&group.promotionStatusThaiLabel,
+    group&&group.startDateLabel,
+    group&&group.endDateLabel,
+    products.map(product=>[product.productName,product.productCode,product.sku,product.productId,product.brand].join(' ')).join(' ')
+  ].join(' ');
+}
+function getFilteredPromotionGroups(){
+  const q=String($('searchPromos')?.value||'').trim();
+  const brandFilter=String($('promotionBrandFilter')?.value||'').trim().toUpperCase();
+  const statusFilter=String($('promotionStatusFilter')?.value||'').trim().toUpperCase();
+  return getPromotionDashboardGroups().filter(group=>{
+    const brandKeys=Array.isArray(group.brandKeys)?group.brandKeys:[];
+    const brandOk=!brandFilter||brandKeys.indexOf(brandFilter)>=0||(brandFilter==='MULTI'&&brandKeys.indexOf('WEBER')>=0&&brandKeys.indexOf('GYPROC')>=0);
+    const statusOk=!statusFilter||String(group.promotionStatus||'').toUpperCase()===statusFilter;
+    return brandOk&&statusOk&&(!q||smartMatch({search:getPromotionSearchFields(group)},q,['search']));
+  });
+}
+function renderPromotionResultCount(filteredCount,totalCount){
+  const node=$('promotionResultCount');
+  if(!node)return;
+  if(!promotionDashboardLoaded&&!totalCount){
+    node.hidden=true;
+    node.textContent='';
+    return;
+  }
+  node.hidden=false;
+  node.textContent=String(filteredCount)+' / '+String(totalCount)+' โปรโมชั่น';
+}
+function renderPromotionStatusBadge(group){
+  const statusClass=String(group&&group.promotionStatusClass||PROMOTION_STATUS_CONFIG.NO_DATE.className).replace(/[^a-z-]/g,'')||PROMOTION_STATUS_CONFIG.NO_DATE.className;
+  const badge=createUiElement('span','promotion-status-badge promotion-status-'+statusClass);
+  badge.setAttribute('aria-label',getPromotionStatusAriaLabel(group));
+  const dot=createUiElement('span','promotion-status-dot');
+  dot.setAttribute('aria-hidden','true');
+  const text=createUiElement('span','promotion-status-text');
+  text.append(createUiElement('b','',String(group&&group.promotionStatusLabel||PROMOTION_STATUS_CONFIG.NO_DATE.label)),createUiElement('small','',String(group&&group.promotionStatusThaiLabel||PROMOTION_STATUS_CONFIG.NO_DATE.thaiLabel)));
+  badge.append(dot,text);
+  return badge;
+}
+function renderPromotionDateSummary(group){
+  const wrap=createUiElement('div','promotion-card-dates');
+  if(!group||!group.hasPromotionDateRange){
+    const missing=createUiElement('div','promotion-date-missing',PROMOTION_DATE_MISSING_TEXT);
+    missing.setAttribute('aria-label','วันที่โปรโมชั่น: '+PROMOTION_DATE_MISSING_TEXT);
+    wrap.appendChild(missing);
+    return wrap;
+  }
+  [
+    {className:'start',label:'เริ่ม',value:group.startDateLabel},
+    {className:'end',label:'หมดอายุ',value:group.endDateLabel}
+  ].forEach(item=>{
+    const box=createUiElement('div','promotion-date-box promotion-date-'+item.className);
+    box.setAttribute('aria-label',item.label+'โปรโมชั่น '+item.value);
+    const icon=createUiElement('span','promotion-date-icon','📅');
+    icon.setAttribute('aria-hidden','true');
+    const body=createUiElement('span','promotion-date-body');
+    body.append(createUiElement('small','',item.label),createUiElement('b','',item.value));
+    box.append(icon,body);
+    wrap.appendChild(box);
+  });
+  return wrap;
+}
+function renderPromotionCard(group){
+  const card=createUiElement('article','card promotion-card');
+  card.dataset.promotionKey=group.promotionKey||'';
+  const head=createUiElement('div','promotion-card-head');
+  const left=createUiElement('div','promotion-card-header-left');
+  left.append(renderPromotionStatusBadge(group),renderPromotionBrandLogo(group));
+  const code=createUiElement('b','promotion-code',group.promotionCode||'-');
+  head.append(left,code);
+  const text=renderPromotionLinesElement(group.promotionText,'compact','promotion-card-text promotion-card-primary-text',{maxLines:3});
+  const dates=renderPromotionDateSummary(group);
+  const meta=createUiElement('div','promotion-card-meta');
+  meta.appendChild(createUiElement('span','',String(group.productCount||0)+' products'));
+  const promotionCode=String(group.promotionCode||'').trim();
+  const actions=createUiElement('div','promotion-card-actions promotion-card-action-row');
+  const detailButton=createUiElement('button','promotion-action-button promotion-action-secondary');
+  detailButton.type='button';
+  detailButton.setAttribute('aria-label','View promotion details '+promotionCode);
+  detailButton.setAttribute('title','Details');
+  setPromotionActionButtonContent(detailButton,'file-text','รายละเอียด');
+  detailButton.addEventListener('click',event=>openPromotionDetail(group.promotionKey,event));
+  const productsButton=createUiElement('button','promotion-action-button promotion-action-primary');
+  productsButton.type='button';
+  productsButton.setAttribute('aria-label','View products in promotion '+promotionCode);
+  productsButton.setAttribute('title','Products');
+  setPromotionActionButtonContent(productsButton,'package','สินค้าร่วมรายการ');
+  productsButton.addEventListener('click',()=>renderPromotionProductPanel(group.promotionKey));
+  actions.append(detailButton,productsButton);
+  card.append(head);
+  if(text)card.appendChild(text);
+  card.append(dates,meta,actions);
+  return card;
+}
+function renderPromos(){
+  const grid=$('promoGrid');
+  if(!grid)return;
+  renderPromotionSummary();
+  const panel=$('promotionProductPanel');
+  if(panel&&panel.dataset.promotionKey&&!getPromotionDashboardGroupByKey(panel.dataset.promotionKey)){
+    closePromotionProductPanel();
+  }
+  if(promotionDashboardError){
+    renderPromotionResultCount(0,getPromotionDashboardGroups().length);
+    renderPromotionState('ไม่สามารถโหลดโปรโมชั่นได้','error',true);
+    clearNode(grid);
+    return;
+  }
+  if(promotionDashboardPromise&&!promotionDashboardLoaded){
+    renderPromotionResultCount(0,0);
+    renderPromotionState('Loading promotions...','loading',false);
+    renderPromotionSkeleton(grid);
+    return;
+  }
+  const groups=getFilteredPromotionGroups();
+  const totalGroups=getPromotionDashboardGroups().length;
+  renderPromotionResultCount(groups.length,totalGroups);
+  clearNode(grid);
+  if(!promotionDashboardLoaded&&!totalGroups){
+    renderPromotionState('Loading promotions...','loading',false);
+    renderPromotionSkeleton(grid);
+    return;
+  }
+  if(!groups.length){
+    renderPromotionState(totalGroups?'ไม่พบโปรโมชั่นที่ตรงกับตัวกรอง':'ยังไม่มีโปรโมชั่นในระบบ','empty',false);
+    return;
+  }
+  renderPromotionState('', '', false);
+  groups.forEach(group=>grid.appendChild(renderPromotionCard(group)));
+}
+let PROMOTION_DETAIL_LAST_FOCUS=null;
+function deactivatePromotionDashboardModal(){
+  const modal=$('modal');
+  if(modal)modal.classList.remove('promotion-dashboard-modal');
+  const body=$('modalBody');
+  if(body)body.classList.remove('promotion-dashboard-modal-body');
+  if(PROMOTION_DETAIL_LAST_FOCUS&&typeof PROMOTION_DETAIL_LAST_FOCUS.focus==='function'){
+    try{PROMOTION_DETAIL_LAST_FOCUS.focus({preventScroll:true});}catch(error){try{PROMOTION_DETAIL_LAST_FOCUS.focus();}catch(ignore){}}
+  }
+  PROMOTION_DETAIL_LAST_FOCUS=null;
+}
+function appendPromotionDetailRow(root,label,value){
+  const row=createUiElement('div','promotion-detail-row');
+  row.append(createUiElement('small','',label),createUiElement('b','',value||'-'));
+  root.appendChild(row);
+}
+function openPromotionDetail(promotionKey,event){
+  if(event&&typeof event.preventDefault==='function')event.preventDefault();
+  const group=getPromotionDashboardGroupByKey(promotionKey);
+  if(!group){toast('Promotion not found');return;}
+  PROMOTION_DETAIL_LAST_FOCUS=event&&event.currentTarget||document.activeElement;
+  const modal=$('modal'),title=$('modalTitle'),body=$('modalBody');
+  if(!modal||!title||!body)return;
+  title.textContent='Promotion Details';
+  clearNode(body);
+  body.classList.add('promotion-dashboard-modal-body');
+  const detail=createUiElement('div','promotion-detail');
+  const meta=createUiElement('div','promotion-detail-meta');
+  appendPromotionDetailRow(meta,'Promotion Code',group.promotionCode);
+  const brandRow=createUiElement('div','promotion-detail-row');
+  brandRow.append(createUiElement('small','','Brand'),renderBrandLogoElement(getPromotionBrandLogoKey(group)||group.brand,'detail',{className:'promotion-detail-brand-logo',fallbackLabel:group.brand||'-'}));
+  meta.appendChild(brandRow);
+  appendPromotionDetailRow(meta,'Status',getPromotionStatusDisplayText(group));
+  appendPromotionDetailRow(meta,'Start Date',group.hasPromotionDateRange?group.startDateLabel:PROMOTION_DATE_MISSING_TEXT);
+  appendPromotionDetailRow(meta,'End Date',group.hasPromotionDateRange?group.endDateLabel:PROMOTION_DATE_MISSING_TEXT);
+  appendPromotionDetailRow(meta,'Product Count',group.productCount);
+  detail.appendChild(meta);
+  const full=renderPromotionLinesElement(group.fullPromotionText||group.promotionText,'full','promotion-detail-full')||createUiElement('div','promotion-detail-full','-');
+  full.tabIndex=0;
+  detail.appendChild(full);
+  const actions=createUiElement('div','actions promotion-card-actions');
+  const closeButton=createUiElement('button','primary','Close');
+  closeButton.type='button';
+  closeButton.onclick=closeModal;
+  actions.appendChild(closeButton);
+  detail.appendChild(actions);
+  body.appendChild(detail);
+  modal.classList.remove('customer-modal');
+  modal.classList.add('product-promo-modal','promotion-dashboard-modal','show');
+  document.body.classList.add('product-promo-scroll-locked');
+  ensureProductPromoEscapeHandler();
+  const card=modal.querySelector('.modal-card');
+  if(card){
+    card.setAttribute('role','dialog');
+    card.setAttribute('aria-modal','true');
+    card.setAttribute('aria-labelledby','modalTitle');
+  }
+  setTimeout(()=>{try{closeButton.focus();}catch(error){}},0);
+}
+function closePromotionProductPanel(){
+  const panel=$('promotionProductPanel');
+  if(!panel)return;
+  panel.hidden=true;
+  panel.classList.add('hidden');
+  delete panel.dataset.promotionKey;
+  clearNode($('promotionProductList'));
+}
+function renderPromotionProductPanel(promotionKey){
+  const group=getPromotionDashboardGroupByKey(promotionKey);
+  const panel=$('promotionProductPanel');
+  const list=$('promotionProductList');
+  const title=$('promotionProductTitle');
+  if(!group||!panel||!list)return;
+  panel.hidden=false;
+  panel.classList.remove('hidden');
+  panel.dataset.promotionKey=group.promotionKey||'';
+  if(title)title.textContent='Products in '+(group.promotionCode||'Promotion');
+  clearNode(list);
+  group.products.forEach(product=>{
+    const item=normalizePromotionProductForDashboard(product);
+    const recordKey=registerProductRecordSelection(item,'promotion-dashboard');
+    const row=createUiElement('div','row promotion-product-row');
+    const brand=renderBrandLogoElement(item.brand,'compact',{className:'promotion-product-brand-logo'});
+    const main=createUiElement('div','promotion-product-main');
+    main.append(createUiElement('b','',item.productName||'-'),createUiElement('small','',(item.productCode||item.sku||item.productId||'-')+' · '+(item.unit||'-')));
+    const price=createUiElement('b','promotion-product-price',money(item.listPrice||item.price||0));
+    const button=createUiElement('button','tiny','View Product');
+    button.type='button';
+    button.setAttribute('aria-label','View product '+(item.productName||item.productCode||''));
+    button.addEventListener('click',()=>goToPromotionProduct(recordKey));
+    row.append(brand,main,price,button);
+    list.appendChild(row);
+  });
+  panel.scrollIntoView({behavior:'smooth',block:'nearest'});
+  const closeButton=panel.querySelector('button');
+  if(closeButton)try{closeButton.focus({preventScroll:true});}catch(error){}
+}
+async function goToPromotionProduct(recordKey){
+  const product=resolveProductRecordSelection(recordKey);
+  if(!product){toast('Product not found');return;}
+  const search=$('searchProducts');
+  if(search)search.value=product.productCode||product.sku||product.productId||product.productName||'';
+  const navResult=go('products');
+  if(navResult&&typeof navResult.then==='function')await navResult;
+  else if(!productsLoaded)await loadProducts({background:true});
+  if(search)search.value=product.productCode||product.sku||product.productId||product.productName||'';
+  renderProducts();
+  const identity=createProductIdentityKey(product);
+  setTimeout(()=>{
+    const cards=Array.from(document.querySelectorAll('#productGrid [data-product-identity-key]'));
+    const card=cards.find(node=>String(node.dataset.productIdentityKey||'')===identity);
+    if(card){
+      card.classList.add('promotion-product-highlight');
+      card.scrollIntoView({behavior:'smooth',block:'center'});
+      try{card.focus({preventScroll:true});}catch(error){}
+      setTimeout(()=>card.classList.remove('promotion-product-highlight'),2200);
+    }
+  },80);
+}
 function normalizeQuoteTypeForUi(value){
   const text=String(value||'').trim().toUpperCase();
   return text==='GYPROC'?'GYPROC':'WEBER';
@@ -1922,8 +3131,12 @@ function renderHome(){
   setText('statPending',metrics.draft.length);
   setText('rProducts',productCount);
   setText('rCustomers',customerCount);
-  setText('rPromos',DB.promotions.length);
+  const promotionSummary=PROMOTION_DASHBOARD.summary||buildPromotionDashboardSummary(getPromotionDashboardGroups());
+  setText('rPromos',promotionSummary.totalPromotions||0);
   setText('rQuotes',metrics.quotes.length);
+  if(canViewPromotionsUi()&&!promotionDashboardLoaded&&!promotionDashboardPromise){
+    loadPromotionDashboard({background:true});
+  }
   if(!quoteHistoryLoaded&&!quoteHistoryPromise&&(!Array.isArray(DB.quotes)||!DB.quotes.length)){
     ensureQuotationHistoryLoaded();
   }
@@ -1950,7 +3163,7 @@ function renderHistory(){
     const refJs=jsStringLiteralAttr(q.quoteId||q.quoteNo||'');
     const quoteNo=htmlAttr(q.quoteNo||'');
     const editAction=canEdit?`<button type="button" class="tiny" data-quote-edit-button data-quote-edit-source="quotation-history" data-quote-id="${refAttr}" data-quote-no="${quoteNo}" onclick="navigateToQuotationEdit(${refJs},event,{source:'quotation-history'})">แก้ไข</button>`:'';
-    return `<div class="row quote-history-row"><div><b>${escapeHtml(q.quoteNo||'-')}</b><br><small>${escapeHtml(q.customerName||'-')} · ${escapeHtml(q.customerId||'-')}</small></div><span class="quote-type-badge ${quoteTypeClassForUi(q.quoteType)}">${escapeHtml(quoteTypeLabelForUi(q.quoteType))}</span><span class="pill ${q.status==='CANCELLED'?'yellow':'blue'}">${escapeHtml(q.status||'-')}</span><span>${escapeHtml(formatDateTime(q.createdAt))}</span><b style="margin-left:auto">${money(q.grandTotal||q.total)}</b><button type="button" class="tiny" onclick="openQuotationDetail(${refJs})">เปิดดู</button>${editAction}</div>`;
+    return `<div class="row quote-history-row"><div><b>${escapeHtml(q.quoteNo||'-')}</b><br><small>${escapeHtml(q.customerName||'-')} · ${escapeHtml(q.customerId||'-')}</small></div>${renderBrandLogoHtml(q.quoteType,'compact',{className:'quote-history-brand-logo'})}${renderStatusBadgeHtml(q.status,statusBadgeVariantForUi(q.status),{ariaLabel:'สถานะใบเสนอราคา: '+(q.status||'-')})}<span>${escapeHtml(formatDateTime(q.createdAt))}</span><b style="margin-left:auto">${money(q.grandTotal||q.total)}</b><button type="button" class="tiny" onclick="openQuotationDetail(${refJs})">เปิดดู</button>${editAction}</div>`;
   }).join(''):'<p style="color:var(--muted)">ยังไม่มีใบเสนอราคา</p>';
 }
 async function refreshQuotationHistory(options){
@@ -2019,7 +3232,7 @@ function buildQuotationDetailHtml(data){
     `<button type="button" class="yellow" onclick="cancelQuotationFromHistory(${quoteIdJs})">Cancel</button>`
   ].join(''):'';
   const actionsHtml=(exportActions||editActions)?`<div class="actions no-print">${exportActions}${editActions}</div>`:'';
-  return `<div class="section-title"><div><h2>${escapeHtml(quote.quoteNo||quote.quoteId||'-')}</h2><p style="color:var(--muted);margin:4px 0 0">${escapeHtml(quote.customerName||'-')} · ${escapeHtml(quote.customerId||'-')}</p></div><span class="pill ${quote.status==='CANCELLED'?'yellow':'blue'}">${escapeHtml(quote.status||'-')}</span></div><div class="quote-detail-meta"><span>วันที่: ${escapeHtml(formatDateTime(quote.createdAt))}</span><span>ยอดสุทธิ: ${money(totals.grandTotal||quote.grandTotal)}</span></div><div class="list quote-detail-lines">${lines.length?lines.map((line,index)=>`<div class="row"><div><b>${escapeHtml(line.productName||'-')}</b><br><small>${escapeHtml(line.productId||'-')} · ${escapeHtml(line.unit||'-')}</small></div><span>จำนวน ${escapeHtml(line.qty||0)}</span><span>ราคา ${money(line.listPrice)}</span><span>ส่วนลด ${escapeHtml(line.discountPercent||0)}%</span><b style="margin-left:auto">${money(line.grandTotal||line.lineTotal)}</b></div>`).join(''):'<p style="color:var(--muted)">ไม่มีรายการสินค้า</p>'}</div><div class="quote-total-box"><p>Subtotal <b>${money(totals.subtotal||quote.subtotal)}</b></p><p>VAT <b>${money(totals.vat||quote.vat)}</b></p><p>Grand Total <b>${money(totals.grandTotal||quote.grandTotal)}</b></p></div>${actionsHtml}`;
+  return `<div class="section-title"><div><h2>${escapeHtml(quote.quoteNo||quote.quoteId||'-')}</h2><p style="color:var(--muted);margin:4px 0 0">${escapeHtml(quote.customerName||'-')} · ${escapeHtml(quote.customerId||'-')}</p></div>${renderStatusBadgeHtml(quote.status,statusBadgeVariantForUi(quote.status),{ariaLabel:'สถานะใบเสนอราคา: '+(quote.status||'-')})}</div><div class="quote-detail-meta"><span>วันที่: ${escapeHtml(formatDateTime(quote.createdAt))}</span><span>ยอดสุทธิ: ${money(totals.grandTotal||quote.grandTotal)}</span></div><div class="list quote-detail-lines">${lines.length?lines.map((line,index)=>`<div class="row"><div><b>${escapeHtml(line.productName||'-')}</b><br><small>${escapeHtml(line.productId||'-')} · ${escapeHtml(line.unit||'-')}</small></div><span>จำนวน ${escapeHtml(line.qty||0)}</span><span>ราคา ${money(line.listPrice)}</span><span>ส่วนลด ${escapeHtml(line.discountPercent||0)}%</span><b style="margin-left:auto">${money(line.grandTotal||line.lineTotal)}</b></div>`).join(''):'<p style="color:var(--muted)">ไม่มีรายการสินค้า</p>'}</div><div class="quote-total-box"><p>Subtotal <b>${money(totals.subtotal||quote.subtotal)}</b></p><p>VAT <b>${money(totals.vat||quote.vat)}</b></p><p>Grand Total <b>${money(totals.grandTotal||quote.grandTotal)}</b></p></div>${actionsHtml}`;
 }
 function renderQuotationDetail(data){
   const box=$('quoteDetail');
@@ -2811,6 +4024,7 @@ closeModal=function(){
   baseCloseModalForCustomerLayout();
   deactivateCustomerModalLayout();
   deactivateProductPromotionModal();
+  deactivatePromotionDashboardModal();
 };
 const baseSaveCustomerModalForCustomerLayout=saveCustomerModal;
 saveCustomerModal=async function(existingId){
@@ -2882,12 +4096,89 @@ async function saveModal(type){
 }
 function toast(msg, options){if(typeof showToast==='function')return showToast(Object.assign({type:'info',message:msg},options||{}));const el=document.getElementById('toast'); if(!el)return; el.textContent=msg; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),2600)}
 
+const CUSTOMER_FAVORITE_PENDING=new Set();
+const CUSTOMER_ACTION_PENDING=new Set();
 function isFavoriteCustomer(customerId){return FAVORITE_CUSTOMERS.some(c=>String(c.customerId||'')===String(customerId||''))}
+function isCustomerFavoritePending(customerId){return CUSTOMER_FAVORITE_PENDING.has(String(customerId||''))}
+function getCustomerActionId(customer){
+  return String(customer&& (customer.customerId||customer.customerCode||customer.id) || '').trim();
+}
+function findCustomerForAction(customerId){
+  const id=String(customerId||'').trim();
+  if(!id)return null;
+  return (Array.isArray(DB.customers)?DB.customers:[]).find(customer=>{
+    return [customer.customerId,customer.customerCode,customer.id].some(value=>String(value||'').trim()===id);
+  })||null;
+}
+function renderCustomerActionButtonHtml(options){
+  const opts=options||{};
+  const action=String(opts.action||'').replace(/[^a-z0-9_-]/gi,'').toLowerCase();
+  const id=String(opts.customerId||'').trim();
+  const variant=String(opts.variant||'secondary').replace(/[^a-z0-9_-]/gi,'').toLowerCase()||'secondary';
+  const icon=String(opts.icon||'info').replace(/[^a-z0-9_]/gi,'')||'info';
+  const label=String(opts.label||opts.title||action||'Action').trim();
+  const disabled=opts.disabled?' disabled aria-disabled="true"':'';
+  const active=opts.pressed?' is-active':'';
+  const loading=opts.loading?' is-loading':'';
+  return `<button type="button" class="icon-action-button icon-action-${htmlAttr(variant)}${active}${loading}" data-customer-action="${htmlAttr(action)}" data-customer-id="${htmlAttr(id)}" aria-label="${htmlAttr(opts.ariaLabel||label)}" title="${htmlAttr(opts.title||label)}"${opts.pressed!==undefined?' aria-pressed="'+String(!!opts.pressed)+'"':''}${disabled}><span class="material-symbols-rounded" aria-hidden="true">${escapeHtml(icon)}</span><span class="sr-only">${escapeHtml(label)}</span></button>`;
+}
+function customerDetailRowHtml(label,value){
+  const text=String(value||'').trim()||'-';
+  return `<div class="customer-detail-row"><small>${escapeHtml(label)}</small><b>${escapeHtml(text)}</b></div>`;
+}
+function openCustomerDetailsModal(customerId){
+  const id=String(customerId||'').trim();
+  if(!id){
+    toast('ไม่พบรหัสร้านค้า');
+    return {ok:false,code:'CUSTOMER_ID_REQUIRED'};
+  }
+  const customer=findCustomerForAction(id);
+  if(!customer){
+    toast('ไม่พบข้อมูลร้านค้า หรืออยู่นอกสิทธิ์การเข้าถึง');
+    return {ok:false,code:'CUSTOMER_NOT_FOUND'};
+  }
+  const modal=$('modal'),title=$('modalTitle'),body=$('modalBody');
+  if(!modal||!title||!body){
+    toast('ไม่สามารถเปิดรายละเอียดร้านค้าได้');
+    return {ok:false,code:'CUSTOMER_MODAL_NOT_FOUND'};
+  }
+  if(typeof deactivateCustomerModalLayout==='function')deactivateCustomerModalLayout();
+  title.textContent='รายละเอียดร้านค้า';
+  const detailId=htmlAttr(getCustomerActionId(customer));
+  const assignedSales=String(customer.assignedSalesNameSnapshot||customer.assignedSalesUsername||customer.assignedSalesUserId||'').trim();
+  const location=[customer.province,customer.district].map(value=>String(value||'').trim()).filter(Boolean).join(' / ');
+  const quoteAction=canCreateQuotationsUi()?`<button type="button" class="primary" data-customer-action="quote" data-customer-id="${detailId}">ออกใบเสนอราคา</button>`:'';
+  body.innerHTML=`<div class="customer-detail">
+    <div class="customer-detail-header"><div><h3>${escapeHtml(customer.customerName||'-')}</h3><p>${escapeHtml(customer.customerCode||customer.customerId||customer.id||'-')}</p></div><div class="customer-brand-badges">${customerBrandBadgesHtml(customer)}</div></div>
+    <div class="customer-detail-grid">
+      ${customerDetailRowHtml('เขตการดูแล',customer.salesArea)}
+      ${customerDetailRowHtml('Sales ผู้ดูแล',assignedSales)}
+      ${customerDetailRowHtml('ประเภท',customer.customerType)}
+      ${customerDetailRowHtml('จังหวัด/อำเภอ',location)}
+      ${customerDetailRowHtml('โทร',customer.phone)}
+      ${customerDetailRowHtml('ที่อยู่',customer.address)}
+      ${customerDetailRowHtml('หมายเหตุ',customer.notes)}
+    </div>
+    ${quoteAction?`<div class="actions customer-detail-actions">${quoteAction}</div>`:''}
+  </div>`;
+  modal.classList.add('show');
+  const card=modal.querySelector('.modal-card');
+  if(card){
+    card.setAttribute('role','dialog');
+    card.setAttribute('aria-modal','true');
+    card.setAttribute('aria-labelledby','modalTitle');
+  }
+  return {ok:true,data:customer};
+}
 function renderCustomerCard(c,isFavorite){
-  const idAttr=htmlAttr(c.customerId||'');
-  const idJs=jsStringLiteralAttr(c.customerId||'');
-  const quoteButton=currentRole()==='VIEWER'?'':`<button type="button" class="ghost" onclick="selectCustomer(${idJs})">ออกใบเสนอราคา</button>`;
-  return `<div class="card ${isFavorite?'favorite-card':''}" ${isFavorite?`draggable="true" data-customer-id="${idAttr}"`:''}>
+  const customerId=getCustomerActionId(c);
+  const idAttr=htmlAttr(customerId);
+  const customerName=String(c.customerName||c.customerCode||c.customerId||'ร้านค้า').trim();
+  const detailButton=renderCustomerActionButtonHtml({action:'detail',customerId:customerId,icon:'info',variant:'primary',label:'รายละเอียด',ariaLabel:'ดูรายละเอียดร้าน '+customerName,title:'รายละเอียด'});
+  const editButton=canEditCustomers()?renderCustomerActionButtonHtml({action:'edit',customerId:customerId,icon:'edit',variant:'secondary',label:'แก้ไขข้อมูล',ariaLabel:'แก้ไขข้อมูลร้าน '+customerName,title:'แก้ไขข้อมูล'}):'';
+  const favoritePending=isCustomerFavoritePending(customerId);
+  const favoriteButton=renderCustomerActionButtonHtml({action:'favorite',customerId:customerId,icon:isFavorite?'star':'star_outline',variant:'favorite',label:isFavorite?'นำออกจากร้านค้าโปรด':'เพิ่มในร้านค้าโปรด',ariaLabel:(isFavorite?'นำร้าน ':'เพิ่มร้าน ')+customerName+(isFavorite?' ออกจากร้านค้าโปรด':' เป็นร้านค้าโปรด'),title:isFavorite?'นำออกจากร้านค้าโปรด':'เพิ่มในร้านค้าโปรด',pressed:!!isFavorite,loading:favoritePending,disabled:favoritePending});
+  return `<div class="card ${isFavorite?'favorite-card':''}" data-customer-id="${idAttr}" ${isFavorite?'draggable="true"':''}>
     <div class="customer-card-head"><h3>${escapeHtml(c.customerName||'-')}</h3><div class="customer-brand-badges">${customerBrandBadgesHtml(c)}</div></div>
     <p>รหัสร้านค้า: ${escapeHtml(c.customerCode||c.customerId||c.id||'-')}</p>
     <p>เขตการดูแล: ${escapeHtml(c.salesArea||'-')}${(c.assignedSalesNameSnapshot||c.assignedSalesUsername)?` · Sales: ${escapeHtml(c.assignedSalesNameSnapshot||c.assignedSalesUsername)}`:''}</p>
@@ -2896,8 +4187,7 @@ function renderCustomerCard(c,isFavorite){
     <p>โทร: ${renderPhoneLink(c.phone)||'-'}</p>
     <p>ที่อยู่: ${escapeHtml(c.address||'-')}</p>
     <p>หมายเหตุ: ${escapeHtml(c.notes||'-')}</p>
-    <div class="customer-actions">${quoteButton}${canEditCustomers()?`<button type="button" class="ghost" onclick="openCustomerEditModal(${idJs})">✏️ แก้ไขข้อมูล</button>`:''}</div>
-    <button type="button" class="favorite-toggle" onclick="toggleFavoriteCustomer(${idJs})">${isFavorite?'⭐ ยกเลิกปักหมุด':'☆ เพิ่มในร้านค้าโปรด'}</button>
+    <div class="customer-actions card-action-row">${detailButton}${editButton}${favoriteButton}</div>
   </div>`;
 }
 function renderFavoriteCustomers(){
@@ -2909,6 +4199,7 @@ function renderFavoriteCustomers(){
   if(q){box.querySelectorAll('[draggable]').forEach(card=>card.removeAttribute('draggable'))}else{bindFavoriteDragAndDrop()}
 }
 function renderCustomers(){
+  bindCustomerCardActions();
   ensureCustomerCrmUi();
   let q=$('customerSearch')?.value||'';
   let brand=($('customerTypeFilter')?.value||'');
@@ -2981,20 +4272,284 @@ async function loadFavoriteCustomers(options){
   });
   return favoriteCustomersPromise;
 }
-async function toggleFavoriteCustomer(customerId){const favorite=isFavoriteCustomer(customerId);if(!favorite&&FAVORITE_CUSTOMERS.length>=5){toast('สามารถปักร้านค้าโปรดได้สูงสุด 5 ร้าน');return;}const response=await callApi(favorite?'removeFavoriteCustomer':'addFavoriteCustomer',{customerId:customerId});toast(response.message||(response.ok?'บันทึกแล้ว':'บันทึกไม่สำเร็จ'));if(response.ok)await loadFavoriteCustomers()}
+async function toggleFavoriteCustomer(customerId){
+  const id=String(customerId||'').trim();
+  if(!id){
+    toast('ไม่พบรหัสร้านค้า');
+    return {ok:false,code:'CUSTOMER_ID_REQUIRED'};
+  }
+  if(CUSTOMER_FAVORITE_PENDING.has(id))return {ok:false,code:'CUSTOMER_FAVORITE_PENDING'};
+  const customer=findCustomerForAction(id);
+  if(!customer){
+    toast('ไม่พบข้อมูลร้านค้า หรืออยู่นอกสิทธิ์การเข้าถึง');
+    return {ok:false,code:'CUSTOMER_NOT_FOUND'};
+  }
+  const favorite=isFavoriteCustomer(id);
+  if(!favorite&&FAVORITE_CUSTOMERS.length>=5){
+    toast('สามารถปักร้านค้าโปรดได้สูงสุด 5 ร้าน');
+    return {ok:false,code:'CUSTOMER_FAVORITE_LIMIT'};
+  }
+  const previousRows=FAVORITE_CUSTOMER_ROWS.slice();
+  const previousCustomers=FAVORITE_CUSTOMERS.slice();
+  CUSTOMER_FAVORITE_PENDING.add(id);
+  if(favorite){
+    FAVORITE_CUSTOMER_ROWS=FAVORITE_CUSTOMER_ROWS.filter(row=>String(row.customerId||'').trim()!==id);
+    FAVORITE_CUSTOMERS=FAVORITE_CUSTOMERS.filter(item=>String(getCustomerActionId(item)).trim()!==id);
+  }else{
+    FAVORITE_CUSTOMERS=FAVORITE_CUSTOMERS.concat([Object.assign({},customer,{sortOrder:FAVORITE_CUSTOMERS.length+1})]);
+  }
+  renderCustomers();
+  try{
+    const response=await callApi(favorite?'removeFavoriteCustomer':'addFavoriteCustomer',{customerId:id});
+    if(!response||!response.ok){
+      FAVORITE_CUSTOMER_ROWS=previousRows;
+      FAVORITE_CUSTOMERS=previousCustomers;
+      toast(response&&response.message?response.message:'บันทึกไม่สำเร็จ');
+      renderCustomers();
+      return response||{ok:false,code:'CUSTOMER_FAVORITE_FAILED'};
+    }
+    toast(response.message||'บันทึกแล้ว');
+    if(response.ok)await loadFavoriteCustomers();
+    return response;
+  }catch(error){
+    FAVORITE_CUSTOMER_ROWS=previousRows;
+    FAVORITE_CUSTOMERS=previousCustomers;
+    console.warn('[CUSTOMER_ACTION] favorite update failed',{customerId:id,message:String(error&&error.message?error.message:error)});
+    toast('บันทึกร้านค้าโปรดไม่สำเร็จ');
+    return {ok:false,message:String(error&&error.message?error.message:error)};
+  }finally{
+    CUSTOMER_FAVORITE_PENDING.delete(id);
+    renderCustomers();
+  }
+}
+function setCustomerActionButtonBusy(button,busy){
+  if(!button)return;
+  button.classList.toggle('is-loading',!!busy);
+  if(busy){
+    button.dataset.wasDisabled=button.disabled?'true':'false';
+    button.disabled=true;
+    button.setAttribute('aria-disabled','true');
+    button.setAttribute('aria-busy','true');
+  }else{
+    if(button.dataset.wasDisabled!=='true')button.disabled=false;
+    if(button.dataset.wasDisabled!=='true')button.removeAttribute('aria-disabled');
+    button.removeAttribute('aria-busy');
+    delete button.dataset.wasDisabled;
+  }
+}
+async function handleCustomerAction(action,customerId,button){
+  const id=String(customerId||'').trim();
+  const normalizedAction=String(action||'').trim().toLowerCase();
+  if(!normalizedAction)return {ok:false,code:'CUSTOMER_ACTION_REQUIRED'};
+  if(!id){
+    toast('ไม่พบรหัสร้านค้า');
+    return {ok:false,code:'CUSTOMER_ID_REQUIRED'};
+  }
+  const pendingKey=normalizedAction+':'+id;
+  if(CUSTOMER_ACTION_PENDING.has(pendingKey))return {ok:false,code:'CUSTOMER_ACTION_PENDING'};
+  CUSTOMER_ACTION_PENDING.add(pendingKey);
+  setCustomerActionButtonBusy(button,true);
+  try{
+    if(normalizedAction==='detail'){
+      return openCustomerDetailsModal(id);
+    }
+    if(normalizedAction==='edit'){
+      if(!canEditCustomers()){
+        toast('คุณไม่มีสิทธิ์แก้ไขข้อมูลร้านค้า');
+        return {ok:false,code:'CUSTOMER_EDIT_FORBIDDEN'};
+      }
+      const customer=findCustomerForAction(id);
+      if(!customer){
+        toast('ไม่พบข้อมูลร้านค้า หรืออยู่นอกสิทธิ์การเข้าถึง');
+        return {ok:false,code:'CUSTOMER_NOT_FOUND'};
+      }
+      openCustomerEditModal(id);
+      return {ok:true,data:customer};
+    }
+    if(normalizedAction==='favorite'){
+      return await toggleFavoriteCustomer(id);
+    }
+    if(normalizedAction==='quote'){
+      if(!canCreateQuotationsUi()){
+        toast('ไม่มีสิทธิ์ออกใบเสนอราคา');
+        return {ok:false,code:'QUOTE_CREATE_FORBIDDEN'};
+      }
+      if(typeof window.selectCustomer!=='function'){
+        toast('ไม่สามารถเปิดใบเสนอราคาได้');
+        return {ok:false,code:'QUOTE_HANDLER_MISSING'};
+      }
+      closeModal();
+      return await window.selectCustomer(id);
+    }
+    toast('ไม่รู้จักคำสั่งร้านค้า');
+    return {ok:false,code:'CUSTOMER_ACTION_UNKNOWN'};
+  }catch(error){
+    console.warn('[CUSTOMER_ACTION]',{action:normalizedAction,customerId:id,message:String(error&&error.message?error.message:error)});
+    toast('ดำเนินการร้านค้าไม่สำเร็จ');
+    return {ok:false,message:String(error&&error.message?error.message:error)};
+  }finally{
+    CUSTOMER_ACTION_PENDING.delete(pendingKey);
+    setCustomerActionButtonBusy(button,false);
+  }
+}
+function handleCustomerCardActionClick(event){
+  const button=event.target&&event.target.closest?event.target.closest('[data-customer-action]'):null;
+  if(!button)return;
+  event.preventDefault();
+  event.stopPropagation();
+  if(button.disabled||button.getAttribute('aria-disabled')==='true')return;
+  handleCustomerAction(button.dataset.customerAction,button.dataset.customerId,button);
+}
+function bindCustomerCardActions(){
+  if(window.__customerCardActionsBound)return;
+  document.addEventListener('click',handleCustomerCardActionClick);
+  window.__customerCardActionsBound=true;
+}
 async function persistFavoriteOrder(){const grid=$('favoriteCustomerGrid');if(!grid)return;const customerIds=Array.from(grid.querySelectorAll('[data-customer-id]')).map(el=>el.dataset.customerId);const response=await callApi('reorderFavoriteCustomers',{customerIds:customerIds});if(!response.ok){toast(response.message||'จัดลำดับไม่สำเร็จ');await loadFavoriteCustomers();return;}const map=new Map(FAVORITE_CUSTOMERS.map(c=>[String(c.customerId),c]));FAVORITE_CUSTOMERS=customerIds.map(id=>map.get(id)).filter(Boolean)}
 function bindFavoriteDragAndDrop(){const grid=$('favoriteCustomerGrid');if(!grid||grid.dataset.bound)return;grid.dataset.bound='true';let dragged=null;grid.addEventListener('dragstart',event=>{dragged=event.target.closest('.favorite-card');if(!dragged)return;dragged.classList.add('is-dragging');event.dataTransfer.effectAllowed='move'});grid.addEventListener('dragover',event=>{event.preventDefault();const target=event.target.closest('.favorite-card');if(dragged&&target&&target!==dragged)grid.insertBefore(dragged,target)});grid.addEventListener('dragend',()=>{if(dragged)dragged.classList.remove('is-dragging');dragged=null;persistFavoriteOrder()});let timer=null,touchCard=null;grid.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'||event.target.closest('button,a'))return;touchCard=event.target.closest('.favorite-card');if(touchCard)timer=setTimeout(()=>{touchCard.classList.add('is-dragging');touchCard.setPointerCapture(event.pointerId)},350)});grid.addEventListener('pointermove',event=>{if(!touchCard||!touchCard.classList.contains('is-dragging'))return;event.preventDefault();const target=document.elementFromPoint(event.clientX,event.clientY)?.closest('.favorite-card');if(target&&target!==touchCard)grid.insertBefore(touchCard,target)});const finish=()=>{clearTimeout(timer);if(touchCard&&touchCard.classList.contains('is-dragging')){touchCard.classList.remove('is-dragging');persistFavoriteOrder()}touchCard=null};grid.addEventListener('pointerup',finish);grid.addEventListener('pointercancel',finish)}
+
+function findProductForAction(productId){
+  const id=String(productId||'').trim();
+  if(!id)return null;
+  const calculatorRecord=resolveProductCalculatorRecord(id);
+  if(calculatorRecord&&calculatorRecord.product)return calculatorRecord.product;
+  const selectionRecord=resolveProductRecordSelection(id);
+  if(selectionRecord)return selectionRecord;
+  const normalized=normalizeQuoteProductPreferenceId(id);
+  const lists=[DB.products,FAVORITE_PRODUCTS,PINNED_PRODUCTS];
+  for(let i=0;i<lists.length;i++){
+    const list=Array.isArray(lists[i])?lists[i]:[];
+    const product=list.find(item=>{
+      if(!item||typeof item!=='object')return false;
+      return [getQuoteProductPreferenceId(item),item.productId,item.sku,item.productCode,item.id,item.itemCode].some(value=>normalizeQuoteProductPreferenceId(value)===normalized);
+    });
+    if(product)return product;
+  }
+  return null;
+}
+function getProductReferenceFromActionButton(button){
+  const data=button&&button.dataset?button.dataset:{};
+  return String(data.productRecordKey||data.sourceProductRecordKey||data.productId||'').trim();
+}
+function setProductActionButtonBusy(button,busy){
+  if(!button)return;
+  button.classList.toggle('is-loading',!!busy);
+  if(busy){
+    button.dataset.wasDisabled=button.disabled?'true':'false';
+    button.disabled=true;
+    button.setAttribute('aria-disabled','true');
+    button.setAttribute('aria-busy','true');
+  }else{
+    if(button.dataset.wasDisabled!=='true'){
+      button.disabled=false;
+      button.removeAttribute('aria-disabled');
+    }
+    button.removeAttribute('aria-busy');
+    delete button.dataset.wasDisabled;
+  }
+}
+function renderProductActionSurfaces(){
+  if($('productGrid'))renderProducts();
+  if($('productPicker')&&typeof renderQuoteProductPicker==='function')renderQuoteProductPicker();
+}
+async function handleProductAction(action,button){
+  const normalizedAction=String(action||'').trim().toLowerCase();
+  if(!normalizedAction)return {ok:false,code:'PRODUCT_ACTION_REQUIRED'};
+  const reference=getProductReferenceFromActionButton(button);
+  const product=findProductForAction(reference);
+  const productId=String(product&&getQuoteProductPreferenceId(product)||button&&button.dataset&&button.dataset.productId||'').trim();
+  if(!reference&&!productId){
+    toast('ไม่พบรหัสสินค้า');
+    return {ok:false,code:'PRODUCT_REFERENCE_REQUIRED'};
+  }
+  if(!product){
+    toast('ไม่พบข้อมูลสินค้า กรุณารีเฟรชรายการสินค้า');
+    return {ok:false,code:'PRODUCT_REFERENCE_NOT_FOUND'};
+  }
+  const pendingKey=normalizedAction+':'+(reference||productId);
+  if(PRODUCT_ACTION_PENDING.has(pendingKey))return {ok:false,code:'PRODUCT_ACTION_PENDING'};
+  PRODUCT_ACTION_PENDING.add(pendingKey);
+  setProductActionButtonBusy(button,true);
+  try{
+    if(normalizedAction==='favorite'){
+      return await toggleFavoriteProduct(productId||getQuoteProductPreferenceId(product));
+    }
+    if(normalizedAction==='add'){
+      if(!canCreateQuotationsUi()){
+        toast('ไม่มีสิทธิ์เพิ่มสินค้าในใบเสนอราคา');
+        return {ok:false,code:'QUOTE_CREATE_FORBIDDEN'};
+      }
+      if(typeof window.addProductToQuoteByReference!=='function'){
+        return await addProductCardToQuote(reference||productId,{target:button,preventDefault:function(){},stopPropagation:function(){}});
+      }
+      return await window.addProductToQuoteByReference(button,button&&button.dataset&&button.dataset.productSource||'SEARCH',1);
+    }
+    toast('ไม่รู้จักคำสั่งสินค้า');
+    return {ok:false,code:'PRODUCT_ACTION_UNKNOWN'};
+  }catch(error){
+    console.warn('[PRODUCT_ACTION]',{action:normalizedAction,productReference:reference||productId,message:String(error&&error.message?error.message:error)});
+    toast('ดำเนินการสินค้าไม่สำเร็จ');
+    return {ok:false,message:String(error&&error.message?error.message:error)};
+  }finally{
+    PRODUCT_ACTION_PENDING.delete(pendingKey);
+    setProductActionButtonBusy(button,false);
+  }
+}
+function handleProductCardActionClick(event){
+  const button=event.target&&event.target.closest?event.target.closest('[data-product-action]'):null;
+  if(!button)return;
+  event.preventDefault();
+  event.stopPropagation();
+  if(button.disabled||button.getAttribute('aria-disabled')==='true')return;
+  handleProductAction(button.dataset.productAction,button);
+}
+function bindProductCardActions(){
+  if(window.__productCardActionsBound)return;
+  document.addEventListener('click',handleProductCardActionClick);
+  window.__productCardActionsBound=true;
+}
+const PRODUCT_CARD_INTERACTIVE_SELECTOR='button,a,input,select,textarea,[data-action],[data-product-action],[role="button"]';
+function isProductCardInteractiveClick(event){
+  const target=event&&event.target;
+  const card=event&&event.currentTarget;
+  if(!target||!target.closest)return false;
+  const interactive=target.closest(PRODUCT_CARD_INTERACTIVE_SELECTOR);
+  return Boolean(interactive&&interactive!==card&&(!card||card.contains(interactive)));
+}
+function handleProductCardCalculatorClick(event,recordKey){
+  if(isProductCardInteractiveClick(event))return false;
+  openProductCalculator(recordKey);
+  return true;
+}
 
 function renderProductCard(product,sourceListIndex){
   const p=product&&typeof product==='object'?product:{};
   const recordKey=registerProductCalculatorRecord(p,sourceListIndex);
   const key=htmlAttr(recordKey);
   const keyJs=jsStringLiteralAttr(recordKey);
-  const brandClass=normalizeProductBusinessUnitForUi(p)==='WEBER'||p.brand==='Weber'?'yellow':'blue';
+  const identity=htmlAttr(createProductIdentityKey(p));
+  const productId=getQuoteProductPreferenceId(p);
+  const isFavorite=getFavoriteProductIdSet().has(normalizeQuoteProductPreferenceId(productId));
+  const favoritePending=PRODUCT_FAVORITE_PENDING.has(normalizeQuoteProductPreferenceId(productId));
+  const canManagePreferences=canManageQuoteProductPreferences();
+  const canAddToQuote=canCreateQuotationsUi();
+  const productName=String(p.productName||p.name||getProductDisplayCode(p)||'สินค้า').trim()||'สินค้า';
+  const productCode=getProductDisplayCode(p)||'-';
+  const unit=String(p.unit||'-').trim()||'-';
+  const brand=getProductDisplayBrandText(p);
+  const meta=[brand,productCode,unit].filter(Boolean).map(escapeHtml).join(' · ');
+  const listPrice=Number(String(p.listPrice||0).replace(/,/g,''));
+  const priceHtml=listPrice>0?money(listPrice):'<span class="quote-product-missing-price">ยังไม่มีราคา</span>';
   const promoHtml=renderProductPromotionTeaser(p,recordKey,'product-list');
-  return `<div class="card product-card-clickable" role="button" tabindex="0" data-product-record-key="${key}" onclick="openProductCalculator(${keyJs})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProductCalculator(${keyJs})}"><span class="pill ${brandClass}">${escapeHtml(p.brand||'-')}</span><h3>${escapeHtml(p.productName||'-')}</h3><p>รหัสสินค้า: ${escapeHtml(p.sku||p.productId||p.id||'-')}</p><p>${escapeHtml(p.unit||'-')}</p><b>${money(p.listPrice)}</b>${promoHtml}<div class="product-card-actions"><button type="button" class="ghost" onclick="addProductCardToQuote(${keyJs},event)">เพิ่มลงใบเสนอราคา</button></div></div>`;
+  const favoriteButton=canManagePreferences?renderIconActionButtonHtml({icon:isFavorite?'star':'star_outline',variant:'favorite',label:isFavorite?'นำออกจากสินค้ารายการโปรด':'เพิ่มในสินค้ารายการโปรด',ariaLabel:(isFavorite?'นำสินค้า ':'เพิ่มสินค้า ')+productName+(isFavorite?' ออกจากสินค้ารายการโปรด':' เป็นสินค้ารายการโปรด'),title:isFavorite?'นำออกจากสินค้ารายการโปรด':'เพิ่มในสินค้ารายการโปรด',pressed:!!isFavorite,loading:favoritePending,disabled:favoritePending,attributes:{'data-product-action':'favorite','data-product-id':productId,'data-product-record-key':recordKey,'data-product-source':'PRODUCT_LIST'}}):'';
+  const addButton=canAddToQuote?createAddProductButton({attributes:{'data-product-action':'add','data-product-id':productId,'data-product-record-key':recordKey,'data-product-source':'PRODUCT_LIST'}}):'';
+  return `<div class="card product-card product-card-clickable" role="button" tabindex="0" data-product-id="${htmlAttr(productId)}" data-product-record-key="${key}" data-product-identity-key="${identity}" onclick="handleProductCardCalculatorClick(event,${keyJs})" onkeydown="if(event.currentTarget===event.target&&(event.key==='Enter'||event.key===' ')){event.preventDefault();openProductCalculator(${keyJs})}">
+    <div class="product-card-main">${renderProductThumbnailHtml(p,{variant:'card',className:'product-card-thumbnail'})}<div class="product-card-info"><h3 class="product-card-title">${escapeHtml(productName)}</h3><p class="product-card-meta">${meta||'-'}</p><b class="product-card-price">${priceHtml}</b></div></div>
+    ${promoHtml?`<div class="product-card-promotion">${promoHtml}</div>`:''}
+    ${(favoriteButton||addButton)?`<div class="product-card-action-bar">${favoriteButton}<span class="product-card-action-spacer"></span>${addButton}</div>`:''}
+  </div>`;
 }
-function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); if(!productsLoaded&&!DB.products.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} resetProductCalculatorRecordRegistry(); grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>renderProductCard(p,DB.products.indexOf(p))).join('')}
+function renderProducts(){bindProductCardActions();let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); if(!productsLoaded&&!DB.products.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} resetProductCalculatorRecordRegistry(); grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>renderProductCard(p,DB.products.indexOf(p))).join('')}
 
 function renderQuoteCustomerPicker(forceShow){
   const picker=$('quoteCustomerPicker'),input=$('quoteCustomerSearch');
@@ -3015,6 +4570,7 @@ function renderQuoteCustomerPicker(forceShow){
 }
 
 function renderQuoteProductPicker(){
+  bindProductCardActions();
   const requestId=++quoteProductSearchSequence;
   ensureProductPreferenceContainers();
   if(!productPreferencesLoaded&&!productPreferencesPromise&&USER)loadProductPreferences();
@@ -3143,7 +4699,7 @@ renderAll=function(){baseRenderAllForAuth();renderUsers();applyRolePermissions()
 const baseGoForAuth=go;
 go=function(page,btn){if(!canAccessPage(page)){toast('ไม่มีสิทธิ์เข้าใช้งานหน้านี้');return;}const result=baseGoForAuth(page,btn);applyRolePermissions();return result;};
 const baseEnsurePageDataForAuth=ensurePageData;
-ensurePageData=function(page){if(page==='users'){return loadUsers();}if(page==='customers'){return baseEnsurePageDataForAuth(page).then(response=>{scheduleFavoriteCustomersLoad();return response;});}if(page==='quote'){return Promise.all([baseEnsurePageDataForAuth(page),loadProductPreferences()]).then(async responses=>{if(typeof window.initializePendingQuotationContext==='function'){const pending=await window.initializePendingQuotationContext();if(pending&&pending.ok===false)return pending;}if(typeof window.initializeQuotationDraftRecovery==='function'){const recovery=await window.initializeQuotationDraftRecovery();if(recovery&&recovery.ok===false)return recovery;}return {ok:true,data:responses};});}return baseEnsurePageDataForAuth(page);};
+ensurePageData=function(page){if(page==='users'){return loadUsers();}if(page==='customers'){return baseEnsurePageDataForAuth(page).then(response=>{scheduleFavoriteCustomersLoad();return response;});}if(page==='products'){return Promise.all([baseEnsurePageDataForAuth(page),loadProductPreferences()]).then(responses=>{renderProducts();return {ok:true,data:responses};});}if(page==='quote'){return Promise.all([baseEnsurePageDataForAuth(page),loadProductPreferences()]).then(async responses=>{if(typeof window.initializePendingQuotationContext==='function'){const pending=await window.initializePendingQuotationContext();if(pending&&pending.ok===false)return pending;}if(typeof window.initializeQuotationDraftRecovery==='function'){const recovery=await window.initializeQuotationDraftRecovery();if(recovery&&recovery.ok===false)return recovery;}return {ok:true,data:responses};});}return baseEnsurePageDataForAuth(page);};
 async function loadUsers(){
   if(['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0)return {ok:false,message:'Insufficient permission'};
   const response=await callApi('loadUsers',{});
@@ -3253,8 +4809,12 @@ function renderQuoteProductPreferenceCard(product,options){
   const listPrice=Number(String(item.listPrice||0).replace(/,/g,''));
   const priceHtml=listPrice>0?money(listPrice):'<span class="quote-product-missing-price">ยังไม่มีราคา</span>';
   const promoHtml=renderProductPromotionTeaser(item,recordKey,'quote-product');
-  const actions=canManageQuoteProductPreferences()?`<div class="quote-product-actions" data-no-drag><button type="button" class="quote-product-pref-button ${item.isFavoriteProduct?'is-active':''}" data-no-drag onclick='toggleFavoriteProduct(${jsId})'>${item.isFavoriteProduct?'♥':'♡'}</button><button type="button" class="quote-product-pref-button ${item.isPinnedProduct?'is-active':''}" data-no-drag onclick='togglePinnedProduct(${jsId})'>${item.isPinnedProduct?'📌':'📍'}</button><button type="button" class="tiny quote-add-product-button" data-no-drag data-product-id="${idAttr}" data-product-record-key="${recordKeyAttr}" data-product-source="${sourceAttr}" onclick="addProductToQuoteByReference(event)">+ เพิ่ม</button></div>`:'';
-  return `<div class="row quote-product-pref-card ${opts.pinned?'pinned-product-card':''}"${draggable}><div class="product-img">${productUnit==='WEBER'?'🟨':'🟦'}</div><div class="quote-product-pref-main"><div class="quote-product-title">${quoteProductBusinessUnitBadge(item,getSelectedQuoteBusinessUnitForProducts())}<b>${escapeHtml(item.productName||'-')}</b></div><small>${escapeHtml(item.brand||quoteBusinessUnitLabel(productUnit))} · ${escapeHtml(item.sku||item.productId||item.id||'-')} · ${escapeHtml(item.unit||'-')} · ${priceHtml}</small>${promoHtml}</div>${actions}</div>`;
+  const favoritePending=PRODUCT_FAVORITE_PENDING.has(normalizeQuoteProductPreferenceId(rawId));
+  const favoriteTitle=item.isFavoriteProduct?'นำออกจากสินค้ารายการโปรด':'เพิ่มในสินค้ารายการโปรด';
+  const actions=canManageQuoteProductPreferences()?`<div class="quote-product-actions" data-no-drag><button type="button" class="quote-product-pref-button ${item.isFavoriteProduct?'is-active':''}${favoritePending?' is-loading':''}" data-no-drag data-product-action="favorite" data-product-id="${idAttr}" data-product-record-key="${recordKeyAttr}" data-product-source="${sourceAttr}" aria-label="${htmlAttr(favoriteTitle)}" title="${htmlAttr(favoriteTitle)}" aria-pressed="${String(!!item.isFavoriteProduct)}"${favoritePending?' disabled aria-disabled="true"':''}>${item.isFavoriteProduct?'♥':'♡'}</button><button type="button" class="quote-product-pref-button ${item.isPinnedProduct?'is-active':''}" data-no-drag onclick='togglePinnedProduct(${jsId})' aria-label="${item.isPinnedProduct?'นำออกจากสินค้าปักหมุด':'ปักหมุดสินค้า'}" title="${item.isPinnedProduct?'นำออกจากสินค้าปักหมุด':'ปักหมุดสินค้า'}" aria-pressed="${String(!!item.isPinnedProduct)}">${item.isPinnedProduct?'📌':'📍'}</button>${createAddProductButton({attributes:{'data-no-drag':'true','data-product-action':'add','data-product-id':rawId,'data-product-record-key':recordKey,'data-product-source':source}})}</div>`:'';
+  const selectedUnit=getSelectedQuoteBusinessUnitForProducts();
+  const cross=productUnit&&String(productUnit).toUpperCase()!==String(selectedUnit||'').toUpperCase()?'<small class="quote-cross-bu-note">สินค้าร่วมข้าม BU</small>':'';
+  return `<div class="row quote-product-pref-card ${opts.pinned?'pinned-product-card':''}"${draggable}><div class="product-img product-thumbnail-cell">${renderProductThumbnailHtml(item,{variant:'small',className:'quote-product-thumbnail'})}</div><div class="quote-product-pref-main"><div class="quote-product-title"><b>${escapeHtml(item.productName||'-')}</b>${cross}</div><small>${escapeHtml(item.brand||quoteBusinessUnitLabel(productUnit))} · ${escapeHtml(item.sku||item.productId||item.id||'-')} · ${escapeHtml(item.unit||'-')} · ${priceHtml}</small>${promoHtml}</div>${actions}</div>`;
 }
 function getProductPreferenceCollapseKey(type){return type==='favorite'?FAVORITE_PRODUCTS_COLLAPSED_KEY:PINNED_PRODUCTS_COLLAPSED_KEY}
 function isProductPreferenceCollapsed(type){try{return localStorage.getItem(getProductPreferenceCollapseKey(type))==='true'}catch(error){return false}}
@@ -3279,13 +4839,68 @@ function toggleProductPreferenceSection(type){
   if(type==='pinned'&&!collapsed)bindPinnedProductDragAndDrop();
 }
 function renderQuotePreferenceSectionHeader(type,icon,title,count,limit,collapsed){return `<div class="quote-preference-head"><button type="button" class="quote-section-toggle" data-no-drag onclick="toggleProductPreferenceSection('${type}')" aria-expanded="${!collapsed}" title="${collapsed?'Expand':'Collapse'} ${title}"><span>${collapsed?'▸':'▾'}</span></button><b>${icon} ${title}</b><small>${count} / ${limit}</small></div>`}
-function renderQuoteProductPreferenceSections(){ensureProductPreferenceContainers();const pinnedBox=$('pinnedProducts');const favoriteBox=$('favoriteProducts');if(pinnedBox){const pinned=PINNED_PRODUCTS.map(decorateQuotePreferenceProduct);const collapsed=isProductPreferenceCollapsed('pinned');pinnedBox.classList.toggle('is-collapsed',collapsed);pinnedBox.innerHTML=renderQuotePreferenceSectionHeader('pinned','📌','Pinned Products',pinned.length,5,collapsed)+`<div class="quote-preference-body">${pinned.length?`<div id="pinnedProductGrid" class="quote-preference-list">${pinned.map(product=>renderQuoteProductPreferenceCard(product,{pinned:true,source:'PINNED'})).join('')}</div>`:'<div class="quote-preference-empty">ยังไม่มีสินค้าปักหมุด</div>'}</div>`;if(!collapsed)bindPinnedProductDragAndDrop()}if(favoriteBox){const pinnedIds=getPinnedProductIdSet();const favorites=FAVORITE_PRODUCTS.map(decorateQuotePreferenceProduct).filter(product=>!pinnedIds.has(normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(product))));const collapsed=isProductPreferenceCollapsed('favorite');favoriteBox.classList.toggle('is-collapsed',collapsed);favoriteBox.innerHTML=renderQuotePreferenceSectionHeader('favorite','♥','Favorite Products',FAVORITE_PRODUCTS.length,20,collapsed)+`<div class="quote-preference-body">${favorites.length?`<div class="quote-preference-list">${favorites.map(product=>renderQuoteProductPreferenceCard(product,{source:'FAVORITE'})).join('')}</div>`:'<div class="quote-preference-empty">ยังไม่มีสินค้ารายการโปรด</div>'}</div>`;}}
-async function toggleFavoriteProduct(productId){if(!canManageQuoteProductPreferences())return;const id=String(productId||'').trim();const isFavorite=getFavoriteProductIdSet().has(normalizeQuoteProductPreferenceId(id));if(!isFavorite&&FAVORITE_PRODUCTS.length>=20){toast('เพิ่มสินค้ารายการโปรดได้สูงสุด 20 รายการ');return;}const response=await callApi(isFavorite?'removeFavoriteProduct':'addFavoriteProduct',{productId:id});toast(response.message||(response.ok?'บันทึกแล้ว':'บันทึกไม่สำเร็จ'));if(response&&response.ok)await loadProductPreferences(true);renderQuoteProductPicker();return response}
+function renderQuoteProductPreferenceSections(){bindProductCardActions();ensureProductPreferenceContainers();const pinnedBox=$('pinnedProducts');const favoriteBox=$('favoriteProducts');if(pinnedBox){const pinned=PINNED_PRODUCTS.map(decorateQuotePreferenceProduct);const collapsed=isProductPreferenceCollapsed('pinned');pinnedBox.classList.toggle('is-collapsed',collapsed);pinnedBox.innerHTML=renderQuotePreferenceSectionHeader('pinned','📌','Pinned Products',pinned.length,5,collapsed)+`<div class="quote-preference-body">${pinned.length?`<div id="pinnedProductGrid" class="quote-preference-list">${pinned.map(product=>renderQuoteProductPreferenceCard(product,{pinned:true,source:'PINNED'})).join('')}</div>`:'<div class="quote-preference-empty">ยังไม่มีสินค้าปักหมุด</div>'}</div>`;if(!collapsed)bindPinnedProductDragAndDrop()}if(favoriteBox){const pinnedIds=getPinnedProductIdSet();const favorites=FAVORITE_PRODUCTS.map(decorateQuotePreferenceProduct).filter(product=>!pinnedIds.has(normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(product))));const collapsed=isProductPreferenceCollapsed('favorite');favoriteBox.classList.toggle('is-collapsed',collapsed);favoriteBox.innerHTML=renderQuotePreferenceSectionHeader('favorite','♥','Favorite Products',FAVORITE_PRODUCTS.length,20,collapsed)+`<div class="quote-preference-body">${favorites.length?`<div class="quote-preference-list">${favorites.map(product=>renderQuoteProductPreferenceCard(product,{source:'FAVORITE'})).join('')}</div>`:'<div class="quote-preference-empty">ยังไม่มีสินค้ารายการโปรด</div>'}</div>`;}}
+async function toggleFavoriteProduct(productId){
+  if(!canManageQuoteProductPreferences()){
+    toast('ไม่มีสิทธิ์จัดการสินค้ารายการโปรด');
+    return {ok:false,code:'PRODUCT_FAVORITE_FORBIDDEN'};
+  }
+  const id=String(productId||'').trim();
+  const pendingKey=normalizeQuoteProductPreferenceId(id);
+  if(!id){
+    toast('ไม่พบรหัสสินค้า');
+    return {ok:false,code:'PRODUCT_REFERENCE_REQUIRED'};
+  }
+  if(PRODUCT_FAVORITE_PENDING.has(pendingKey))return {ok:false,code:'PRODUCT_FAVORITE_PENDING'};
+  const product=findProductForAction(id);
+  if(!product){
+    toast('ไม่พบข้อมูลสินค้า กรุณารีเฟรชรายการสินค้า');
+    return {ok:false,code:'PRODUCT_REFERENCE_NOT_FOUND'};
+  }
+  const isFavorite=getFavoriteProductIdSet().has(pendingKey);
+  if(!isFavorite&&FAVORITE_PRODUCTS.length>=20){
+    toast('เพิ่มสินค้ารายการโปรดได้สูงสุด 20 รายการ');
+    return {ok:false,code:'PRODUCT_FAVORITE_LIMIT'};
+  }
+  const previousFavorites=FAVORITE_PRODUCTS.slice();
+  const previousPinned=PINNED_PRODUCTS.slice();
+  PRODUCT_FAVORITE_PENDING.add(pendingKey);
+  if(isFavorite){
+    FAVORITE_PRODUCTS=FAVORITE_PRODUCTS.filter(item=>normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(item))!==pendingKey);
+  }else{
+    FAVORITE_PRODUCTS=FAVORITE_PRODUCTS.concat([Object.assign({},product,{isFavoriteProduct:true})]);
+  }
+  renderProductActionSurfaces();
+  try{
+    const response=await callApi(isFavorite?'removeFavoriteProduct':'addFavoriteProduct',{productId:id});
+    if(!response||!response.ok){
+      FAVORITE_PRODUCTS=previousFavorites;
+      PINNED_PRODUCTS=previousPinned;
+      toast(response&&response.message?response.message:'บันทึกไม่สำเร็จ');
+      renderProductActionSurfaces();
+      return response||{ok:false,code:'PRODUCT_FAVORITE_FAILED'};
+    }
+    toast(response.message||'บันทึกแล้ว');
+    await loadProductPreferences(true);
+    renderProductActionSurfaces();
+    return response;
+  }catch(error){
+    FAVORITE_PRODUCTS=previousFavorites;
+    PINNED_PRODUCTS=previousPinned;
+    console.warn('[PRODUCT_FAVORITE]',{action:isFavorite?'remove':'add',productId:id,message:String(error&&error.message?error.message:error)});
+    toast('บันทึกสินค้ารายการโปรดไม่สำเร็จ');
+    renderProductActionSurfaces();
+    return {ok:false,message:String(error&&error.message?error.message:error)};
+  }finally{
+    PRODUCT_FAVORITE_PENDING.delete(pendingKey);
+    renderProductActionSurfaces();
+  }
+}
 async function togglePinnedProduct(productId){if(!canManageQuoteProductPreferences())return;const id=String(productId||'').trim();const isPinned=getPinnedProductIdSet().has(normalizeQuoteProductPreferenceId(id));if(!isPinned&&PINNED_PRODUCTS.length>=5){toast('ปักหมุดสินค้าได้สูงสุด 5 รายการ');return;}const response=await callApi(isPinned?'removePinnedProduct':'addPinnedProduct',{productId:id});toast(response.message||(response.ok?'บันทึกแล้ว':'บันทึกไม่สำเร็จ'));if(response&&response.ok)await loadProductPreferences(true);renderQuoteProductPicker();return response}
 async function persistPinnedProductOrder(){const grid=$('pinnedProductGrid');if(!grid)return;const productIds=Array.from(grid.querySelectorAll('[data-product-id]')).map(el=>el.dataset.productId).filter(Boolean);const response=await callApi('reorderPinnedProducts',{productIds:productIds});if(!response.ok){toast(response.message||'จัดลำดับสินค้าปักหมุดไม่สำเร็จ');await loadProductPreferences(true);return response;}const byId=new Map(PINNED_PRODUCTS.map(product=>[getQuoteProductPreferenceId(product),product]));PINNED_PRODUCTS=productIds.map((id,index)=>Object.assign({},byId.get(id),{pinnedSortOrder:index+1})).filter(product=>getQuoteProductPreferenceId(product));renderQuoteProductPreferenceSections();renderQuoteProductPicker();return response}
 function bindPinnedProductDragAndDrop(){const grid=$('pinnedProductGrid');if(!grid||grid.dataset.bound)return;grid.dataset.bound='true';let dragged=null;grid.addEventListener('dragstart',event=>{dragged=event.target.closest('.pinned-product-card');if(!dragged)return;dragged.classList.add('is-dragging');event.dataTransfer.effectAllowed='move'});grid.addEventListener('dragover',event=>{event.preventDefault();const target=event.target.closest('.pinned-product-card');if(dragged&&target&&target!==dragged)grid.insertBefore(dragged,target)});grid.addEventListener('dragend',()=>{if(dragged)dragged.classList.remove('is-dragging');dragged=null;persistPinnedProductOrder()});let timer=null,touchCard=null;grid.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'||event.target.closest('button,a,[data-no-drag]'))return;touchCard=event.target.closest('.pinned-product-card');if(touchCard)timer=setTimeout(()=>{touchCard.classList.add('is-dragging');try{touchCard.setPointerCapture(event.pointerId)}catch(error){}},350)});grid.addEventListener('pointermove',event=>{if(!touchCard||!touchCard.classList.contains('is-dragging'))return;event.preventDefault();const target=document.elementFromPoint(event.clientX,event.clientY)?.closest('.pinned-product-card');if(target&&target!==touchCard)grid.insertBefore(touchCard,target)});const finish=()=>{clearTimeout(timer);if(touchCard&&touchCard.classList.contains('is-dragging')){touchCard.classList.remove('is-dragging');persistPinnedProductOrder()}touchCard=null};grid.addEventListener('pointerup',finish);grid.addEventListener('pointercancel',finish)}
 const baseFilterQuoteProductsByBusinessUnitForPreferences=filterQuoteProductsByBusinessUnit;
 filterQuoteProductsByBusinessUnit=function(query,businessUnit){return baseFilterQuoteProductsByBusinessUnitForPreferences(query,businessUnit).map(decorateQuotePreferenceProduct).sort((a,b)=>productPreferenceRank(a)-productPreferenceRank(b)||rankQuoteProductBusinessUnit(a,businessUnit)-rankQuoteProductBusinessUnit(b,businessUnit)||rankQuoteProduct(a,query)-rankQuoteProduct(b,query)||String(a.productName||'').localeCompare(String(b.productName||''),'th'))};
-window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.addProductCardToQuote=addProductCardToQuote; window.openProductPromotionDetail=openProductPromotionDetail; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.resetAuthenticatedFrontendState=resetAuthenticatedFrontendState; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.canCreateQuotationsUi=canCreateQuotationsUi; window.canEditQuotationsUi=canEditQuotationsUi; window.canViewQuotationsUi=canViewQuotationsUi; window.canExportQuotationsUi=canExportQuotationsUi; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
-window.createProductIdentityKey=createProductIdentityKey; window.dedupeExactProducts=dedupeExactProducts; window.dedupeExactProductsWithReport=dedupeExactProductsWithReport; window.cloneProductRecordForSelection=cloneProductRecordForSelection; window.getStableProductRecordKey=getStableProductRecordKey; window.registerProductRecordSelection=registerProductRecordSelection; window.resolveProductRecordSelection=resolveProductRecordSelection;
+window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.openCustomerDetailsModal=openCustomerDetailsModal; window.openCustomerEditModal=openCustomerEditModal; window.toggleFavoriteCustomer=toggleFavoriteCustomer; window.handleCustomerAction=handleCustomerAction; window.bindCustomerCardActions=bindCustomerCardActions; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.handleProductCardCalculatorClick=handleProductCardCalculatorClick; window.isProductCardInteractiveClick=isProductCardInteractiveClick; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.createAddProductButton=createAddProductButton; window.addProductCardToQuote=addProductCardToQuote; window.handleProductAction=handleProductAction; window.bindProductCardActions=bindProductCardActions; window.openProductPromotionDetail=openProductPromotionDetail; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.loadPromotionDashboard=loadPromotionDashboard; window.refreshPromotionDashboard=refreshPromotionDashboard; window.openPromotionDetail=openPromotionDetail; window.renderPromotionProductPanel=renderPromotionProductPanel; window.closePromotionProductPanel=closePromotionProductPanel; window.goToPromotionProduct=goToPromotionProduct; window.buildProductPromotionDashboardFromProducts=buildPromotionDashboardFromProducts; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.resetAuthenticatedFrontendState=resetAuthenticatedFrontendState; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.canCreateQuotationsUi=canCreateQuotationsUi; window.canEditQuotationsUi=canEditQuotationsUi; window.canViewQuotationsUi=canViewQuotationsUi; window.canExportQuotationsUi=canExportQuotationsUi; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
+window.createProductIdentityKey=createProductIdentityKey; window.dedupeExactProducts=dedupeExactProducts; window.dedupeExactProductsWithReport=dedupeExactProductsWithReport; window.cloneProductRecordForSelection=cloneProductRecordForSelection; window.getStableProductRecordKey=getStableProductRecordKey; window.registerProductRecordSelection=registerProductRecordSelection; window.resolveProductRecordSelection=resolveProductRecordSelection; window.renderProductThumbnailHtml=renderProductThumbnailHtml; window.getProductImageSource=getProductImageSource;
 window.normalizeSystemIdentitySettings=normalizeSystemIdentitySettings; window.applySystemIdentityToUI=applySystemIdentityToUI; window.renderLoginBranding=renderLoginBranding; window.renderSidebarBranding=renderSidebarBranding; window.refreshPublicSystemSettings=refreshPublicSystemSettings; window.setPublicSystemSettings=setPublicSystemSettings; window.loadSystemIdentitySettingsForSettings=loadSystemIdentitySettingsForSettings; window.saveSystemIdentitySettings=saveSystemIdentitySettings; window.savePersonalGreetingSettings=savePersonalGreetingSettings; window.saveSystemGreetingSettings=saveSystemGreetingSettings; window.canManageSystemIdentitySettings=canManageSystemIdentitySettings; window.applySettingsPermissionUi=applySettingsPermissionUi;

@@ -1,4 +1,4 @@
-window.APP_VERSION = window.APP_VERSION || '0.5.26';
+window.APP_VERSION = window.APP_VERSION || '0.5.40';
 const APP_ENV = String(window.APP_ENV || 'production').trim().toLowerCase();
 const API_MOCK_MODE = APP_ENV === 'development';
 const GAS_WEB_APP_URL = String(window.GAS_WEB_APP_URL || '').trim();
@@ -8,6 +8,7 @@ const pendingApiRequests = {};
 const CACHE_KEYS = {
   customers: 'sg_customers_cache',
   products: 'sg_products_cache',
+  productPromotions: 'sg_product_promotions_cache',
   bootstrap: 'sg_bootstrap_cache',
   publicSettings: 'sg_public_settings_cache',
   discount: 'sg_discount_cache',
@@ -19,6 +20,7 @@ PUBLIC_CACHE_KEY_SET[CACHE_KEYS.publicSettings] = true;
 const PRIVATE_CACHE_PREFIXES = [
   CACHE_KEYS.customers,
   CACHE_KEYS.products,
+  CACHE_KEYS.productPromotions,
   CACHE_KEYS.bootstrap,
   CACHE_KEYS.discount,
   CACHE_KEYS.quotation,
@@ -42,6 +44,8 @@ const READ_ACTIONS = [
   'getCustomerFormOptions',
   'products',
   'getProducts',
+  'getProductPromotions',
+  'getPromotionDashboard',
   'promotions',
   'getPromotions',
   'searchQuoteProducts',
@@ -321,7 +325,7 @@ function getCacheScope(key) {
   const area = String(user.area || user.branch || '').trim();
   const token = String(localStorage.getItem('sg_token') || localStorage.getItem('sessionToken') || '').trim();
   return [
-    String(window.APP_VERSION || '0.5.26').trim(),
+    String(window.APP_VERSION || '0.5.40').trim(),
     userId || 'anonymous',
     role || 'role-unknown',
     area || 'area-unknown',
@@ -374,7 +378,7 @@ function getRequestKey(action, payload) {
 }
 
 function isApiTimingEnabled(action) {
-  const timedActions = ['bootstrap', 'products', 'getProducts', 'customers', 'getCustomers', 'getCustomerFormOptions', 'getAssignableSalesUsers', 'getCustomerFilters', 'getAreas', 'getQuotationHistory', 'loadQuotation', 'discount', 'quotation', 'saveQuotation', 'updateQuotation'];
+  const timedActions = ['bootstrap', 'products', 'getProducts', 'getProductPromotions', 'getPromotionDashboard', 'customers', 'getCustomers', 'getCustomerFormOptions', 'getAssignableSalesUsers', 'getCustomerFilters', 'getAreas', 'getQuotationHistory', 'loadQuotation', 'discount', 'quotation', 'saveQuotation', 'updateQuotation'];
   const normalizedAction = String(action || '').trim();
   if (['getCustomerFormOptions', 'getAssignableSalesUsers', 'getCustomerFilters', 'getAreas'].indexOf(normalizedAction) >= 0) {
     return true;
@@ -827,6 +831,14 @@ function mockApi(action, payload) {
       return { ok: true, data: [] };
     case 'products':
       return { ok: true, data: [] };
+    case 'getProductPromotions':
+    case 'getPromotionDashboard': {
+      const products = Array.isArray(window.DB && window.DB.products) ? window.DB.products : [];
+      const dashboard = typeof window.buildProductPromotionDashboardFromProducts === 'function'
+        ? window.buildProductPromotionDashboardFromProducts(products)
+        : { groups: [], summary: { totalPromotions: 0, productsInPromotion: 0, weberPromotions: 0, gyprocPromotions: 0 }, products: [] };
+      return { ok: true, data: dashboard };
+    }
     case 'promotions':
     case 'getPromotions':
       window.__mockPromotions = window.__mockPromotions || [];

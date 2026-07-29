@@ -5,6 +5,7 @@
   const MAX_DIAGNOSTIC_LOGS = 100;
   const TOAST_DEDUPE_MS = 900;
   const DEFAULT_TOAST_DURATION_MS = 3600;
+  const NOTIFICATION_FRAMEWORK_VERSION = '1.1.0';
   const MODAL_ICON_MAP = {
     success: 'check_circle',
     info: 'info',
@@ -14,6 +15,12 @@
     confirm: 'help',
     offline: 'wifi_off',
     loading: 'sync'
+  };
+  const SEVERITY_ICON_MAP = {
+    INFO: 'info',
+    WARNING: 'warning',
+    ERROR: 'error',
+    CRITICAL: 'crisis_alert'
   };
   const ERROR_CATALOG = {
     DEFAULT: {
@@ -160,12 +167,18 @@
     const source = window.USER || readJsonStorage('sg_user') || readJsonStorage('currentUser') || {};
     return {
       userId: text(source.userId || source.username || 'anonymous', 80),
-      role: text(source.role || 'anonymous', 40)
+      role: normalizeRole(source.role || 'anonymous')
     };
   }
 
+  function normalizeRole(value) {
+    const role = text(value || '', 40).toUpperCase().replace(/[\s-]+/g, '_');
+    if (role === 'SUPERADMIN') return 'SUPER_ADMIN';
+    return role || 'ANONYMOUS';
+  }
+
   function isSuperAdmin() {
-    return getSafeCurrentUser().role.toUpperCase() === 'SUPER_ADMIN';
+    return getSafeCurrentUser().role === 'SUPER_ADMIN';
   }
 
   function readJsonStorage(key) {
@@ -215,6 +228,169 @@
     return Boolean(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone);
   }
 
+  function getDevicePlatform() {
+    const ua = navigator.userAgent || '';
+    if (/Windows/i.test(ua)) return 'Windows';
+    if (/iPhone|iPad|iPod/i.test(ua)) return 'iOS';
+    if (/Android/i.test(ua)) return 'Android';
+    if (/Macintosh|Mac OS X/i.test(ua)) return 'macOS';
+    if (/Linux/i.test(ua)) return 'Linux';
+    return 'Unknown';
+  }
+
+  function formatLocalTimestamp(value) {
+    const date = value ? new Date(value) : new Date();
+    if (isNaN(date.getTime())) return '';
+    const dd = String(date.getDate()).padStart(2, '0');
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const yyyy = date.getFullYear();
+    const hh = String(date.getHours()).padStart(2, '0');
+    const min = String(date.getMinutes()).padStart(2, '0');
+    const ss = String(date.getSeconds()).padStart(2, '0');
+    return dd + '/' + mm + '/' + yyyy + ' ' + hh + ':' + min + ':' + ss;
+  }
+
+  function normalizeSeverity(value) {
+    const severity = text(value || 'ERROR', 30).toUpperCase();
+    if (severity === 'INFO' || severity === 'WARNING' || severity === 'ERROR' || severity === 'CRITICAL') return severity;
+    if (severity === 'WARN') return 'WARNING';
+    return 'ERROR';
+  }
+
+  function humanizeDiagnosticValue(value) {
+    const raw = text(value, 160);
+    if (!raw) return '';
+    return raw.replace(/_/g, ' ').replace(/\b\w/g, function (letter) {
+      return letter.toUpperCase();
+    });
+  }
+
+  function diagnosticSummaryFor(errorInfo) {
+    const code = text(errorInfo && errorInfo.errorCode || '', 40).toUpperCase();
+    const summaries = {
+      'DRF-1003': {
+        diagnosis: 'ร้านค้าที่อ้างอิงในแบบร่างไม่พบในข้อมูลปัจจุบัน',
+        recommendation: 'รีเฟรชข้อมูลร้านค้าแล้วลองใหม่ หากร้านค้าไม่มีอยู่จริง ให้เก็บหรือลบแบบร่างตามความเหมาะสม'
+      },
+      'DRF-1005': {
+        diagnosis: 'ผู้ใช้ปัจจุบันไม่มีสิทธิ์เข้าถึงร้านค้าในแบบร่าง',
+        recommendation: 'ตรวจสอบสิทธิ์ พื้นที่ขาย หรือผู้รับผิดชอบร้านค้าก่อนลองใหม่'
+      },
+      'DRF-1002': {
+        diagnosis: 'ข้อมูลแบบร่างไม่สมบูรณ์หรือไม่รองรับเวอร์ชันปัจจุบัน',
+        recommendation: 'เก็บแบบร่างไว้ตรวจสอบ หรือยืนยันลบแบบร่างเมื่อแน่ใจว่าไม่ต้องใช้แล้ว'
+      },
+      'DRF-1004': {
+        diagnosis: 'ระบบไม่สามารถกู้คืนแบบร่างได้ในขณะนี้',
+        recommendation: 'ลองใหม่อีกครั้ง หากยังไม่สำเร็จให้เก็บแบบร่างไว้แล้วส่ง Event ID ให้ผู้ดูแลระบบ'
+      }
+    };
+    return summaries[code] || {
+      diagnosis: 'ระบบพบข้อผิดพลาดที่ตรวจสอบได้',
+      recommendation: 'ใช้ Error Code และ Event ID เพื่อตรวจสอบเหตุการณ์นี้'
+    };
+  }
+
+  function addDiagnosticRow(rows, label, value) {
+    const safeValue = text(value, 180);
+    if (!safeValue) return;
+    rows.push({ label: label, value: safeValue });
+  }
+
+  function buildSafeDiagnosticView(errorInfo) {
+    const data = errorInfo && typeof errorInfo === 'object' ? errorInfo : {};
+    const detail = data.diagnostics && typeof data.diagnostics === 'object' ? sanitizeDiagnosticDetail(data.diagnostics) : {};
+    const severity = normalizeSeverity(data.severity);
+    const summary = diagnosticSummaryFor(data);
+    const currentUser = getSafeCurrentUser();
+    const sections = [];
+
+    const coreRows = [];
+    addDiagnosticRow(coreRows, 'Event ID', data.eventId);
+    addDiagnosticRow(coreRows, 'Error Code', data.errorCode);
+    addDiagnosticRow(coreRows, 'Severity', severity);
+    addDiagnosticRow(coreRows, 'Status', humanizeDiagnosticValue(detail.result || 'failed'));
+    addDiagnosticRow(coreRows, 'Module', humanizeDiagnosticValue(detail.module || data.category));
+    addDiagnosticRow(coreRows, 'Action', humanizeDiagnosticValue(detail.action));
+    addDiagnosticRow(coreRows, 'Safe Reason', humanizeDiagnosticValue(detail.reason));
+    addDiagnosticRow(coreRows, 'Validation Code', detail.validationCode);
+    addDiagnosticRow(coreRows, 'Timestamp', formatLocalTimestamp(data.timestamp));
+    if (coreRows.length) sections.push({ title: 'Core', rows: coreRows });
+
+    const requestRows = [];
+    addDiagnosticRow(requestRows, 'Endpoint', detail.endpoint);
+    addDiagnosticRow(requestRows, 'HTTP Status', detail.apiStatus || detail.status);
+    addDiagnosticRow(requestRows, 'Request Duration', detail.durationMs ? detail.durationMs + ' ms' : '');
+    addDiagnosticRow(requestRows, 'Retry Count', detail.retryCount);
+    if (requestRows.length) sections.push({ title: 'Request', rows: requestRows });
+
+    const appRows = [];
+    addDiagnosticRow(appRows, 'App Version', getAppVersion());
+    addDiagnosticRow(appRows, 'Notification Framework', NOTIFICATION_FRAMEWORK_VERSION);
+    addDiagnosticRow(appRows, 'Draft Version', detail.draftVersion);
+    if (appRows.length) sections.push({ title: 'Application', rows: appRows });
+
+    const environmentRows = [];
+    addDiagnosticRow(environmentRows, 'Browser', getBrowserFamily());
+    addDiagnosticRow(environmentRows, 'Platform', getDevicePlatform());
+    addDiagnosticRow(environmentRows, 'Device Type', humanizeDiagnosticValue(getDeviceType()));
+    addDiagnosticRow(environmentRows, 'PWA Mode', isPwaStandalone() ? 'Yes' : 'No');
+    addDiagnosticRow(environmentRows, 'Network', navigator.onLine === false ? 'Offline' : 'Online');
+    if (environmentRows.length) sections.push({ title: 'Environment', rows: environmentRows });
+
+    const referenceRows = [];
+    addDiagnosticRow(referenceRows, 'Draft ID', detail.draftId);
+    addDiagnosticRow(referenceRows, 'Customer ID', detail.customerId);
+    addDiagnosticRow(referenceRows, 'Quotation ID', detail.quotationId);
+    addDiagnosticRow(referenceRows, 'User Role', currentUser.role);
+    if (referenceRows.length) sections.push({ title: 'Safe References', rows: referenceRows });
+
+    return {
+      eventId: text(data.eventId, 60),
+      errorCode: text(data.errorCode, 40),
+      severity: severity,
+      severityIcon: SEVERITY_ICON_MAP[severity] || SEVERITY_ICON_MAP.ERROR,
+      summary: summary,
+      sections: sections
+    };
+  }
+
+  function buildDiagnosticCopyText(view) {
+    const lines = ['Saint-Gobain Sales System Diagnostic', ''];
+    (view.sections || []).forEach(function (section) {
+      (section.rows || []).forEach(function (row) {
+        lines.push(row.label + ': ' + row.value);
+      });
+    });
+    return lines.join('\n');
+  }
+
+  function copyTextToClipboard(value) {
+    const content = text(value, 4000);
+    if (!content) return Promise.reject(new Error('Nothing to copy'));
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      return navigator.clipboard.writeText(content);
+    }
+    return new Promise(function (resolve, reject) {
+      try {
+        const textarea = document.createElement('textarea');
+        textarea.value = content;
+        textarea.setAttribute('readonly', 'readonly');
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        textarea.style.top = '0';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        const copied = document.execCommand && document.execCommand('copy');
+        if (textarea.parentNode) textarea.parentNode.removeChild(textarea);
+        copied ? resolve() : reject(new Error('Clipboard fallback failed'));
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
   function sanitizeDiagnosticDetail(detail) {
     const source = detail && typeof detail === 'object' ? detail : {};
     const safe = {};
@@ -232,6 +408,7 @@
       'draftVersion',
       'draftId',
       'customerId',
+      'quotationId',
       'apiStatus',
       'validationCode',
       'reason'
@@ -264,6 +441,7 @@
       severity: text(opts.severity || catalog.severity || 'error', 30),
       retryable: opts.retryable !== undefined ? Boolean(opts.retryable) : Boolean(catalog.retryable),
       category: text(opts.category || catalog.category || 'APP', 40),
+      timestamp: text(opts.timestamp || new Date().toISOString(), 40),
       diagnostics: sanitizeDiagnosticDetail(Object.assign({}, context || {}, opts.diagnostics || {}))
     };
     logDiagnosticEvent(normalized);
@@ -508,6 +686,10 @@
       });
       const keyHandler = function (event) {
         if (!activeDialog || activeDialog.backdrop !== backdrop) return;
+        const target = event.target && event.target.closest ? event.target : null;
+        if (event.key === 'Enter' && target && target.closest('.sg-copy-button,.sg-copy-diagnostic,.sg-admin-diagnostics')) {
+          return;
+        }
         if (event.key === 'Escape' && opts.allowEscape) {
           event.preventDefault();
           resolveOnce(opts.escapeValue !== undefined ? opts.escapeValue : opts.secondaryValue);
@@ -549,21 +731,114 @@
 
   function renderErrorMeta(errorInfo) {
     const box = createElement('div', 'sg-error-meta');
-    const code = text(errorInfo.errorCode || '', 40);
-    const eventId = text(errorInfo.eventId || '', 60);
+    const view = buildSafeDiagnosticView(errorInfo || {});
+    const code = view.errorCode;
+    const eventId = view.eventId;
     if (code) box.appendChild(createElement('p', '', 'Error Code: ' + code));
-    if (eventId) box.appendChild(createElement('p', '', 'Event ID: ' + eventId));
+    if (eventId) {
+      const eventRow = createElement('p', 'sg-event-id-row');
+      eventRow.appendChild(createElement('span', '', 'Event ID: ' + eventId));
+      const eventCopy = createElement('button', 'sg-copy-button sg-copy-event-id', '');
+      eventCopy.type = 'button';
+      eventCopy.setAttribute('aria-label', 'คัดลอกรหัสเหตุการณ์ ' + eventId);
+      eventCopy.setAttribute('title', 'คัดลอกรหัสเหตุการณ์');
+      const eventIcon = createElement('span', 'material-symbols-rounded', 'content_copy');
+      eventIcon.setAttribute('aria-hidden', 'true');
+      eventCopy.appendChild(eventIcon);
+      eventCopy.addEventListener('click', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        copyTextToClipboard(eventId).then(function () {
+          showToast({ type: 'success', message: 'คัดลอกรหัสเหตุการณ์แล้ว' });
+          logDiagnosticEvent({
+            eventId: eventId,
+            errorCode: code,
+            severity: 'info',
+            category: 'DIAGNOSTIC',
+            diagnostics: { module: 'Notification', action: 'event_id_copied', result: 'success' }
+          });
+        }).catch(function () {
+          showToast({ type: 'error', message: 'ไม่สามารถคัดลอกรหัสเหตุการณ์ได้' });
+        });
+      });
+      eventRow.appendChild(eventCopy);
+      box.appendChild(eventRow);
+    }
     if (isSuperAdmin()) {
       const details = createElement('details', 'sg-admin-diagnostics');
-      details.appendChild(createElement('summary', '', 'รายละเอียดสำหรับผู้ดูแลระบบ'));
-      const pre = createElement('pre', '', JSON.stringify({
-        eventId: eventId,
-        errorCode: code,
-        category: errorInfo.category,
-        severity: errorInfo.severity,
-        diagnostics: errorInfo.diagnostics
-      }, null, 2));
-      details.appendChild(pre);
+      const panelId = 'sgAdminDiagnostics-' + (eventId || generateEventId()).replace(/[^A-Za-z0-9_-]/g, '');
+      const summary = createElement('summary', 'sg-admin-diagnostics-summary');
+      summary.setAttribute('aria-expanded', 'false');
+      summary.setAttribute('aria-controls', panelId);
+      const chevron = createElement('span', 'material-symbols-rounded sg-admin-diagnostics-chevron', 'expand_more');
+      chevron.setAttribute('aria-hidden', 'true');
+      summary.appendChild(chevron);
+      summary.appendChild(createElement('span', '', 'รายละเอียดสำหรับผู้ดูแลระบบ'));
+      details.appendChild(summary);
+      const panel = createElement('div', 'sg-admin-diagnostics-panel');
+      panel.id = panelId;
+      const summaryBlock = createElement('div', 'sg-diagnostic-summary');
+      summaryBlock.appendChild(createElement('b', '', 'Diagnosis'));
+      summaryBlock.appendChild(createElement('p', '', view.summary.diagnosis));
+      summaryBlock.appendChild(createElement('b', '', 'Recommended action'));
+      summaryBlock.appendChild(createElement('p', '', view.summary.recommendation));
+      panel.appendChild(summaryBlock);
+      const badge = createElement('div', 'sg-severity-badge sg-severity-' + view.severity.toLowerCase());
+      const severityIcon = createElement('span', 'material-symbols-rounded', view.severityIcon);
+      severityIcon.setAttribute('aria-hidden', 'true');
+      badge.appendChild(severityIcon);
+      badge.appendChild(createElement('span', '', view.severity));
+      panel.appendChild(badge);
+      (view.sections || []).forEach(function (section) {
+        const sectionEl = createElement('section', 'sg-diagnostic-section');
+        sectionEl.appendChild(createElement('h3', '', section.title));
+        const grid = createElement('dl', 'sg-diagnostic-grid');
+        (section.rows || []).forEach(function (row) {
+          const item = createElement('div', 'sg-diagnostic-row');
+          item.appendChild(createElement('dt', '', row.label));
+          item.appendChild(createElement('dd', '', row.value));
+          grid.appendChild(item);
+        });
+        sectionEl.appendChild(grid);
+        panel.appendChild(sectionEl);
+      });
+      const tools = createElement('div', 'sg-diagnostic-tools');
+      const copyDiagnostic = createElement('button', 'ghost sg-copy-diagnostic', 'คัดลอกรายละเอียด');
+      copyDiagnostic.type = 'button';
+      copyDiagnostic.setAttribute('aria-label', 'คัดลอกรายละเอียด diagnostic สำหรับผู้ดูแลระบบ');
+      copyDiagnostic.addEventListener('click', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        copyTextToClipboard(buildDiagnosticCopyText(view)).then(function () {
+          showToast({ type: 'success', message: 'คัดลอกรายละเอียดแล้ว' });
+          logDiagnosticEvent({
+            eventId: eventId,
+            errorCode: code,
+            severity: 'info',
+            category: 'DIAGNOSTIC',
+            diagnostics: { module: 'Notification', action: 'diagnostic_copied', result: 'success' }
+          });
+        }).catch(function () {
+          showToast({ type: 'error', message: 'ไม่สามารถคัดลอกรายละเอียดได้' });
+        });
+      });
+      tools.appendChild(copyDiagnostic);
+      panel.appendChild(tools);
+      details.appendChild(panel);
+      details.addEventListener('toggle', function () {
+        const expanded = details.open ? 'true' : 'false';
+        summary.setAttribute('aria-expanded', expanded);
+        if (details.open && !details.dataset.openLogged) {
+          details.dataset.openLogged = 'true';
+          logDiagnosticEvent({
+            eventId: eventId,
+            errorCode: code,
+            severity: 'info',
+            category: 'DIAGNOSTIC',
+            diagnostics: { module: 'Notification', action: 'diagnostic_panel_opened', result: 'opened' }
+          });
+        }
+      });
       box.appendChild(details);
     }
     return box;
