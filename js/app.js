@@ -20,7 +20,7 @@ let customerFormOptionsLoaded=false, customerFormOptionsPromise=null, customerFo
 let FAVORITE_CUSTOMERS=[], FAVORITE_CUSTOMER_ROWS=[], favoriteCustomersPromise=null, favoriteCustomersLoadSeq=0;
 let FAVORITE_PRODUCTS=[], PINNED_PRODUCTS=[], productPreferencesLoaded=false, productPreferencesPromise=null;
 let PROMOTION_DASHBOARD={groups:[],summary:{totalPromotions:0,productsInPromotion:0,weberPromotions:0,gyprocPromotions:0,multiBrandPromotions:0},products:[]};
-let promotionDashboardLoaded=false, promotionDashboardPromise=null, promotionDashboardRefreshPromise=null, promotionDashboardError='', promotionDashboardTodayKey='';
+let promotionDashboardLoaded=false, promotionDashboardPromise=null, promotionDashboardRefreshPromise=null, promotionDashboardError='', promotionDashboardTodayKey='', promotionLegacyTitleFallbackLogged=false;
 const openQuotationDetailPromises={};
 const LIST_RENDER_LIMIT=Number(window.DEFAULT_PAGE_SIZE||50), QUOTE_PICKER_LIMIT=30, SEARCH_DEBOUNCE_MS=300;
 const APP_VERSION_STORAGE_KEY='sg_app_version';
@@ -32,7 +32,7 @@ const PINNED_PRODUCTS_COLLAPSED_KEY='sg_pinned_products_collapsed';
 const FAVORITE_PRODUCTS_COLLAPSED_KEY='sg_favorite_products_collapsed';
 const PRODUCT_PROMOTIONS_CACHE_KEY='sg_product_promotions_cache';
 const PRODUCT_PROMO_CACHE_SCHEMA_KEY='sg_product_promo_cache_schema';
-const PRODUCT_PROMO_CACHE_SCHEMA_VERSION='3';
+const PRODUCT_PROMO_CACHE_SCHEMA_VERSION='4';
 const $=id=>document.getElementById(id); const money=n=>Number(n||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
 let sidebarDrawerFocusReturn=null, sidebarDrawerHistoryPushed=false, sidebarDrawerClosingFromHistory=false;
 
@@ -107,6 +107,7 @@ function resetAuthenticatedFrontendState(){
   promotionDashboardRefreshPromise=null;
   promotionDashboardError='';
   promotionDashboardTodayKey='';
+  promotionLegacyTitleFallbackLogged=false;
   Object.keys(openQuotationDetailPromises).forEach(key=>delete openQuotationDetailPromises[key]);
   revokeProfileImageObjectUrl();
   PROFILE_IMAGE_DATA='';
@@ -117,7 +118,7 @@ function resetAuthenticatedFrontendState(){
 
 function checkAppVersion(){
   try{
-    const newVersion=String(window.APP_VERSION||'0.5.29').trim();
+    const newVersion=String(window.APP_VERSION||'0.5.30').trim();
     console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
     const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
     if(oldVersion===newVersion){
@@ -1832,6 +1833,22 @@ function summarizePromotionText(text){
   if(!clean)return '-';
   return clean.length>150?clean.slice(0,147).trim()+'...':clean;
 }
+function getPromotionTextForDashboard(group,products){
+  const item=group&&typeof group==='object'?group:{};
+  const directText=String(item.promotionText||item.fullPromotionText||item.promoText||'').trim();
+  if(directText)return directText;
+  const productText=(Array.isArray(products)?products:[]).map(product=>String(product&&product.promoText||product&&product.promotionText||'').trim()).find(Boolean)||'';
+  if(productText)return productText;
+  const legacyTitle=String(item.promotionTitle||item.promoTitle||'').trim();
+  if(legacyTitle){
+    if(!promotionLegacyTitleFallbackLogged&&typeof console!=='undefined'&&typeof console.info==='function'){
+      console.info('[PROMOTION_LEGACY_FALLBACK]',{field:'promotionTitle',action:'normalized-to-promotionText'});
+      promotionLegacyTitleFallbackLogged=true;
+    }
+    return legacyTitle;
+  }
+  return '';
+}
 const PROMOTION_DATE_MISSING_TEXT='ไม่มีข้อมูลวันที่';
 const PROMOTION_MS_PER_DAY=24*60*60*1000;
 const PROMOTION_STATUS_CONFIG={
@@ -2054,7 +2071,7 @@ function normalizePromotionGroupForDashboard(group,index){
   const brandKeys=Array.isArray(item.brandKeys)&&item.brandKeys.length
     ? item.brandKeys.map(key=>String(key||'').trim().toUpperCase()).filter(Boolean)
     : Array.from(new Set(products.map(getPromotionProductBrandKey))).filter(Boolean);
-  const promotionText=String(item.promotionText||item.fullPromotionText||item.promoText||products[0]?.promoText||'').trim();
+  const promotionText=getPromotionTextForDashboard(item,products);
   const code=String(item.promotionCode||item.promoCode||item.promotionId||'').trim()||fallbackPromotionCode(promotionText);
   const promotionKey=String(item.promotionKey||item.key||'').trim()||('code:'+normalizePromotionTextForGroup(code)+'|text:'+normalizePromotionTextForGroup(promotionText));
   const brand=String(item.brand||'').trim()||promotionBrandLabelFromKeys(brandKeys);
@@ -2071,7 +2088,7 @@ function normalizePromotionGroupForDashboard(group,index){
     promoStartDate:startDate,
     promoEndDate:endDate,
     promotionText,
-    promotionSummary:String(item.promotionSummary||item.summary||'').trim()||summarizePromotionText(promotionText),
+    promotionSummary:String(item.promotionSummary||item.summary||'').trim(),
     fullPromotionText:String(item.fullPromotionText||promotionText).trim(),
     productCount:Number(item.productCount||products.length)||products.length,
     sourceOrder,
@@ -2110,7 +2127,6 @@ function buildPromotionDashboardFromProducts(products){
         promotionCode:code,
         promotionText:promoText,
         fullPromotionText:promoText,
-        promotionSummary:summarizePromotionText(promoText),
         sourceOrder:groupsByKey.size,
         brandKeys:new Set(),
         products:[]
@@ -2332,7 +2348,6 @@ function getPromotionSearchFields(group){
   return [
     group&&group.promotionCode,
     group&&group.promotionText,
-    group&&group.promotionSummary,
     group&&group.fullPromotionText,
     group&&group.brand,
     group&&group.promotionStatusLabel,
@@ -2406,8 +2421,8 @@ function renderPromotionCard(group){
   const brand=createUiElement('span','pill '+promotionBrandClass(group.brand),group.brand||'-');
   const code=createUiElement('b','promotion-code',group.promotionCode||'-');
   head.append(brand,code);
-  const title=createUiElement('h3','',group.promotionSummary||'-');
-  const text=createUiElement('p','promotion-card-text',group.promotionText||'-');
+  const promotionText=String(group.promotionText||'').trim();
+  const text=promotionText?createUiElement('h3','promotion-card-text promotion-card-primary-text',promotionText):null;
   const dates=renderPromotionDateSummary(group);
   const meta=createUiElement('div','promotion-card-meta');
   meta.appendChild(createUiElement('span','',String(group.productCount||0)+' products'));
@@ -2421,7 +2436,9 @@ function renderPromotionCard(group){
   productsButton.setAttribute('aria-label','View products in promotion '+(group.promotionCode||''));
   productsButton.addEventListener('click',()=>renderPromotionProductPanel(group.promotionKey));
   actions.append(detailButton,productsButton);
-  card.append(head,title,text,dates,meta,actions);
+  card.append(head);
+  if(text)card.appendChild(text);
+  card.append(dates,meta,actions);
   return card;
 }
 function renderPromos(){
