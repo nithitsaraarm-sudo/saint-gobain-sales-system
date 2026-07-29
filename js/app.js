@@ -19,6 +19,8 @@ let customersLoaded=false, productsLoaded=false, customersPromise=null, customer
 let customerFormOptionsLoaded=false, customerFormOptionsPromise=null, customerFormOptionsError='';
 let FAVORITE_CUSTOMERS=[], FAVORITE_CUSTOMER_ROWS=[], favoriteCustomersPromise=null, favoriteCustomersLoadSeq=0;
 let FAVORITE_PRODUCTS=[], PINNED_PRODUCTS=[], productPreferencesLoaded=false, productPreferencesPromise=null;
+let PROMOTION_DASHBOARD={groups:[],summary:{totalPromotions:0,productsInPromotion:0,weberPromotions:0,gyprocPromotions:0,multiBrandPromotions:0},products:[]};
+let promotionDashboardLoaded=false, promotionDashboardPromise=null, promotionDashboardError='';
 const openQuotationDetailPromises={};
 const LIST_RENDER_LIMIT=Number(window.DEFAULT_PAGE_SIZE||50), QUOTE_PICKER_LIMIT=30, SEARCH_DEBOUNCE_MS=300;
 const APP_VERSION_STORAGE_KEY='sg_app_version';
@@ -28,6 +30,7 @@ const SIDEBAR_MODE_EXPANDED='expanded';
 const SIDEBAR_MODE_MINI='mini';
 const PINNED_PRODUCTS_COLLAPSED_KEY='sg_pinned_products_collapsed';
 const FAVORITE_PRODUCTS_COLLAPSED_KEY='sg_favorite_products_collapsed';
+const PRODUCT_PROMOTIONS_CACHE_KEY='sg_product_promotions_cache';
 const PRODUCT_PROMO_CACHE_SCHEMA_KEY='sg_product_promo_cache_schema';
 const PRODUCT_PROMO_CACHE_SCHEMA_VERSION='1';
 const $=id=>document.getElementById(id); const money=n=>Number(n||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -98,6 +101,10 @@ function resetAuthenticatedFrontendState(){
   PINNED_PRODUCTS=[];
   productPreferencesLoaded=false;
   productPreferencesPromise=null;
+  PROMOTION_DASHBOARD={groups:[],summary:{totalPromotions:0,productsInPromotion:0,weberPromotions:0,gyprocPromotions:0,multiBrandPromotions:0},products:[]};
+  promotionDashboardLoaded=false;
+  promotionDashboardPromise=null;
+  promotionDashboardError='';
   Object.keys(openQuotationDetailPromises).forEach(key=>delete openQuotationDetailPromises[key]);
   revokeProfileImageObjectUrl();
   PROFILE_IMAGE_DATA='';
@@ -108,7 +115,7 @@ function resetAuthenticatedFrontendState(){
 
 function checkAppVersion(){
   try{
-    const newVersion=String(window.APP_VERSION||'0.5.26').trim();
+    const newVersion=String(window.APP_VERSION||'0.5.27').trim();
     console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
     const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
     if(oldVersion===newVersion){
@@ -326,6 +333,7 @@ function normalizeDb(data){
     counts:source.counts&&typeof source.counts==='object'?source.counts:(existing.counts&&typeof existing.counts==='object'?existing.counts:{}),
     customers:Array.isArray(source.customers)?source.customers.map(normalizeCustomer):(Array.isArray(existing.customers)?existing.customers:[]),
     products:Array.isArray(source.products)?dedupeExactProducts(source.products.map(normalizeProduct),'normalizeDb.products'):(Array.isArray(existing.products)?existing.products:[]),
+    productPromotions:source.productPromotions&&typeof source.productPromotions==='object'?source.productPromotions:(existing.productPromotions&&typeof existing.productPromotions==='object'?existing.productPromotions:{groups:[],summary:{},products:[]}),
     promotions:Array.isArray(source.promotions)?source.promotions:[],
     quotes:Array.isArray(source.quotes)?source.quotes:[],
     quoteLines:Array.isArray(source.quoteLines)?source.quoteLines:(Array.isArray(existing.quoteLines)?existing.quoteLines:[])
@@ -1468,6 +1476,7 @@ function setProductsData(items){
   DB.products=dedupeExactProducts(Array.isArray(items)?items.map(normalizeProduct):[],'setProductsData');
   productsLoaded=true;
   if(typeof setCache==='function')setCache('sg_products_cache',DB.products,15);
+  setPromotionDashboardData(buildPromotionDashboardFromProducts(DB.products),'products-data');
 }
 function renderCustomerViews(){
   renderHome();
@@ -1478,6 +1487,7 @@ function renderCustomerViews(){
 function renderProductViews(){
   renderHome();
   renderProducts();
+  renderPromos();
   renderQuoteProductPicker();
 }
 async function loadCustomers(options){
@@ -1605,6 +1615,7 @@ async function loadProducts(options){
 function ensurePageData(page){
   if(page==='customers'){renderCustomers();return loadCustomers();}
   if(page==='products'){renderProducts();return loadProducts();}
+  if(page==='promos'){renderPromos();return loadPromotionDashboard();}
   if(page==='quote'){
     renderQuote();
     return Promise.resolve({ok:true});
@@ -1688,7 +1699,507 @@ function chooseQuoteCustomer(customerId){
   if(picker)picker.classList.remove('show');
   if(typeof window.scheduleQuotationDraftAutosave==='function')window.scheduleQuotationDraftAutosave('customer_selection');
 }
-function renderPromos(){let q=($('searchPromos')?.value||'').toLowerCase(); const grid=$('promoGrid'); if(!grid)return; grid.innerHTML=DB.promotions.filter(p=>JSON.stringify(p).toLowerCase().includes(q)).map(p=>`<div class="card"><span class="pill ${p.brand==='Weber'?'yellow':'blue'}">${escapeHtml(p.brand||'-')}</span><h3>${escapeHtml(p.productName||'-')}</h3><p>${escapeHtml(p.description||'')}</p><b>${escapeHtml(p.discountText||'')}</b><p style="color:var(--muted)">${escapeHtml(p.startDate||'')} - ${escapeHtml(p.endDate||'')}</p></div>`).join('')}
+function createUiElement(tag,className,text){
+  const el=document.createElement(tag);
+  if(className)el.className=className;
+  if(text!==undefined&&text!==null)el.textContent=String(text);
+  return el;
+}
+function clearNode(node){
+  if(node&&typeof node.replaceChildren==='function')node.replaceChildren();
+  else if(node)while(node.firstChild)node.removeChild(node.firstChild);
+}
+function getPromotionProductBrandKey(product){
+  const unit=normalizeProductBusinessUnitForUi(product);
+  const text=String(unit||product&&product.brand||'').trim().toUpperCase();
+  if(text.indexOf('GYPROC')>=0)return 'GYPROC';
+  if(text.indexOf('WEBER')>=0)return 'WEBER';
+  return 'UNKNOWN';
+}
+function getPromotionProductBrandLabel(product){
+  const key=getPromotionProductBrandKey(product);
+  if(key==='GYPROC')return 'Gyproc';
+  if(key==='WEBER')return 'Weber';
+  return String(product&&product.brand||product&&product.businessUnit||'-').trim()||'-';
+}
+function promotionBrandLabelFromKeys(keys){
+  const list=Array.isArray(keys)?keys.filter(key=>key&&key!=='UNKNOWN'):[];
+  if(list.indexOf('WEBER')>=0&&list.indexOf('GYPROC')>=0)return 'Multi Brand';
+  if(list.indexOf('GYPROC')>=0)return 'Gyproc';
+  if(list.indexOf('WEBER')>=0)return 'Weber';
+  return '-';
+}
+function promotionBrandClass(label){
+  const text=String(label||'').toUpperCase();
+  if(text.indexOf('WEBER')>=0)return 'yellow';
+  if(text.indexOf('GYPROC')>=0)return 'blue';
+  return 'blue';
+}
+function getPromotionProductCode(product){
+  const item=product&&typeof product==='object'?product:{};
+  return String(item.productCode||item.sku||item.productId||item.id||item.itemCode||'').trim();
+}
+function getPromotionCodeValue(product){
+  const item=product&&typeof product==='object'?product:{};
+  const fields=['promotionCode','promoCode','promotionId','promoId'];
+  for(let i=0;i<fields.length;i++){
+    const value=item[fields[i]];
+    if(value!==undefined&&value!==null&&String(value).trim())return String(value).trim();
+  }
+  return '';
+}
+function hashStringForPromotionCode(value){
+  const text=String(value||'').trim();
+  let hash=0;
+  for(let i=0;i<text.length;i++){
+    hash=((hash<<5)-hash)+text.charCodeAt(i);
+    hash|=0;
+  }
+  return Math.abs(hash).toString(36).toUpperCase().padStart(6,'0').slice(-6);
+}
+function fallbackPromotionCode(promoText){
+  return 'PROMO-'+hashStringForPromotionCode(promoText||'promotion');
+}
+function normalizePromotionTextForGroup(value){
+  return normalizeProductPromoText(value).replace(/\s+/g,' ').trim().toLowerCase();
+}
+function createPromotionGroupKey(product,promoText){
+  const code=getPromotionCodeValue(product);
+  if(code)return 'code:'+normalizePromotionTextForGroup(code);
+  return 'text:'+normalizePromotionTextForGroup(promoText);
+}
+function summarizePromotionText(text){
+  const clean=String(text||'').replace(/\s+/g,' ').trim();
+  if(!clean)return '-';
+  return clean.length>150?clean.slice(0,147).trim()+'...':clean;
+}
+function normalizePromotionProductForDashboard(product){
+  const item=normalizeProduct(product);
+  const identityKey=createProductIdentityKey(item);
+  const recordKey=item.sourceProductRecordKey||getStableProductRecordKey(item,'promotion-dashboard');
+  return Object.assign({},item,{
+    productIdentityKey:identityKey,
+    sourceProductIdentityKey:item.sourceProductIdentityKey||identityKey,
+    sourceProductRecordKey:recordKey,
+    productCode:getPromotionProductCode(item),
+    brand:getPromotionProductBrandLabel(item),
+    promoText:getProductPromoText(item)
+  });
+}
+function normalizePromotionGroupForDashboard(group){
+  const item=group&&typeof group==='object'?group:{};
+  const products=dedupeExactProducts((Array.isArray(item.products)?item.products:[]).map(normalizePromotionProductForDashboard),'promotionDashboard.groupProducts');
+  const brandKeys=Array.isArray(item.brandKeys)&&item.brandKeys.length
+    ? item.brandKeys.map(key=>String(key||'').trim().toUpperCase()).filter(Boolean)
+    : Array.from(new Set(products.map(getPromotionProductBrandKey))).filter(Boolean);
+  const promotionText=String(item.promotionText||item.fullPromotionText||item.promoText||products[0]?.promoText||'').trim();
+  const code=String(item.promotionCode||item.promoCode||item.promotionId||'').trim()||fallbackPromotionCode(promotionText);
+  const promotionKey=String(item.promotionKey||item.key||'').trim()||('code:'+normalizePromotionTextForGroup(code)+'|text:'+normalizePromotionTextForGroup(promotionText));
+  const brand=String(item.brand||'').trim()||promotionBrandLabelFromKeys(brandKeys);
+  return {
+    promotionKey,
+    promotionCode:code,
+    brand,
+    brandKeys,
+    promotionText,
+    promotionSummary:String(item.promotionSummary||item.summary||'').trim()||summarizePromotionText(promotionText),
+    fullPromotionText:String(item.fullPromotionText||promotionText).trim(),
+    productCount:Number(item.productCount||products.length)||products.length,
+    products
+  };
+}
+function buildPromotionDashboardSummary(groups){
+  const list=Array.isArray(groups)?groups:[];
+  return {
+    totalPromotions:list.length,
+    productsInPromotion:list.reduce((sum,group)=>sum+Number(group.productCount||group.products?.length||0),0),
+    weberPromotions:list.filter(group=>(group.brandKeys||[]).indexOf('WEBER')>=0).length,
+    gyprocPromotions:list.filter(group=>(group.brandKeys||[]).indexOf('GYPROC')>=0).length,
+    multiBrandPromotions:list.filter(group=>(group.brandKeys||[]).indexOf('WEBER')>=0&&(group.brandKeys||[]).indexOf('GYPROC')>=0).length
+  };
+}
+function buildPromotionDashboardFromProducts(products){
+  const sourceList=(Array.isArray(products)?products:[]).map(normalizeProduct);
+  const list=dedupeExactProducts(sourceList,'promotionDashboard.sourceProducts');
+  const groupsByKey=new Map();
+  list.forEach(product=>{
+    const promoText=getProductPromoText(product);
+    if(!promoText)return;
+    const groupKey=createPromotionGroupKey(product,promoText);
+    if(!groupKey.replace(/^(code|text):/,''))return;
+    if(!groupsByKey.has(groupKey)){
+      const code=getPromotionCodeValue(product)||fallbackPromotionCode(promoText);
+      groupsByKey.set(groupKey,{
+        promotionKey:groupKey,
+        promotionCode:code,
+        promotionText:promoText,
+        fullPromotionText:promoText,
+        promotionSummary:summarizePromotionText(promoText),
+        brandKeys:new Set(),
+        products:[]
+      });
+    }
+    const group=groupsByKey.get(groupKey);
+    group.brandKeys.add(getPromotionProductBrandKey(product));
+    if(group.fullPromotionText.indexOf(promoText)<0){
+      group.fullPromotionText=group.fullPromotionText+'\n\n'+promoText;
+    }
+    group.products.push(normalizePromotionProductForDashboard(product));
+  });
+  const groups=Array.from(groupsByKey.values()).map(group=>{
+    const products=dedupeExactProducts(group.products,'promotionDashboard.products');
+    const brandKeys=Array.from(group.brandKeys).filter(Boolean);
+    return normalizePromotionGroupForDashboard(Object.assign({},group,{
+      brandKeys,
+      brand:promotionBrandLabelFromKeys(brandKeys),
+      productCount:products.length,
+      products
+    }));
+  }).sort((a,b)=>String(a.promotionCode||'').localeCompare(String(b.promotionCode||''),'th')||String(a.brand||'').localeCompare(String(b.brand||''),'th'));
+  const summary=Object.assign(buildPromotionDashboardSummary(groups),{
+    sourceCount:sourceList.length,
+    deduplicatedCount:list.length,
+    removedDuplicateCount:Math.max(0,sourceList.length-list.length)
+  });
+  return {groups,summary,products:groups.reduce((acc,group)=>acc.concat(group.products),[])};
+}
+function normalizePromotionDashboardData(data){
+  const source=data&&typeof data==='object'?data:{};
+  if(Array.isArray(source.groups)){
+    const groups=source.groups.map(normalizePromotionGroupForDashboard);
+    return {groups,summary:Object.assign({},source.summary||{},buildPromotionDashboardSummary(groups)),products:groups.reduce((acc,group)=>acc.concat(group.products),[])};
+  }
+  if(Array.isArray(source.products))return buildPromotionDashboardFromProducts(source.products);
+  if(Array.isArray(data))return buildPromotionDashboardFromProducts(data);
+  return {groups:[],summary:buildPromotionDashboardSummary([]),products:[]};
+}
+function setPromotionDashboardData(data,source){
+  PROMOTION_DASHBOARD=normalizePromotionDashboardData(data);
+  DB.productPromotions=PROMOTION_DASHBOARD;
+  promotionDashboardLoaded=true;
+  promotionDashboardError='';
+  if(typeof setCache==='function')setCache(PRODUCT_PROMOTIONS_CACHE_KEY,PROMOTION_DASHBOARD,15);
+  const info=PROMOTION_DASHBOARD.summary||{};
+  if(typeof console!=='undefined'&&typeof console.info==='function'){
+    console.info('[PROMOTION_DASHBOARD]',{
+      source:source||'unknown',
+      totalPromotions:info.totalPromotions||0,
+      productsInPromotion:info.productsInPromotion||0,
+      sourceCount:info.sourceCount||0,
+      deduplicatedCount:info.deduplicatedCount||info.deduplicatedSourceCount||0,
+      removedDuplicateCount:info.removedDuplicateCount||Math.max(0,Number(info.sourceCount||0)-Number(info.deduplicatedCount||info.deduplicatedSourceCount||0))
+    });
+  }
+  return PROMOTION_DASHBOARD;
+}
+function invalidatePromotionDashboardCache(clearPersistent){
+  PROMOTION_DASHBOARD={groups:[],summary:buildPromotionDashboardSummary([]),products:[]};
+  DB.productPromotions=PROMOTION_DASHBOARD;
+  promotionDashboardLoaded=false;
+  promotionDashboardError='';
+  if(clearPersistent&&typeof clearCache==='function')clearCache(PRODUCT_PROMOTIONS_CACHE_KEY);
+}
+async function loadPromotionDashboard(options){
+  const force=!!(options&&options.force);
+  const background=!!(options&&options.background);
+  if(promotionDashboardLoaded&&!force)return {ok:true,data:PROMOTION_DASHBOARD,cached:true};
+  if(promotionDashboardPromise&&!force)return promotionDashboardPromise;
+  if(!force&&productsLoaded&&Array.isArray(DB.products)&&DB.products.length){
+    const data=setPromotionDashboardData(buildPromotionDashboardFromProducts(DB.products),'products-cache');
+    renderPromotionViews();
+    return {ok:true,data,cached:true};
+  }
+  if(!force&&typeof getCache==='function'){
+    const cachedProducts=getCache('sg_products_cache');
+    if(Array.isArray(cachedProducts)){
+      setProductsData(cachedProducts);
+      renderPromotionViews();
+      return {ok:true,data:PROMOTION_DASHBOARD,cached:true};
+    }
+  }
+  if(!force&&typeof getCache==='function'){
+    const cached=getCache(PRODUCT_PROMOTIONS_CACHE_KEY);
+    if(cached&&typeof cached==='object'&&Array.isArray(cached.groups)){
+      const data=setPromotionDashboardData(cached,'frontend-cache');
+      renderPromotionViews();
+      return {ok:true,data,cached:true};
+    }
+  }
+  promotionDashboardPromise=(async()=>{
+    try{
+      promotionDashboardError='';
+      if(!background)renderPromos();
+      const response=await callApi('getProductPromotions',force?{force:true}:{});
+      if(response&&response.ok){
+        const data=setPromotionDashboardData(response.data||{},'api');
+        renderPromotionViews();
+        return {ok:true,data:data};
+      }
+      if(Array.isArray(DB.products)&&DB.products.length){
+        const data=setPromotionDashboardData(buildPromotionDashboardFromProducts(DB.products),'products-fallback');
+        renderPromotionViews();
+        return {ok:true,data:data,fallback:true};
+      }
+      promotionDashboardError=response&&response.message?response.message:'Unable to load promotions.';
+      renderPromotionViews();
+      return response||{ok:false,message:promotionDashboardError};
+    }catch(error){
+      promotionDashboardError=String(error&&error.message?error.message:error||'Unable to load promotions.');
+      renderPromotionViews();
+      return {ok:false,message:promotionDashboardError};
+    }finally{
+      promotionDashboardPromise=null;
+    }
+  })();
+  return promotionDashboardPromise;
+}
+function refreshPromotionDashboard(){
+  invalidatePromotionDashboardCache(true);
+  return loadPromotionDashboard({force:true});
+}
+function getPromotionDashboardGroups(){
+  return Array.isArray(PROMOTION_DASHBOARD.groups)?PROMOTION_DASHBOARD.groups:[];
+}
+function getPromotionDashboardGroupByKey(key){
+  const target=String(key||'').trim();
+  return getPromotionDashboardGroups().find(group=>String(group.promotionKey||'').trim()===target)||null;
+}
+function renderPromotionViews(){
+  renderPromos();
+  renderHome();
+}
+function appendPromotionSummaryCard(container,label,value,helper){
+  const card=createUiElement('div','promotion-summary-card');
+  const small=createUiElement('small','',label);
+  const strong=createUiElement('b','',value);
+  card.append(small,strong);
+  if(helper)card.appendChild(createUiElement('span','',helper));
+  container.appendChild(card);
+}
+function renderPromotionSummary(){
+  const root=$('promotionSummary');
+  if(!root)return;
+  clearNode(root);
+  const summary=PROMOTION_DASHBOARD.summary||buildPromotionDashboardSummary(getPromotionDashboardGroups());
+  appendPromotionSummaryCard(root,'Total Promotions',summary.totalPromotions||0,'กลุ่มโปรโมชัน');
+  appendPromotionSummaryCard(root,'Products in Promotion',summary.productsInPromotion||0,'สินค้าในโปร');
+  appendPromotionSummaryCard(root,'Weber Promotions',summary.weberPromotions||0,'กลุ่มที่มี Weber');
+  appendPromotionSummaryCard(root,'Gyproc Promotions',summary.gyprocPromotions||0,'กลุ่มที่มี Gyproc');
+}
+function renderPromotionState(message,type,withRetry){
+  const state=$('promotionState');
+  if(!state)return;
+  clearNode(state);
+  state.className='promotion-state'+(type?' '+type:'');
+  state.hidden=!message&&!withRetry;
+  if(message)state.appendChild(createUiElement('span','',message));
+  if(withRetry){
+    const button=createUiElement('button','ghost','Retry');
+    button.type='button';
+    button.onclick=refreshPromotionDashboard;
+    button.setAttribute('aria-label','Retry loading promotions');
+    state.appendChild(button);
+  }
+}
+function renderPromotionSkeleton(grid){
+  clearNode(grid);
+  for(let i=0;i<4;i++){
+    const card=createUiElement('div','card promotion-card promotion-skeleton');
+    card.setAttribute('aria-hidden','true');
+    card.append(createUiElement('div','promotion-skeleton-line short'),createUiElement('div','promotion-skeleton-line'),createUiElement('div','promotion-skeleton-line'),createUiElement('div','promotion-skeleton-actions'));
+    grid.appendChild(card);
+  }
+}
+function getPromotionSearchFields(group){
+  const products=Array.isArray(group&&group.products)?group.products:[];
+  return [
+    group&&group.promotionCode,
+    group&&group.promotionText,
+    group&&group.promotionSummary,
+    group&&group.fullPromotionText,
+    group&&group.brand,
+    products.map(product=>[product.productName,product.productCode,product.sku,product.productId,product.brand].join(' ')).join(' ')
+  ].join(' ');
+}
+function getFilteredPromotionGroups(){
+  const q=String($('searchPromos')?.value||'').trim();
+  const brandFilter=String($('promotionBrandFilter')?.value||'').trim().toUpperCase();
+  return getPromotionDashboardGroups().filter(group=>{
+    const brandKeys=Array.isArray(group.brandKeys)?group.brandKeys:[];
+    const brandOk=!brandFilter||brandKeys.indexOf(brandFilter)>=0||(brandFilter==='MULTI'&&brandKeys.indexOf('WEBER')>=0&&brandKeys.indexOf('GYPROC')>=0);
+    return brandOk&&(!q||smartMatch({search:getPromotionSearchFields(group)},q,['search']));
+  });
+}
+function renderPromotionCard(group){
+  const card=createUiElement('article','card promotion-card');
+  card.dataset.promotionKey=group.promotionKey||'';
+  const head=createUiElement('div','promotion-card-head');
+  const brand=createUiElement('span','pill '+promotionBrandClass(group.brand),group.brand||'-');
+  const code=createUiElement('b','promotion-code',group.promotionCode||'-');
+  head.append(brand,code);
+  const title=createUiElement('h3','',group.promotionSummary||'-');
+  const text=createUiElement('p','promotion-card-text',group.promotionText||'-');
+  const meta=createUiElement('div','promotion-card-meta');
+  meta.appendChild(createUiElement('span','',String(group.productCount||0)+' products'));
+  const actions=createUiElement('div','promotion-card-actions');
+  const detailButton=createUiElement('button','ghost','View Details');
+  detailButton.type='button';
+  detailButton.setAttribute('aria-label','View promotion details '+(group.promotionCode||''));
+  detailButton.addEventListener('click',event=>openPromotionDetail(group.promotionKey,event));
+  const productsButton=createUiElement('button','primary','View Products');
+  productsButton.type='button';
+  productsButton.setAttribute('aria-label','View products in promotion '+(group.promotionCode||''));
+  productsButton.addEventListener('click',()=>renderPromotionProductPanel(group.promotionKey));
+  actions.append(detailButton,productsButton);
+  card.append(head,title,text,meta,actions);
+  return card;
+}
+function renderPromos(){
+  const grid=$('promoGrid');
+  if(!grid)return;
+  renderPromotionSummary();
+  const panel=$('promotionProductPanel');
+  if(panel&&panel.dataset.promotionKey&&!getPromotionDashboardGroupByKey(panel.dataset.promotionKey)){
+    closePromotionProductPanel();
+  }
+  if(promotionDashboardError){
+    renderPromotionState('Unable to load promotions.','error',true);
+    clearNode(grid);
+    return;
+  }
+  if(promotionDashboardPromise&&!promotionDashboardLoaded){
+    renderPromotionState('Loading promotions...','loading',false);
+    renderPromotionSkeleton(grid);
+    return;
+  }
+  const groups=getFilteredPromotionGroups();
+  clearNode(grid);
+  if(!promotionDashboardLoaded&&!getPromotionDashboardGroups().length){
+    renderPromotionState('Loading promotions...','loading',false);
+    renderPromotionSkeleton(grid);
+    return;
+  }
+  if(!groups.length){
+    renderPromotionState('No promotions available.','empty',false);
+    return;
+  }
+  renderPromotionState('', '', false);
+  groups.forEach(group=>grid.appendChild(renderPromotionCard(group)));
+}
+let PROMOTION_DETAIL_LAST_FOCUS=null;
+function deactivatePromotionDashboardModal(){
+  const modal=$('modal');
+  if(modal)modal.classList.remove('promotion-dashboard-modal');
+  const body=$('modalBody');
+  if(body)body.classList.remove('promotion-dashboard-modal-body');
+  if(PROMOTION_DETAIL_LAST_FOCUS&&typeof PROMOTION_DETAIL_LAST_FOCUS.focus==='function'){
+    try{PROMOTION_DETAIL_LAST_FOCUS.focus({preventScroll:true});}catch(error){try{PROMOTION_DETAIL_LAST_FOCUS.focus();}catch(ignore){}}
+  }
+  PROMOTION_DETAIL_LAST_FOCUS=null;
+}
+function appendPromotionDetailRow(root,label,value){
+  const row=createUiElement('div','promotion-detail-row');
+  row.append(createUiElement('small','',label),createUiElement('b','',value||'-'));
+  root.appendChild(row);
+}
+function openPromotionDetail(promotionKey,event){
+  if(event&&typeof event.preventDefault==='function')event.preventDefault();
+  const group=getPromotionDashboardGroupByKey(promotionKey);
+  if(!group){toast('Promotion not found');return;}
+  PROMOTION_DETAIL_LAST_FOCUS=event&&event.currentTarget||document.activeElement;
+  const modal=$('modal'),title=$('modalTitle'),body=$('modalBody');
+  if(!modal||!title||!body)return;
+  title.textContent='Promotion Details';
+  clearNode(body);
+  body.classList.add('promotion-dashboard-modal-body');
+  const detail=createUiElement('div','promotion-detail');
+  const meta=createUiElement('div','promotion-detail-meta');
+  appendPromotionDetailRow(meta,'Promotion Code',group.promotionCode);
+  appendPromotionDetailRow(meta,'Brand',group.brand);
+  appendPromotionDetailRow(meta,'Product Count',group.productCount);
+  detail.appendChild(meta);
+  const full=createUiElement('div','promotion-detail-full',group.fullPromotionText||group.promotionText||'-');
+  full.tabIndex=0;
+  detail.appendChild(full);
+  const actions=createUiElement('div','actions promotion-card-actions');
+  const closeButton=createUiElement('button','primary','Close');
+  closeButton.type='button';
+  closeButton.onclick=closeModal;
+  actions.appendChild(closeButton);
+  detail.appendChild(actions);
+  body.appendChild(detail);
+  modal.classList.remove('customer-modal');
+  modal.classList.add('product-promo-modal','promotion-dashboard-modal','show');
+  document.body.classList.add('product-promo-scroll-locked');
+  ensureProductPromoEscapeHandler();
+  const card=modal.querySelector('.modal-card');
+  if(card){
+    card.setAttribute('role','dialog');
+    card.setAttribute('aria-modal','true');
+    card.setAttribute('aria-labelledby','modalTitle');
+  }
+  setTimeout(()=>{try{closeButton.focus();}catch(error){}},0);
+}
+function closePromotionProductPanel(){
+  const panel=$('promotionProductPanel');
+  if(!panel)return;
+  panel.hidden=true;
+  panel.classList.add('hidden');
+  delete panel.dataset.promotionKey;
+  clearNode($('promotionProductList'));
+}
+function renderPromotionProductPanel(promotionKey){
+  const group=getPromotionDashboardGroupByKey(promotionKey);
+  const panel=$('promotionProductPanel');
+  const list=$('promotionProductList');
+  const title=$('promotionProductTitle');
+  if(!group||!panel||!list)return;
+  panel.hidden=false;
+  panel.classList.remove('hidden');
+  panel.dataset.promotionKey=group.promotionKey||'';
+  if(title)title.textContent='Products in '+(group.promotionCode||'Promotion');
+  clearNode(list);
+  group.products.forEach(product=>{
+    const item=normalizePromotionProductForDashboard(product);
+    const recordKey=registerProductRecordSelection(item,'promotion-dashboard');
+    const row=createUiElement('div','row promotion-product-row');
+    const brand=createUiElement('span','pill '+promotionBrandClass(item.brand),item.brand||'-');
+    const main=createUiElement('div','promotion-product-main');
+    main.append(createUiElement('b','',item.productName||'-'),createUiElement('small','',(item.productCode||item.sku||item.productId||'-')+' · '+(item.unit||'-')));
+    const price=createUiElement('b','promotion-product-price',money(item.listPrice||item.price||0));
+    const button=createUiElement('button','tiny','View Product');
+    button.type='button';
+    button.setAttribute('aria-label','View product '+(item.productName||item.productCode||''));
+    button.addEventListener('click',()=>goToPromotionProduct(recordKey));
+    row.append(brand,main,price,button);
+    list.appendChild(row);
+  });
+  panel.scrollIntoView({behavior:'smooth',block:'nearest'});
+  const closeButton=panel.querySelector('button');
+  if(closeButton)try{closeButton.focus({preventScroll:true});}catch(error){}
+}
+async function goToPromotionProduct(recordKey){
+  const product=resolveProductRecordSelection(recordKey);
+  if(!product){toast('Product not found');return;}
+  const search=$('searchProducts');
+  if(search)search.value=product.productCode||product.sku||product.productId||product.productName||'';
+  const navResult=go('products');
+  if(navResult&&typeof navResult.then==='function')await navResult;
+  else if(!productsLoaded)await loadProducts({background:true});
+  if(search)search.value=product.productCode||product.sku||product.productId||product.productName||'';
+  renderProducts();
+  const identity=createProductIdentityKey(product);
+  setTimeout(()=>{
+    const cards=Array.from(document.querySelectorAll('#productGrid [data-product-identity-key]'));
+    const card=cards.find(node=>String(node.dataset.productIdentityKey||'')===identity);
+    if(card){
+      card.classList.add('promotion-product-highlight');
+      card.scrollIntoView({behavior:'smooth',block:'center'});
+      try{card.focus({preventScroll:true});}catch(error){}
+      setTimeout(()=>card.classList.remove('promotion-product-highlight'),2200);
+    }
+  },80);
+}
 function normalizeQuoteTypeForUi(value){
   const text=String(value||'').trim().toUpperCase();
   return text==='GYPROC'?'GYPROC':'WEBER';
@@ -1922,8 +2433,12 @@ function renderHome(){
   setText('statPending',metrics.draft.length);
   setText('rProducts',productCount);
   setText('rCustomers',customerCount);
-  setText('rPromos',DB.promotions.length);
+  const promotionSummary=PROMOTION_DASHBOARD.summary||buildPromotionDashboardSummary(getPromotionDashboardGroups());
+  setText('rPromos',promotionSummary.totalPromotions||0);
   setText('rQuotes',metrics.quotes.length);
+  if(canViewPromotionsUi()&&!promotionDashboardLoaded&&!promotionDashboardPromise){
+    loadPromotionDashboard({background:true});
+  }
   if(!quoteHistoryLoaded&&!quoteHistoryPromise&&(!Array.isArray(DB.quotes)||!DB.quotes.length)){
     ensureQuotationHistoryLoaded();
   }
@@ -2811,6 +3326,7 @@ closeModal=function(){
   baseCloseModalForCustomerLayout();
   deactivateCustomerModalLayout();
   deactivateProductPromotionModal();
+  deactivatePromotionDashboardModal();
 };
 const baseSaveCustomerModalForCustomerLayout=saveCustomerModal;
 saveCustomerModal=async function(existingId){
@@ -2990,9 +3506,10 @@ function renderProductCard(product,sourceListIndex){
   const recordKey=registerProductCalculatorRecord(p,sourceListIndex);
   const key=htmlAttr(recordKey);
   const keyJs=jsStringLiteralAttr(recordKey);
+  const identity=htmlAttr(createProductIdentityKey(p));
   const brandClass=normalizeProductBusinessUnitForUi(p)==='WEBER'||p.brand==='Weber'?'yellow':'blue';
   const promoHtml=renderProductPromotionTeaser(p,recordKey,'product-list');
-  return `<div class="card product-card-clickable" role="button" tabindex="0" data-product-record-key="${key}" onclick="openProductCalculator(${keyJs})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProductCalculator(${keyJs})}"><span class="pill ${brandClass}">${escapeHtml(p.brand||'-')}</span><h3>${escapeHtml(p.productName||'-')}</h3><p>รหัสสินค้า: ${escapeHtml(p.sku||p.productId||p.id||'-')}</p><p>${escapeHtml(p.unit||'-')}</p><b>${money(p.listPrice)}</b>${promoHtml}<div class="product-card-actions"><button type="button" class="ghost" onclick="addProductCardToQuote(${keyJs},event)">เพิ่มลงใบเสนอราคา</button></div></div>`;
+  return `<div class="card product-card-clickable" role="button" tabindex="0" data-product-record-key="${key}" data-product-identity-key="${identity}" onclick="openProductCalculator(${keyJs})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProductCalculator(${keyJs})}"><span class="pill ${brandClass}">${escapeHtml(p.brand||'-')}</span><h3>${escapeHtml(p.productName||'-')}</h3><p>รหัสสินค้า: ${escapeHtml(p.sku||p.productId||p.id||'-')}</p><p>${escapeHtml(p.unit||'-')}</p><b>${money(p.listPrice)}</b>${promoHtml}<div class="product-card-actions"><button type="button" class="ghost" onclick="addProductCardToQuote(${keyJs},event)">เพิ่มลงใบเสนอราคา</button></div></div>`;
 }
 function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); if(!productsLoaded&&!DB.products.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} resetProductCalculatorRecordRegistry(); grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>renderProductCard(p,DB.products.indexOf(p))).join('')}
 
@@ -3286,6 +3803,6 @@ async function persistPinnedProductOrder(){const grid=$('pinnedProductGrid');if(
 function bindPinnedProductDragAndDrop(){const grid=$('pinnedProductGrid');if(!grid||grid.dataset.bound)return;grid.dataset.bound='true';let dragged=null;grid.addEventListener('dragstart',event=>{dragged=event.target.closest('.pinned-product-card');if(!dragged)return;dragged.classList.add('is-dragging');event.dataTransfer.effectAllowed='move'});grid.addEventListener('dragover',event=>{event.preventDefault();const target=event.target.closest('.pinned-product-card');if(dragged&&target&&target!==dragged)grid.insertBefore(dragged,target)});grid.addEventListener('dragend',()=>{if(dragged)dragged.classList.remove('is-dragging');dragged=null;persistPinnedProductOrder()});let timer=null,touchCard=null;grid.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'||event.target.closest('button,a,[data-no-drag]'))return;touchCard=event.target.closest('.pinned-product-card');if(touchCard)timer=setTimeout(()=>{touchCard.classList.add('is-dragging');try{touchCard.setPointerCapture(event.pointerId)}catch(error){}},350)});grid.addEventListener('pointermove',event=>{if(!touchCard||!touchCard.classList.contains('is-dragging'))return;event.preventDefault();const target=document.elementFromPoint(event.clientX,event.clientY)?.closest('.pinned-product-card');if(target&&target!==touchCard)grid.insertBefore(touchCard,target)});const finish=()=>{clearTimeout(timer);if(touchCard&&touchCard.classList.contains('is-dragging')){touchCard.classList.remove('is-dragging');persistPinnedProductOrder()}touchCard=null};grid.addEventListener('pointerup',finish);grid.addEventListener('pointercancel',finish)}
 const baseFilterQuoteProductsByBusinessUnitForPreferences=filterQuoteProductsByBusinessUnit;
 filterQuoteProductsByBusinessUnit=function(query,businessUnit){return baseFilterQuoteProductsByBusinessUnitForPreferences(query,businessUnit).map(decorateQuotePreferenceProduct).sort((a,b)=>productPreferenceRank(a)-productPreferenceRank(b)||rankQuoteProductBusinessUnit(a,businessUnit)-rankQuoteProductBusinessUnit(b,businessUnit)||rankQuoteProduct(a,query)-rankQuoteProduct(b,query)||String(a.productName||'').localeCompare(String(b.productName||''),'th'))};
-window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.addProductCardToQuote=addProductCardToQuote; window.openProductPromotionDetail=openProductPromotionDetail; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.resetAuthenticatedFrontendState=resetAuthenticatedFrontendState; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.canCreateQuotationsUi=canCreateQuotationsUi; window.canEditQuotationsUi=canEditQuotationsUi; window.canViewQuotationsUi=canViewQuotationsUi; window.canExportQuotationsUi=canExportQuotationsUi; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
+window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.addProductCardToQuote=addProductCardToQuote; window.openProductPromotionDetail=openProductPromotionDetail; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.loadPromotionDashboard=loadPromotionDashboard; window.refreshPromotionDashboard=refreshPromotionDashboard; window.openPromotionDetail=openPromotionDetail; window.renderPromotionProductPanel=renderPromotionProductPanel; window.closePromotionProductPanel=closePromotionProductPanel; window.goToPromotionProduct=goToPromotionProduct; window.buildProductPromotionDashboardFromProducts=buildPromotionDashboardFromProducts; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.resetAuthenticatedFrontendState=resetAuthenticatedFrontendState; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.canCreateQuotationsUi=canCreateQuotationsUi; window.canEditQuotationsUi=canEditQuotationsUi; window.canViewQuotationsUi=canViewQuotationsUi; window.canExportQuotationsUi=canExportQuotationsUi; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
 window.createProductIdentityKey=createProductIdentityKey; window.dedupeExactProducts=dedupeExactProducts; window.dedupeExactProductsWithReport=dedupeExactProductsWithReport; window.cloneProductRecordForSelection=cloneProductRecordForSelection; window.getStableProductRecordKey=getStableProductRecordKey; window.registerProductRecordSelection=registerProductRecordSelection; window.resolveProductRecordSelection=resolveProductRecordSelection;
 window.normalizeSystemIdentitySettings=normalizeSystemIdentitySettings; window.applySystemIdentityToUI=applySystemIdentityToUI; window.renderLoginBranding=renderLoginBranding; window.renderSidebarBranding=renderSidebarBranding; window.refreshPublicSystemSettings=refreshPublicSystemSettings; window.setPublicSystemSettings=setPublicSystemSettings; window.loadSystemIdentitySettingsForSettings=loadSystemIdentitySettingsForSettings; window.saveSystemIdentitySettings=saveSystemIdentitySettings; window.savePersonalGreetingSettings=savePersonalGreetingSettings; window.saveSystemGreetingSettings=saveSystemGreetingSettings; window.canManageSystemIdentitySettings=canManageSystemIdentitySettings; window.applySettingsPermissionUi=applySettingsPermissionUi;

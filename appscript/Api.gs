@@ -77,6 +77,12 @@ function api(action, payload) {
       case 'getProducts':
         if (!permissions.canViewProducts) return forbidden('Insufficient permission');
         return authorizeAction(getProducts, []);
+      case 'getProductPromotions':
+      case 'getPromotionDashboard':
+        if (!permissions.canViewPromotions || !permissions.canViewProducts) return forbidden('Insufficient permission');
+        if (!payload || typeof payload !== 'object') payload = {};
+        payload.currentUser = user;
+        return authorizeAction(getProductPromotions, [payload]);
       case 'promotions':
       case 'getPromotions':
         if (!permissions.canViewPromotions) return forbidden('Insufficient permission');

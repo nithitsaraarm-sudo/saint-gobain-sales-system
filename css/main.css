@@ -63,6 +63,61 @@ body.sg-dialog-open,body.quotation-draft-modal-open{overflow:hidden;touch-action
 @media(max-width:900px){.dashboard-kpi-grid,.dashboard-section-grid,.dashboard-followup{grid-template-columns:1fr 1fr}.dashboard-kpi b{font-size:24px}}
 @media(max-width:560px){.dashboard-kpi-grid,.dashboard-section-grid,.dashboard-followup,.dashboard-mini-grid{grid-template-columns:1fr}.dashboard-row{grid-template-columns:1fr}.dashboard-row span{white-space:normal}}
 
+/* Product-derived Promotion Dashboard */
+.promotion-page-title{align-items:flex-start;gap:12px}
+.promotion-page-title h1{margin:0}
+.promotion-page-title p{margin:4px 0 0;color:var(--muted);font-weight:800;font-size:13px}
+.promotion-refresh-button{min-height:44px;white-space:nowrap}
+.promotion-dashboard{display:grid;gap:16px;min-width:0;max-width:100%}
+.promotion-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.promotion-summary-card{background:#fff;border:1px solid var(--line);border-radius:20px;padding:14px 16px;box-shadow:var(--shadow);min-width:0}
+.promotion-summary-card small{display:block;color:var(--muted);font-weight:900;line-height:1.25}
+.promotion-summary-card b{display:block;color:var(--blue);font-size:30px;line-height:1.15;margin-top:5px}
+.promotion-summary-card span{display:block;color:#475569;font-size:12px;font-weight:800;margin-top:4px}
+.promotion-toolbar{align-items:center;margin:0}
+.promotion-toolbar .search{min-height:44px}
+.promotion-brand-filter{flex:0 1 220px;max-width:240px}
+.promotion-state{display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px dashed var(--line);border-radius:18px;background:#fff;padding:12px 14px;color:var(--muted);font-weight:900;min-height:44px;overflow-wrap:anywhere}
+.promotion-state[hidden]{display:none}
+.promotion-state.error{border-color:#fecdd3;background:#fff1f2;color:#b42318}
+.promotion-state.loading{background:#f8fbff;color:var(--blue)}
+.promotion-state.empty{background:#fff;color:var(--muted)}
+.promotion-grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}
+.promotion-card{display:flex;flex-direction:column;gap:12px;min-width:0;max-width:100%;overflow:hidden}
+.promotion-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}
+.promotion-code{min-width:0;color:#08223c;font-size:14px;overflow-wrap:anywhere;text-align:right}
+.promotion-card h3{margin:0;color:#08223c;font-size:18px;line-height:1.35;overflow-wrap:anywhere}
+.promotion-card-text{margin:0;color:#475569;line-height:1.45;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.promotion-card-meta{display:flex;gap:8px;flex-wrap:wrap;color:var(--muted);font-weight:900;font-size:13px;margin-top:auto}
+.promotion-card-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:2px}
+.promotion-card-actions button{min-height:44px}
+.promotion-product-panel{margin-top:4px;scroll-margin-top:calc(env(safe-area-inset-top,0px) + 84px)}
+.promotion-product-list{min-width:0;max-width:100%}
+.promotion-product-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;gap:10px;max-width:100%;overflow:hidden}
+.promotion-product-main{display:grid;gap:3px;min-width:0}
+.promotion-product-main b{overflow-wrap:anywhere;line-height:1.35}
+.promotion-product-main small{color:var(--muted);font-weight:800;overflow-wrap:anywhere}
+.promotion-product-price{color:var(--blue);white-space:nowrap}
+.promotion-detail{display:grid;gap:14px;min-width:0;max-width:100%}
+.promotion-dashboard-modal-body{min-height:0;overflow:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding-right:2px}
+.promotion-detail-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.promotion-detail-row{border:1px solid var(--line);border-radius:16px;background:#f8fbff;padding:10px 12px;min-width:0}
+.promotion-detail-row small{display:block;color:var(--muted);font-weight:900;margin-bottom:3px}
+.promotion-detail-row b{display:block;color:#08223c;overflow-wrap:anywhere}
+.promotion-detail-full{box-sizing:border-box;border:1px solid var(--line);background:#fff;border-radius:18px;padding:14px;white-space:pre-wrap;line-height:1.6;overflow:auto;overflow-x:hidden;max-height:min(48vh,420px);-webkit-overflow-scrolling:touch;overscroll-behavior:contain;overflow-wrap:anywhere}
+.promotion-detail-full:focus{outline:3px solid rgba(0,103,177,.18);outline-offset:2px}
+.promotion-skeleton{pointer-events:none}
+.promotion-skeleton-line,.promotion-skeleton-actions{height:14px;border-radius:999px;background:linear-gradient(90deg,#eef3f9,#f8fbff,#eef3f9);background-size:220% 100%;animation:promotionSkeleton 1.4s ease-in-out infinite}
+.promotion-skeleton-line.short{width:45%}
+.promotion-skeleton-line{width:100%}
+.promotion-skeleton-actions{width:70%;height:38px;border-radius:16px}
+.promotion-product-highlight{animation:promotionProductHighlight 2.2s ease;border-color:#f0d84b!important}
+@keyframes promotionSkeleton{0%{background-position:200% 0}100%{background-position:-200% 0}}
+@keyframes promotionProductHighlight{0%{box-shadow:0 0 0 0 rgba(255,210,0,.42);transform:translateY(-2px)}35%{box-shadow:0 0 0 7px rgba(255,210,0,.26)}100%{box-shadow:var(--shadow);transform:translateY(0)}}
+@media(max-width:900px){.promotion-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.promotion-brand-filter{max-width:none;flex:1 1 220px}.promotion-grid{grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}}
+@media(max-width:640px){.promotion-page-title{display:grid;grid-template-columns:1fr}.promotion-refresh-button{width:100%}.promotion-summary-grid,.promotion-grid{grid-template-columns:1fr}.promotion-toolbar{display:grid;grid-template-columns:1fr}.promotion-brand-filter,.promotion-toolbar .search{width:100%;max-width:100%;min-width:0}.promotion-card-actions{display:grid;grid-template-columns:1fr}.promotion-product-row{grid-template-columns:1fr;align-items:start}.promotion-product-price{white-space:normal}.promotion-detail-meta{grid-template-columns:1fr}.promotion-state{display:grid;grid-template-columns:1fr}.promotion-state button{width:100%}}
+@media(prefers-reduced-motion:reduce){.promotion-skeleton-line,.promotion-skeleton-actions,.promotion-product-highlight{animation:none}}
+
 /* Product card calculator */
 .product-card-clickable{cursor:pointer;transition:transform .16s ease,box-shadow .16s ease}
 .product-card-clickable:hover{transform:translateY(-2px);box-shadow:0 22px 46px rgba(15,42,82,.12)}
