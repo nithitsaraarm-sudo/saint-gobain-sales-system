@@ -4,6 +4,34 @@ Date: 2026-07-26
 Branch: `audit/full-remediation`
 Baseline audit commit: `0cb62334d62341a78ba6f3b1194ca42c985c1c47`
 
+## V1 final pre-release addendum — 2026-07-29
+
+Decision: **NOT READY** for real-user UAT or Pilot Go-Live today.
+
+Reason: the repository/static audit is substantially remediated, but release-blocking runtime validation has not been executed against the target Apps Script deployment, UAT Google Sheets, role-specific accounts, iPhone Safari, Android Chrome, Desktop browsers, or installed PWA sessions.
+
+Current evidence:
+
+- Branch inspected: `audit/full-remediation`
+- Commit inspected before this document phase: `6a723ed`
+- Version inspected: `0.5.26`
+- Static catalogue checks: 15/15 passed
+- Full catalogue coverage: 15/74 = 20.3%
+- Runtime/API/browser/PWA/production smoke tests: 59 blocked/not run; 0 claimed passed
+- Open release-gate issues: P0=1, P1=4, P2=3, P3=1
+
+Authoritative V1 readiness documents:
+
+- `FINAL_V1_PRE_RELEASE_AUDIT.md`
+- `TEST_CASES.md`
+- `UAT_CHECKLIST.md`
+- `KNOWN_ISSUES.md`
+- `PILOT_GO_LIVE_PLAN.md`
+- `ROLLBACK_PLAN_V1.md`
+- `RELEASE_NOTES_V1.md`
+
+Minimum action before status can move to `READY WITH CONDITIONS`: execute every P0 runtime/API/RBAC/PWA/browser test in `TEST_CASES.md`, attach evidence, verify backup/restore, and update this report with actual results.
+
 ## Completed phases
 
 | Phase | Status | Primary commit |

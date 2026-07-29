@@ -4,6 +4,29 @@ Date prepared: 2026-07-26
 Scope: Production regression catalogue for the audit-remediation branch.
 Sources: `FULL_PROJECT_AUDIT.md`, `RBAC_PERMISSION_AUDIT.md`, `REMEDIATION_PROGRESS.md`, `RELEASE_READINESS.md`, `ACCESSIBILITY_CHECKLIST.md`, and the current repository.
 
+## V1 final pre-release addendum — 2026-07-29
+
+This catalogue remains the production test source of truth for V1. During the final pre-release audit, no runtime/manual/browser/PWA/production smoke test was executed in this local environment.
+
+Current execution status:
+
+- Total catalogue: 74 tests
+- Static checks passed: 15
+- Runtime integration tests blocked/not run: 31
+- Manual browser/PWA tests blocked/not run: 17
+- Production smoke tests blocked/not run: 11
+- Failed tests reported by this audit: 0
+
+Important: this means the release is **not ready for real-user UAT/Pilot** until the P0 tests are executed against the target Apps Script deployment, UAT Google Sheets, role-specific users, and real browsers/devices. Static inspection is recorded only as `Static Check Passed`; do not convert it to runtime pass status without evidence.
+
+Related V1 documents:
+
+- `FINAL_V1_PRE_RELEASE_AUDIT.md`
+- `UAT_CHECKLIST.md`
+- `KNOWN_ISSUES.md`
+- `PILOT_GO_LIVE_PLAN.md`
+- `ROLLBACK_PLAN_V1.md`
+
 Important execution rule: do not mark a runtime/manual test as Passed unless it was actually executed in that stated environment. Static repository checks may be marked `Static Check Passed`. Tests requiring live Google Sheets, Apps Script deployment, browsers, devices, or credentials remain `Not Run` or `Blocked` with the reason recorded.
 
 ## 1. Critical pre-release gate

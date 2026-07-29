@@ -1,5 +1,32 @@
 # Saint-Gobain Sales System - Work History
 
+## 2026-07-29 - V1 final pre-release audit documentation package
+
+### Branch
+
+`audit/full-remediation`
+
+### Files changed
+
+- `FINAL_V1_PRE_RELEASE_AUDIT.md`
+- `UAT_CHECKLIST.md`
+- `PILOT_GO_LIVE_PLAN.md`
+- `KNOWN_ISSUES.md`
+- `RELEASE_NOTES_V1.md`
+- `ROLLBACK_PLAN_V1.md`
+- `RELEASE_READINESS.md`
+- `TEST_CASES.md`
+- `RBAC_PERMISSION_AUDIT.md`
+- `SECURITY.md`
+- `REMEDIATION_PROGRESS.md`
+
+### Summary
+
+- Performed a final static pre-release audit of the V1 candidate at version `0.5.26`.
+- Recorded release decision as `NOT READY` for real-user UAT/Pilot because runtime API, RBAC, mobile/PWA, production smoke, concurrency, and backup/restore evidence is still blocked/not run.
+- Created business-readable UAT checklist, pilot plan, release notes, known issues, and rollback plan.
+- No application code, API behavior, database schema, permissions, or configuration was changed in this phase.
+
 ไฟล์นี้ใช้เก็บประวัติการทำงานเชิงพัฒนา เพื่อส่งต่อให้ Codex/ผู้พัฒนาคนถัดไปเข้าใจบริบทล่าสุดได้เร็วกว่าอ่าน diff ทั้งหมด
 
 > หมายเหตุ: `CHANGELOG.md` มีอยู่แล้วและเหมาะสำหรับบันทึกการเปลี่ยนแปลงระดับ release ส่วนไฟล์นี้ใช้เป็น working notes / handoff notes ระหว่างพัฒนา

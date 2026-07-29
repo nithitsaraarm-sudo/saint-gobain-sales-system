@@ -1,5 +1,29 @@
 # Security Guidelines
 
+## V1 pre-release security addendum — 2026-07-29
+
+Final static security review status: **conditional / not production-cleared**.
+
+Static positives observed:
+
+- Production config has demo login disabled.
+- Non-public API actions pass through `requireApiUser()` in `appscript/Api.gs`.
+- Backend role checks exist for customers, products, promotions, quotations, users, settings, and system identity actions.
+- Customer area and assigned-sales scope is enforced in backend customer access helpers.
+- Quotation load/save/history paths include customer/quotation access checks and quote save lock/idempotency/rollback protection.
+- Discount API validates customer scope before returning discount data.
+- Service worker excludes Apps Script and token-bearing/sensitive requests from cache handling.
+- Profile image display uses canonical `profileImageUrl` with backward-compatible legacy reads and safe fallback.
+
+Open security/readiness risks:
+
+- P0 gate: runtime RBAC/data-isolation tests have not been executed against live UAT deployment/data/users.
+- Strict CSP is still future work because the legacy UI uses inline handlers and dynamic `innerHTML`.
+- Quotation concurrency and rollback behavior are statically implemented but require live simultaneous-save evidence.
+- Backup/restore drill has not been executed in this environment.
+
+Do not mark the system ready for real-user UAT/Pilot until the P0 security tests in `TEST_CASES.md` pass with evidence.
+
 เอกสารนี้สรุปแนวทางความปลอดภัยสำหรับโปรเจกต์ โดยครอบคลุมการจัดการสิทธิการเข้าถึง Google Sheets, การปกป้องข้อมูลส่วนบุคคล และแนวปฏิบัติด้านความปลอดภัยของฝั่งไคลเอนต์
 
 ## หลักการสำคัญ
