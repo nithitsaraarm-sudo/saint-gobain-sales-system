@@ -12,10 +12,14 @@ function cap(s) {
 }
 
 function toastMessage(message) {
-  if (typeof toast === 'function') {
+  if (typeof showToast === 'function') {
+    showToast({ type: 'info', message: message });
+  } else if (typeof toast === 'function') {
     toast(message);
   } else {
-    alert(message);
+    try {
+      console.warn('[Notification]', String(message || ''));
+    } catch (ignore) {}
   }
 }
 
