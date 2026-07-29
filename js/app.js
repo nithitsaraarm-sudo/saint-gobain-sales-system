@@ -121,7 +121,7 @@ function resetAuthenticatedFrontendState(){
 
 function checkAppVersion(){
   try{
-    const newVersion=String(window.APP_VERSION||'0.5.35').trim();
+    const newVersion=String(window.APP_VERSION||'0.5.36').trim();
     console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
     const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
     if(oldVersion===newVersion){
@@ -1921,6 +1921,43 @@ function clearNode(node){
   if(node&&typeof node.replaceChildren==='function')node.replaceChildren();
   else if(node)while(node.firstChild)node.removeChild(node.firstChild);
 }
+function createPromotionActionIcon(iconName){
+  const namespace='http://www.w3.org/2000/svg';
+  const svg=document.createElementNS(namespace,'svg');
+  svg.setAttribute('class','promotion-action-icon');
+  svg.setAttribute('viewBox','0 0 24 24');
+  svg.setAttribute('fill','none');
+  svg.setAttribute('stroke','currentColor');
+  svg.setAttribute('stroke-width','2');
+  svg.setAttribute('stroke-linecap','round');
+  svg.setAttribute('stroke-linejoin','round');
+  svg.setAttribute('aria-hidden','true');
+  svg.setAttribute('focusable','false');
+  const nodes=iconName==='package'
+    ? [
+      {tag:'path',attrs:{d:'m7.5 4.27 9 5.15'}},
+      {tag:'path',attrs:{d:'M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z'}},
+      {tag:'path',attrs:{d:'m3.3 7 8.7 5 8.7-5'}},
+      {tag:'path',attrs:{d:'M12 22V12'}}
+    ]
+    : [
+      {tag:'path',attrs:{d:'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'}},
+      {tag:'path',attrs:{d:'M14 2v6h6'}},
+      {tag:'path',attrs:{d:'M16 13H8'}},
+      {tag:'path',attrs:{d:'M16 17H8'}},
+      {tag:'path',attrs:{d:'M10 9H8'}}
+    ];
+  nodes.forEach(config=>{
+    const node=document.createElementNS(namespace,config.tag);
+    Object.keys(config.attrs).forEach(name=>node.setAttribute(name,config.attrs[name]));
+    svg.appendChild(node);
+  });
+  return svg;
+}
+function setPromotionActionButtonContent(button,iconName,label){
+  clearNode(button);
+  button.append(createPromotionActionIcon(iconName),createUiElement('span','promotion-action-label',label));
+}
 function getPromotionProductBrandKey(product){
   const unit=normalizeProductBusinessUnitForUi(product);
   const text=String(unit||product&&product.brand||'').trim().toUpperCase();
@@ -2641,14 +2678,19 @@ function renderPromotionCard(group){
   const dates=renderPromotionDateSummary(group);
   const meta=createUiElement('div','promotion-card-meta');
   meta.appendChild(createUiElement('span','',String(group.productCount||0)+' products'));
-  const actions=createUiElement('div','promotion-card-actions');
-  const detailButton=createUiElement('button','ghost','View Details');
+  const promotionCode=String(group.promotionCode||'').trim();
+  const actions=createUiElement('div','promotion-card-actions promotion-card-action-row');
+  const detailButton=createUiElement('button','promotion-action-button promotion-action-secondary');
   detailButton.type='button';
-  detailButton.setAttribute('aria-label','View promotion details '+(group.promotionCode||''));
+  detailButton.setAttribute('aria-label','View promotion details '+promotionCode);
+  detailButton.setAttribute('title','Details');
+  setPromotionActionButtonContent(detailButton,'file-text','รายละเอียด');
   detailButton.addEventListener('click',event=>openPromotionDetail(group.promotionKey,event));
-  const productsButton=createUiElement('button','primary','View Products');
+  const productsButton=createUiElement('button','promotion-action-button promotion-action-primary');
   productsButton.type='button';
-  productsButton.setAttribute('aria-label','View products in promotion '+(group.promotionCode||''));
+  productsButton.setAttribute('aria-label','View products in promotion '+promotionCode);
+  productsButton.setAttribute('title','Products');
+  setPromotionActionButtonContent(productsButton,'package','สินค้าร่วมรายการ');
   productsButton.addEventListener('click',()=>renderPromotionProductPanel(group.promotionKey));
   actions.append(detailButton,productsButton);
   card.append(head);
