@@ -86,24 +86,24 @@ body.sg-dialog-open,body.quotation-draft-modal-open{overflow:hidden;touch-action
 .promotion-state.empty{background:#fff;color:var(--muted)}
 .promotion-grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}
 .promotion-card{display:flex;flex-direction:column;gap:12px;min-width:0;max-width:100%;overflow:hidden}
-.promotion-status-badge{align-self:flex-start;display:inline-flex;align-items:flex-start;gap:8px;max-width:100%;border-radius:16px;padding:9px 11px;font-size:12px;font-weight:900;line-height:1.25;border:1px solid transparent;overflow-wrap:anywhere}
-.promotion-status-dot{flex:0 0 12px;width:12px;height:12px;border-radius:50%;margin-top:3px;background:currentColor}
+.promotion-status-badge{align-self:flex-start;display:inline-flex;align-items:flex-start;gap:5px;max-width:100%;border-radius:16px;padding:7px 8px;font-size:11px;font-weight:900;line-height:1.18;border:1px solid transparent;overflow-wrap:anywhere}
+.promotion-status-dot{flex:0 0 9px;width:9px;height:9px;border-radius:50%;margin-top:3px;background:currentColor}
 .promotion-status-text{display:grid;gap:1px;min-width:0}
 .promotion-status-text b,.promotion-status-text small{display:block;min-width:0;overflow-wrap:anywhere}
-.promotion-status-text b{font-size:13px;line-height:1.2}
-.promotion-status-text small{font-size:11px;line-height:1.25}
+.promotion-status-text b{font-size:12px;line-height:1.15}
+.promotion-status-text small{font-size:10px;line-height:1.15}
 .promotion-status-active{background:#ecfdf3;border-color:#bbf7d0;color:#14833b}
 .promotion-status-ending-soon{background:#fff7e6;border-color:#fed7aa;color:#b45309}
 .promotion-status-expired{background:#fff1f2;border-color:#fecdd3;color:#dc2626}
 .promotion-status-upcoming{background:#eff6ff;border-color:#bfdbfe;color:#1d5fd0}
 .promotion-status-no-date{background:#f8fafc;border-color:#e2e8f0;color:#475569}
-.promotion-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;max-width:100%;flex-wrap:wrap}
-.promotion-card-header-left{display:inline-flex;align-items:center;gap:8px;min-width:0;max-width:100%;flex:1 1 auto;flex-wrap:wrap}
-.promotion-brand-logo-badge{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;min-width:0;max-width:90px;min-height:28px;border:1px solid var(--line);border-radius:12px;background:#fff;padding:4px 8px}
-.promotion-brand-logo{display:block;width:auto;max-width:84px;height:22px;max-height:22px;object-fit:contain}
-.promotion-brand-logo-fallback{display:inline-block;max-width:84px;color:var(--blue);font-size:12px;font-weight:900;line-height:1.2;overflow-wrap:anywhere;text-align:center}
+.promotion-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-width:0;max-width:100%;flex-wrap:wrap}
+.promotion-card-header-left{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%;flex:0 1 auto;flex-wrap:nowrap}
+.promotion-brand-logo-badge{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;min-width:0;max-width:82px;min-height:26px;border:1px solid var(--line);border-radius:12px;background:#fff;padding:3px 6px}
+.promotion-brand-logo{display:block;width:auto;max-width:76px;height:20px;max-height:20px;object-fit:contain}
+.promotion-brand-logo-fallback{display:inline-block;max-width:76px;color:var(--blue);font-size:11px;font-weight:900;line-height:1.2;overflow-wrap:anywhere;text-align:center}
 .promotion-brand-logo-fallback[hidden]{display:none}
-.promotion-code{margin-left:auto;flex:0 0 auto;min-width:0;color:#08223c;font-size:14px;white-space:nowrap;overflow-wrap:normal;text-align:right}
+.promotion-code{margin-left:auto;flex:0 0 auto;min-width:0;color:#08223c;font-size:13px;font-weight:600;white-space:nowrap;overflow-wrap:normal;text-align:right}
 .promotion-card h3{margin:0;color:#08223c;font-size:18px;line-height:1.35;overflow-wrap:anywhere}
 .promotion-card-text{margin:0;color:#475569;line-height:1.45;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
 .promotion-card-primary-text{color:#08223c;font-size:17px;font-weight:900;white-space:pre-line}
@@ -144,7 +144,8 @@ body.sg-dialog-open,body.quotation-draft-modal-open{overflow:hidden;touch-action
 @keyframes promotionProductHighlight{0%{box-shadow:0 0 0 0 rgba(255,210,0,.42);transform:translateY(-2px)}35%{box-shadow:0 0 0 7px rgba(255,210,0,.26)}100%{box-shadow:var(--shadow);transform:translateY(0)}}
 @media(max-width:900px){.promotion-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.promotion-brand-filter,.promotion-status-filter{max-width:none;flex:1 1 220px}.promotion-grid{grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}}
 @media(max-width:640px){.promotion-page-title{display:grid;grid-template-columns:1fr}.promotion-refresh-button{width:100%}.promotion-summary-grid,.promotion-grid{grid-template-columns:1fr}.promotion-toolbar{display:grid;grid-template-columns:1fr}.promotion-brand-filter,.promotion-status-filter,.promotion-toolbar .search{width:100%;max-width:100%;min-width:0}.promotion-result-count{white-space:normal;padding:2px 0}.promotion-card-dates{grid-template-columns:1fr}.promotion-card-actions{display:grid;grid-template-columns:1fr}.promotion-product-row{grid-template-columns:1fr;align-items:start}.promotion-product-price{white-space:normal}.promotion-detail-meta{grid-template-columns:1fr}.promotion-state{display:grid;grid-template-columns:1fr}.promotion-state button{width:100%}}
-@media(max-width:420px){.promotion-code{white-space:normal;overflow-wrap:anywhere}.promotion-card-header-left{flex-basis:100%}.promotion-card-head{align-items:flex-start}.promotion-brand-logo-badge{max-width:86px}.promotion-brand-logo{max-width:80px;height:20px;max-height:20px}}
+@media(max-width:420px){.promotion-card-head{gap:6px}.promotion-brand-logo-badge{max-width:78px}.promotion-brand-logo{max-width:72px;height:18px;max-height:18px}.promotion-brand-logo-fallback{max-width:72px;font-size:10px}.promotion-code{font-size:12px}}
+@media(max-width:340px){.promotion-code{white-space:normal;overflow-wrap:anywhere}.promotion-card-header-left{flex-basis:100%}.promotion-card-head{align-items:flex-start}}
 @media(prefers-reduced-motion:reduce){.promotion-skeleton-line,.promotion-skeleton-actions,.promotion-product-highlight{animation:none}}
 
 /* Product card calculator */
