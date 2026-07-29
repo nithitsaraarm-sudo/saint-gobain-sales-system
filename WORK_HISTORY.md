@@ -425,3 +425,49 @@ Validation notes:
 ```powershell
 git checkout -- js/app.js js/quotation.js css/main.css index.html js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
 ```
+
+## 2026-07-29 — Product Card calculator click guard
+
+Scope:
+
+- Fixed Product Card click behavior so the card opens the price calculator only from non-action areas.
+- Preserved existing Add Product, Favorite, quotation add, custom-price, and calculator business flows.
+- No backend, API, Google Sheet schema, RBAC policy, pricing, discount, VAT, or quotation formula changes were made.
+
+Audit result:
+
+- Product Card renderer: `js/app.js` → `renderProductCard(product, sourceListIndex)`.
+- Card-level calculator handler was still inline on the Product Card: `onclick="openProductCalculator(...)"`.
+- Add/Favorite actions were correctly rendered with delegated `data-product-action` buttons, but the click event bubbled to the Product Card before the document-level delegated handler could stop it.
+- Result: clicking the blue Add Product button could also trigger the card-level calculator action.
+- No CSS overlay, `pointer-events: none`, or z-index blocker was found for the Product Card action buttons.
+
+Implementation:
+
+- Added `isProductCardInteractiveClick(event)` with an interactive target guard for `button`, `a`, form controls, `[data-action]`, `[data-product-action]`, and `[role="button"]`.
+- Added `handleProductCardCalculatorClick(event, recordKey)` so card clicks open the calculator only when the click starts from a non-interactive area.
+- Updated `renderProductCard()` to use the guarded calculator click handler instead of calling `openProductCalculator()` directly from the card inline handler.
+- Kept keyboard behavior for the card itself: Enter/Space on the card still opens the calculator, while button keyboard activation remains scoped to the button action.
+- Bumped app/service-worker version to `0.5.40` so browser/PWA cache picks up the corrected click handler.
+
+Files changed:
+
+- `js/app.js`
+- `index.html`
+- `js/api.js`
+- `js/config.js`
+- `service-worker.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Validation notes:
+
+- Static scan confirmed Product Card calculator click now routes through `handleProductCardCalculatorClick()`.
+- Static scan confirmed no inline product favorite/add handlers were reintroduced.
+- `git diff --check` passed with only line-ending warnings.
+- Runtime browser/device/API validation is still required on Desktop Chrome/Edge, Android Chrome, iPhone Safari, and PWA with live Apps Script credentials.
+- Rollback command for this phase:
+
+```powershell
+git checkout -- js/app.js index.html js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
+```
