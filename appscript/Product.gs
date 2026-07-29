@@ -689,27 +689,46 @@ function createProductPromotionDashboard_(products) {
         promotionText: promoText,
         promotionSummary: summarizeProductPromotionText_(promoText),
         fullPromotionText: promoText,
+        sourceOrder: groupOrder.length,
         brandKeysMap: {},
+        promoStartDateMap: {},
+        promoEndDateMap: {},
         products: []
       };
       groupOrder.push(groupKey);
     }
     const group = groupsByKey[groupKey];
+    const snapshot = buildProductPromotionSnapshot_(product);
     group.brandKeysMap[getProductPromotionBrandKey_(product)] = true;
+    if (snapshot.promoStartDate) {
+      group.promoStartDateMap[snapshot.promoStartDate] = true;
+    }
+    if (snapshot.promoEndDate) {
+      group.promoEndDateMap[snapshot.promoEndDate] = true;
+    }
     if (group.fullPromotionText.indexOf(promoText) < 0) {
       group.fullPromotionText += '\n\n' + promoText;
     }
-    group.products.push(buildProductPromotionSnapshot_(product));
+    group.products.push(snapshot);
   });
   const groups = groupOrder.map(function (key) {
     const group = groupsByKey[key];
     const products = dedupeExactPromotionProducts_(group.products);
     const brandKeys = Object.keys(group.brandKeysMap).filter(function (brandKey) { return brandKey; });
+    const startDates = Object.keys(group.promoStartDateMap).filter(function (value) { return value; });
+    const endDates = Object.keys(group.promoEndDateMap).filter(function (value) { return value; });
+    const promoStartDate = startDates.length === 1 ? startDates[0] : '';
+    const promoEndDate = endDates.length === 1 ? endDates[0] : '';
     return {
       promotionKey: group.promotionKey,
       promotionCode: group.promotionCode,
       brand: productPromotionBrandLabelFromKeys_(brandKeys),
       brandKeys: brandKeys,
+      sourceOrder: group.sourceOrder,
+      promoStartDate: promoStartDate,
+      promoEndDate: promoEndDate,
+      startDate: promoStartDate,
+      endDate: promoEndDate,
       promotionText: group.promotionText,
       promotionSummary: group.promotionSummary,
       fullPromotionText: group.fullPromotionText,

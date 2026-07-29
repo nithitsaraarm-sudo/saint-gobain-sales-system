@@ -20,7 +20,7 @@ let customerFormOptionsLoaded=false, customerFormOptionsPromise=null, customerFo
 let FAVORITE_CUSTOMERS=[], FAVORITE_CUSTOMER_ROWS=[], favoriteCustomersPromise=null, favoriteCustomersLoadSeq=0;
 let FAVORITE_PRODUCTS=[], PINNED_PRODUCTS=[], productPreferencesLoaded=false, productPreferencesPromise=null;
 let PROMOTION_DASHBOARD={groups:[],summary:{totalPromotions:0,productsInPromotion:0,weberPromotions:0,gyprocPromotions:0,multiBrandPromotions:0},products:[]};
-let promotionDashboardLoaded=false, promotionDashboardPromise=null, promotionDashboardError='';
+let promotionDashboardLoaded=false, promotionDashboardPromise=null, promotionDashboardRefreshPromise=null, promotionDashboardError='', promotionDashboardTodayKey='';
 const openQuotationDetailPromises={};
 const LIST_RENDER_LIMIT=Number(window.DEFAULT_PAGE_SIZE||50), QUOTE_PICKER_LIMIT=30, SEARCH_DEBOUNCE_MS=300;
 const APP_VERSION_STORAGE_KEY='sg_app_version';
@@ -32,7 +32,7 @@ const PINNED_PRODUCTS_COLLAPSED_KEY='sg_pinned_products_collapsed';
 const FAVORITE_PRODUCTS_COLLAPSED_KEY='sg_favorite_products_collapsed';
 const PRODUCT_PROMOTIONS_CACHE_KEY='sg_product_promotions_cache';
 const PRODUCT_PROMO_CACHE_SCHEMA_KEY='sg_product_promo_cache_schema';
-const PRODUCT_PROMO_CACHE_SCHEMA_VERSION='2';
+const PRODUCT_PROMO_CACHE_SCHEMA_VERSION='3';
 const $=id=>document.getElementById(id); const money=n=>Number(n||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
 let sidebarDrawerFocusReturn=null, sidebarDrawerHistoryPushed=false, sidebarDrawerClosingFromHistory=false;
 
@@ -104,7 +104,9 @@ function resetAuthenticatedFrontendState(){
   PROMOTION_DASHBOARD={groups:[],summary:{totalPromotions:0,productsInPromotion:0,weberPromotions:0,gyprocPromotions:0,multiBrandPromotions:0},products:[]};
   promotionDashboardLoaded=false;
   promotionDashboardPromise=null;
+  promotionDashboardRefreshPromise=null;
   promotionDashboardError='';
+  promotionDashboardTodayKey='';
   Object.keys(openQuotationDetailPromises).forEach(key=>delete openQuotationDetailPromises[key]);
   revokeProfileImageObjectUrl();
   PROFILE_IMAGE_DATA='';
@@ -115,7 +117,7 @@ function resetAuthenticatedFrontendState(){
 
 function checkAppVersion(){
   try{
-    const newVersion=String(window.APP_VERSION||'0.5.28').trim();
+    const newVersion=String(window.APP_VERSION||'0.5.29').trim();
     console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
     const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
     if(oldVersion===newVersion){
@@ -143,10 +145,12 @@ function ensureProductPromoCacheSchema(){
     if(current===PRODUCT_PROMO_CACHE_SCHEMA_VERSION)return;
     if(typeof clearCache==='function'){
       clearCache('sg_products_cache');
+      clearCache(PRODUCT_PROMOTIONS_CACHE_KEY);
       const bootstrap=typeof getCache==='function'?getCache('sg_bootstrap_cache'):null;
       if(bootstrap&&Array.isArray(bootstrap.products))clearCache('sg_bootstrap_cache');
     }else{
       localStorage.removeItem('sg_products_cache');
+      localStorage.removeItem(PRODUCT_PROMOTIONS_CACHE_KEY);
       try{
         const cachedBootstrap=JSON.parse(localStorage.getItem('sg_bootstrap_cache')||'null');
         const bootstrap=cachedBootstrap&&cachedBootstrap.data?cachedBootstrap.data:cachedBootstrap;
@@ -1828,6 +1832,209 @@ function summarizePromotionText(text){
   if(!clean)return '-';
   return clean.length>150?clean.slice(0,147).trim()+'...':clean;
 }
+const PROMOTION_DATE_MISSING_TEXT='ไม่มีข้อมูลวันที่';
+const PROMOTION_MS_PER_DAY=24*60*60*1000;
+const PROMOTION_STATUS_CONFIG={
+  NO_DATE:{value:'NO_DATE',label:'No Date',thaiLabel:'ไม่มีข้อมูลวันที่',className:'no-date',sortRank:3},
+  EXPIRED:{value:'EXPIRED',label:'Expired',thaiLabel:'หมดอายุแล้ว',className:'expired',sortRank:4},
+  UPCOMING:{value:'UPCOMING',label:'Upcoming',thaiLabel:'ยังไม่เริ่ม',className:'upcoming',sortRank:2},
+  ENDING_SOON:{value:'ENDING_SOON',label:'Ending Soon',thaiLabel:'ใกล้หมดอายุ',className:'ending-soon',sortRank:0},
+  ACTIVE:{value:'ACTIVE',label:'Active',thaiLabel:'กำลังใช้งาน',className:'active',sortRank:1}
+};
+const PROMOTION_THAI_MONTHS={
+  'ม.ค':1,'ม.ค.':1,'มกราคม':1,
+  'ก.พ':2,'ก.พ.':2,'กุมภาพันธ์':2,
+  'มี.ค':3,'มี.ค.':3,'มีนาคม':3,
+  'เม.ย':4,'เม.ย.':4,'เมษายน':4,
+  'พ.ค':5,'พ.ค.':5,'พฤษภาคม':5,
+  'มิ.ย':6,'มิ.ย.':6,'มิถุนายน':6,
+  'ก.ค':7,'ก.ค.':7,'กรกฎาคม':7,
+  'ส.ค':8,'ส.ค.':8,'สิงหาคม':8,
+  'ก.ย':9,'ก.ย.':9,'กันยายน':9,
+  'ต.ค':10,'ต.ค.':10,'ตุลาคม':10,
+  'พ.ย':11,'พ.ย.':11,'พฤศจิกายน':11,
+  'ธ.ค':12,'ธ.ค.':12,'ธันวาคม':12
+};
+function padPromotionDatePart(value){
+  return String(value).padStart(2,'0');
+}
+function createPromotionDateInfo(year,month,day,raw){
+  let y=Number(year),m=Number(month),d=Number(day);
+  if(y>2400)y-=543;
+  if(!Number.isFinite(y)||!Number.isFinite(m)||!Number.isFinite(d))return {valid:false,raw:String(raw||'').trim()};
+  if(y<1900||y>2200||m<1||m>12||d<1||d>31)return {valid:false,raw:String(raw||'').trim()};
+  const localDate=new Date(y,m-1,d);
+  if(localDate.getFullYear()!==y||localDate.getMonth()!==m-1||localDate.getDate()!==d)return {valid:false,raw:String(raw||'').trim()};
+  const dateKey=y+'-'+padPromotionDatePart(m)+'-'+padPromotionDatePart(d);
+  return {valid:true,raw:String(raw||dateKey).trim(),year:y,month:m,day:d,dateKey,time:localDate.getTime()};
+}
+function normalizePromotionDateOnly(value){
+  if(value instanceof Date&&!Number.isNaN(value.getTime())){
+    return createPromotionDateInfo(value.getFullYear(),value.getMonth()+1,value.getDate(),value.toISOString());
+  }
+  const raw=String(value===null||value===undefined?'':value).trim();
+  if(!raw||['null','undefined','-'].indexOf(raw.toLowerCase())>=0)return {valid:false,raw:''};
+  let match=raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s].*)?$/);
+  if(match)return createPromotionDateInfo(match[1],match[2],match[3],raw);
+  match=raw.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if(match)return createPromotionDateInfo(match[3],match[2],match[1],raw);
+  match=raw.match(/^(\d{1,2})\s*([ก-๙.]+)\s*(\d{4})$/);
+  if(match){
+    const month=PROMOTION_THAI_MONTHS[String(match[2]||'').replace(/\s+/g,'').trim()];
+    if(month)return createPromotionDateInfo(match[3],month,match[1],raw);
+  }
+  const parsed=new Date(raw);
+  if(!Number.isNaN(parsed.getTime())){
+    return createPromotionDateInfo(parsed.getFullYear(),parsed.getMonth()+1,parsed.getDate(),raw);
+  }
+  return {valid:false,raw};
+}
+function getPromotionTodayInfo(){
+  const now=new Date();
+  return createPromotionDateInfo(now.getFullYear(),now.getMonth()+1,now.getDate(),now.toISOString());
+}
+function formatPromotionDateThai(dateInfo){
+  const info=dateInfo&&dateInfo.valid?dateInfo:null;
+  if(!info)return PROMOTION_DATE_MISSING_TEXT;
+  const date=new Date(info.year,info.month-1,info.day);
+  try{
+    return new Intl.DateTimeFormat('th-TH-u-ca-buddhist',{day:'2-digit',month:'short',year:'numeric'}).format(date);
+  }catch(error){
+    const months=['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+    return padPromotionDatePart(info.day)+' '+months[info.month-1]+' '+(info.year+543);
+  }
+}
+function getPromotionRawDateValue(item,type){
+  const source=item&&typeof item==='object'?item:{};
+  const fields=type==='end'
+    ? ['endDate','promoEndDate','promotionEndDate','promotionEnd','validTo','expireDate','expiryDate']
+    : ['startDate','promoStartDate','promotionStartDate','promotionStart','validFrom'];
+  for(let i=0;i<fields.length;i++){
+    if(Object.prototype.hasOwnProperty.call(source,fields[i])&&String(source[fields[i]]??'').trim())return source[fields[i]];
+  }
+  return '';
+}
+function resolvePromotionGroupDateValue(group,products,type){
+  const values=[];
+  const addValue=value=>{
+    const text=String(value===null||value===undefined?'':value).trim();
+    if(text)values.push(text);
+  };
+  addValue(getPromotionRawDateValue(group,type));
+  (Array.isArray(products)?products:[]).forEach(product=>addValue(getPromotionRawDateValue(product,type)));
+  if(!values.length)return '';
+  const validDates=values.map(normalizePromotionDateOnly).filter(info=>info.valid);
+  const invalidCount=values.length-validDates.length;
+  const uniqueDateKeys=Array.from(new Set(validDates.map(info=>info.dateKey)));
+  if(invalidCount>0||uniqueDateKeys.length!==1){
+    if(typeof console!=='undefined'&&typeof console.warn==='function'){
+      console.warn('[PROMOTION_DATE]',{
+        issue:invalidCount>0?'invalid-date':'conflicting-date',
+        type:type||'start',
+        promotionCode:group&&group.promotionCode||group&&group.promoCode||'',
+        values:values.slice(0,5)
+      });
+    }
+    return '';
+  }
+  return uniqueDateKeys[0];
+}
+function calculatePromotionStatus(startDateValue,endDateValue,todayInfo){
+  const today=todayInfo&&todayInfo.valid?todayInfo:getPromotionTodayInfo();
+  const startDate=normalizePromotionDateOnly(startDateValue);
+  const endDate=normalizePromotionDateOnly(endDateValue);
+  let status=PROMOTION_STATUS_CONFIG.NO_DATE;
+  let remainingDays=null;
+  if(startDate.valid&&endDate.valid&&startDate.time<=endDate.time){
+    if(today.time>endDate.time){
+      status=PROMOTION_STATUS_CONFIG.EXPIRED;
+      remainingDays=Math.round((endDate.time-today.time)/PROMOTION_MS_PER_DAY);
+    }else if(today.time<startDate.time){
+      status=PROMOTION_STATUS_CONFIG.UPCOMING;
+      remainingDays=Math.round((startDate.time-today.time)/PROMOTION_MS_PER_DAY);
+    }else{
+      remainingDays=Math.round((endDate.time-today.time)/PROMOTION_MS_PER_DAY);
+      status=remainingDays>=0&&remainingDays<=7?PROMOTION_STATUS_CONFIG.ENDING_SOON:PROMOTION_STATUS_CONFIG.ACTIVE;
+    }
+  }else if(startDate.valid&&endDate.valid&&startDate.time>endDate.time&&typeof console!=='undefined'&&typeof console.warn==='function'){
+    console.warn('[PROMOTION_DATE]',{issue:'start-after-end',startDate:startDate.dateKey,endDate:endDate.dateKey});
+  }
+  return {
+    value:status.value,
+    label:status.label,
+    thaiLabel:status.thaiLabel,
+    className:status.className,
+    sortRank:status.sortRank,
+    remainingDays:Number.isFinite(remainingDays)?remainingDays:null,
+    startDate,
+    endDate,
+    hasValidDateRange:startDate.valid&&endDate.valid&&startDate.time<=endDate.time
+  };
+}
+function applyPromotionStatusToGroup(group,todayInfo){
+  const item=group&&typeof group==='object'?group:{};
+  const status=calculatePromotionStatus(item.startDate||item.promoStartDate,item.endDate||item.promoEndDate,todayInfo);
+  return Object.assign({},item,{
+    startDate:status.startDate.valid?status.startDate.dateKey:'',
+    endDate:status.endDate.valid?status.endDate.dateKey:'',
+    startDateLabel:formatPromotionDateThai(status.startDate),
+    endDateLabel:formatPromotionDateThai(status.endDate),
+    promotionStatus:status.value,
+    promotionStatusLabel:status.label,
+    promotionStatusThaiLabel:status.thaiLabel,
+    promotionStatusClass:status.className,
+    promotionStatusSortRank:status.sortRank,
+    promotionRemainingDays:status.remainingDays,
+    hasPromotionDateRange:status.hasValidDateRange
+  });
+}
+function getPromotionDateSortTime(group,type){
+  const info=normalizePromotionDateOnly(type==='end'?group&&group.endDate:group&&group.startDate);
+  return info.valid?info.time:null;
+}
+function sortPromotionGroupsByStatus(groups){
+  return (Array.isArray(groups)?groups:[]).map((group,index)=>({group,index})).sort((a,b)=>{
+    const rankDiff=Number(a.group.promotionStatusSortRank??PROMOTION_STATUS_CONFIG.NO_DATE.sortRank)-Number(b.group.promotionStatusSortRank??PROMOTION_STATUS_CONFIG.NO_DATE.sortRank);
+    if(rankDiff)return rankDiff;
+    const status=String(a.group.promotionStatus||'').toUpperCase();
+    if(status==='ENDING_SOON'||status==='ACTIVE'){
+      const aEnd=getPromotionDateSortTime(a.group,'end'),bEnd=getPromotionDateSortTime(b.group,'end');
+      if(aEnd!==null&&bEnd!==null&&aEnd!==bEnd)return aEnd-bEnd;
+    }else if(status==='UPCOMING'){
+      const aStart=getPromotionDateSortTime(a.group,'start'),bStart=getPromotionDateSortTime(b.group,'start');
+      if(aStart!==null&&bStart!==null&&aStart!==bStart)return aStart-bStart;
+    }else if(status==='EXPIRED'){
+      const aEnd=getPromotionDateSortTime(a.group,'end'),bEnd=getPromotionDateSortTime(b.group,'end');
+      if(aEnd!==null&&bEnd!==null&&aEnd!==bEnd)return bEnd-aEnd;
+    }
+    const sourceDiff=Number(a.group.sourceOrder??a.index)-Number(b.group.sourceOrder??b.index);
+    if(sourceDiff)return sourceDiff;
+    return a.index-b.index;
+  }).map(entry=>entry.group);
+}
+function refreshPromotionStatusesForToday(force){
+  const today=getPromotionTodayInfo();
+  if(!force&&promotionDashboardTodayKey===today.dateKey)return;
+  const groups=Array.isArray(PROMOTION_DASHBOARD.groups)?PROMOTION_DASHBOARD.groups:[];
+  PROMOTION_DASHBOARD=Object.assign({},PROMOTION_DASHBOARD,{
+    groups:sortPromotionGroupsByStatus(groups.map(group=>applyPromotionStatusToGroup(group,today))),
+  });
+  PROMOTION_DASHBOARD.summary=Object.assign({},PROMOTION_DASHBOARD.summary||{},buildPromotionDashboardSummary(PROMOTION_DASHBOARD.groups));
+  DB.productPromotions=PROMOTION_DASHBOARD;
+  promotionDashboardTodayKey=today.dateKey;
+}
+function getPromotionStatusDisplayText(group){
+  const thai=String(group&&group.promotionStatusThaiLabel||'').trim()||PROMOTION_STATUS_CONFIG.NO_DATE.thaiLabel;
+  const label=String(group&&group.promotionStatusLabel||'').trim()||PROMOTION_STATUS_CONFIG.NO_DATE.label;
+  return label+' • '+thai;
+}
+function getPromotionStatusAriaLabel(group){
+  let label='สถานะโปรโมชั่น: '+String(group&&group.promotionStatusThaiLabel||PROMOTION_STATUS_CONFIG.NO_DATE.thaiLabel);
+  if(Number.isFinite(Number(group&&group.promotionRemainingDays))&&String(group&&group.promotionStatus||'').toUpperCase()!=='EXPIRED'){
+    label+=' เหลือ '+Number(group.promotionRemainingDays)+' วัน';
+  }
+  return label;
+}
 function normalizePromotionProductForDashboard(product){
   const item=normalizeProduct(product);
   const identityKey=createProductIdentityKey(item);
@@ -1841,7 +2048,7 @@ function normalizePromotionProductForDashboard(product){
     promoText:getProductPromoText(item)
   });
 }
-function normalizePromotionGroupForDashboard(group){
+function normalizePromotionGroupForDashboard(group,index){
   const item=group&&typeof group==='object'?group:{};
   const products=dedupeExactPromotionProducts((Array.isArray(item.products)?item.products:[]).map(normalizePromotionProductForDashboard),'promotionDashboard.groupProducts');
   const brandKeys=Array.isArray(item.brandKeys)&&item.brandKeys.length
@@ -1851,26 +2058,40 @@ function normalizePromotionGroupForDashboard(group){
   const code=String(item.promotionCode||item.promoCode||item.promotionId||'').trim()||fallbackPromotionCode(promotionText);
   const promotionKey=String(item.promotionKey||item.key||'').trim()||('code:'+normalizePromotionTextForGroup(code)+'|text:'+normalizePromotionTextForGroup(promotionText));
   const brand=String(item.brand||'').trim()||promotionBrandLabelFromKeys(brandKeys);
-  return {
+  const sourceOrder=Number.isFinite(Number(item.sourceOrder))?Number(item.sourceOrder):Number(index||0);
+  const startDate=resolvePromotionGroupDateValue(item,products,'start');
+  const endDate=resolvePromotionGroupDateValue(item,products,'end');
+  return applyPromotionStatusToGroup({
     promotionKey,
     promotionCode:code,
     brand,
     brandKeys,
+    startDate,
+    endDate,
+    promoStartDate:startDate,
+    promoEndDate:endDate,
     promotionText,
     promotionSummary:String(item.promotionSummary||item.summary||'').trim()||summarizePromotionText(promotionText),
     fullPromotionText:String(item.fullPromotionText||promotionText).trim(),
     productCount:Number(item.productCount||products.length)||products.length,
+    sourceOrder,
     products
-  };
+  },getPromotionTodayInfo());
 }
 function buildPromotionDashboardSummary(groups){
   const list=Array.isArray(groups)?groups:[];
+  const statusCount=status=>list.filter(group=>String(group&&group.promotionStatus||'').toUpperCase()===status).length;
   return {
     totalPromotions:list.length,
     productsInPromotion:list.reduce((sum,group)=>sum+Number(group.productCount||group.products?.length||0),0),
     weberPromotions:list.filter(group=>(group.brandKeys||[]).indexOf('WEBER')>=0).length,
     gyprocPromotions:list.filter(group=>(group.brandKeys||[]).indexOf('GYPROC')>=0).length,
-    multiBrandPromotions:list.filter(group=>(group.brandKeys||[]).indexOf('WEBER')>=0&&(group.brandKeys||[]).indexOf('GYPROC')>=0).length
+    multiBrandPromotions:list.filter(group=>(group.brandKeys||[]).indexOf('WEBER')>=0&&(group.brandKeys||[]).indexOf('GYPROC')>=0).length,
+    activePromotions:statusCount('ACTIVE'),
+    endingSoonPromotions:statusCount('ENDING_SOON'),
+    upcomingPromotions:statusCount('UPCOMING'),
+    expiredPromotions:statusCount('EXPIRED'),
+    noDatePromotions:statusCount('NO_DATE')
   };
 }
 function buildPromotionDashboardFromProducts(products){
@@ -1890,6 +2111,7 @@ function buildPromotionDashboardFromProducts(products){
         promotionText:promoText,
         fullPromotionText:promoText,
         promotionSummary:summarizePromotionText(promoText),
+        sourceOrder:groupsByKey.size,
         brandKeys:new Set(),
         products:[]
       });
@@ -1910,18 +2132,19 @@ function buildPromotionDashboardFromProducts(products){
       productCount:products.length,
       products
     }));
-  }).sort((a,b)=>String(a.promotionCode||'').localeCompare(String(b.promotionCode||''),'th')||String(a.brand||'').localeCompare(String(b.brand||''),'th'));
+  });
+  const sortedGroups=sortPromotionGroupsByStatus(groups);
   const summary=Object.assign(buildPromotionDashboardSummary(groups),{
     sourceCount:sourceList.length,
     deduplicatedCount:list.length,
     removedDuplicateCount:Math.max(0,sourceList.length-list.length)
   });
-  return {groups,summary,products:groups.reduce((acc,group)=>acc.concat(group.products),[])};
+  return {groups:sortedGroups,summary,products:sortedGroups.reduce((acc,group)=>acc.concat(group.products),[])};
 }
 function normalizePromotionDashboardData(data){
   const source=data&&typeof data==='object'?data:{};
   if(Array.isArray(source.groups)){
-    const groups=source.groups.map(normalizePromotionGroupForDashboard);
+    const groups=sortPromotionGroupsByStatus(source.groups.map(normalizePromotionGroupForDashboard));
     return {groups,summary:Object.assign({},source.summary||{},buildPromotionDashboardSummary(groups)),products:groups.reduce((acc,group)=>acc.concat(group.products),[])};
   }
   if(Array.isArray(source.products))return buildPromotionDashboardFromProducts(source.products);
@@ -1933,6 +2156,7 @@ function setPromotionDashboardData(data,source){
   DB.productPromotions=PROMOTION_DASHBOARD;
   promotionDashboardLoaded=true;
   promotionDashboardError='';
+  promotionDashboardTodayKey=getPromotionTodayInfo().dateKey;
   if(typeof setCache==='function')setCache(PRODUCT_PROMOTIONS_CACHE_KEY,PROMOTION_DASHBOARD,15);
   const info=PROMOTION_DASHBOARD.summary||{};
   if(typeof console!=='undefined'&&typeof console.info==='function'){
@@ -1940,6 +2164,9 @@ function setPromotionDashboardData(data,source){
       source:source||'unknown',
       totalPromotions:info.totalPromotions||0,
       productsInPromotion:info.productsInPromotion||0,
+      activePromotions:info.activePromotions||0,
+      endingSoonPromotions:info.endingSoonPromotions||0,
+      noDatePromotions:info.noDatePromotions||0,
       sourceCount:info.sourceCount||0,
       deduplicatedCount:info.deduplicatedCount||info.deduplicatedSourceCount||0,
       removedDuplicateCount:info.removedDuplicateCount||Math.max(0,Number(info.sourceCount||0)-Number(info.deduplicatedCount||info.deduplicatedSourceCount||0))
@@ -1952,6 +2179,7 @@ function invalidatePromotionDashboardCache(clearPersistent){
   DB.productPromotions=PROMOTION_DASHBOARD;
   promotionDashboardLoaded=false;
   promotionDashboardError='';
+  promotionDashboardTodayKey='';
   if(clearPersistent&&typeof clearCache==='function')clearCache(PRODUCT_PROMOTIONS_CACHE_KEY);
 }
 async function loadPromotionDashboard(options){
@@ -2008,16 +2236,50 @@ async function loadPromotionDashboard(options){
   })();
   return promotionDashboardPromise;
 }
+function setPromotionRefreshButtonLoading(isLoading){
+  const button=document.querySelector('.promotion-refresh-button');
+  if(!button)return;
+  if(button.dataset.originalText===undefined)button.dataset.originalText=button.textContent||'รีเฟรช';
+  button.disabled=!!isLoading;
+  button.setAttribute('aria-busy',String(!!isLoading));
+  button.textContent=isLoading?'กำลังรีเฟรช...':button.dataset.originalText;
+}
 function refreshPromotionDashboard(){
-  invalidatePromotionDashboardCache(true);
-  return loadPromotionDashboard({force:true});
+  if(promotionDashboardRefreshPromise)return promotionDashboardRefreshPromise;
+  promotionDashboardRefreshPromise=(async()=>{
+    setPromotionRefreshButtonLoading(true);
+    try{
+      invalidatePromotionDashboardCache(true);
+      return await loadPromotionDashboard({force:true});
+    }finally{
+      setPromotionRefreshButtonLoading(false);
+      promotionDashboardRefreshPromise=null;
+    }
+  })();
+  return promotionDashboardRefreshPromise;
 }
 function getPromotionDashboardGroups(){
+  refreshPromotionStatusesForToday(false);
   return Array.isArray(PROMOTION_DASHBOARD.groups)?PROMOTION_DASHBOARD.groups:[];
 }
 function getPromotionDashboardGroupByKey(key){
   const target=String(key||'').trim();
   return getPromotionDashboardGroups().find(group=>String(group.promotionKey||'').trim()===target)||null;
+}
+function isPromotionsPageActive(){
+  const page=$('page-promos');
+  return !!(page&&page.classList.contains('active'));
+}
+function refreshPromotionDashboardForCurrentDay(){
+  if(!promotionDashboardLoaded||!isPromotionsPageActive())return;
+  const before=promotionDashboardTodayKey;
+  refreshPromotionStatusesForToday(false);
+  if(before!==promotionDashboardTodayKey)renderPromotionViews();
+}
+if(typeof window!=='undefined'&&!window.__promotionDateRefreshBound){
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshPromotionDashboardForCurrentDay();});
+  window.addEventListener('focus',refreshPromotionDashboardForCurrentDay);
+  window.__promotionDateRefreshBound=true;
 }
 function renderPromotionViews(){
   renderPromos();
@@ -2073,27 +2335,80 @@ function getPromotionSearchFields(group){
     group&&group.promotionSummary,
     group&&group.fullPromotionText,
     group&&group.brand,
+    group&&group.promotionStatusLabel,
+    group&&group.promotionStatusThaiLabel,
+    group&&group.startDateLabel,
+    group&&group.endDateLabel,
     products.map(product=>[product.productName,product.productCode,product.sku,product.productId,product.brand].join(' ')).join(' ')
   ].join(' ');
 }
 function getFilteredPromotionGroups(){
   const q=String($('searchPromos')?.value||'').trim();
   const brandFilter=String($('promotionBrandFilter')?.value||'').trim().toUpperCase();
+  const statusFilter=String($('promotionStatusFilter')?.value||'').trim().toUpperCase();
   return getPromotionDashboardGroups().filter(group=>{
     const brandKeys=Array.isArray(group.brandKeys)?group.brandKeys:[];
     const brandOk=!brandFilter||brandKeys.indexOf(brandFilter)>=0||(brandFilter==='MULTI'&&brandKeys.indexOf('WEBER')>=0&&brandKeys.indexOf('GYPROC')>=0);
-    return brandOk&&(!q||smartMatch({search:getPromotionSearchFields(group)},q,['search']));
+    const statusOk=!statusFilter||String(group.promotionStatus||'').toUpperCase()===statusFilter;
+    return brandOk&&statusOk&&(!q||smartMatch({search:getPromotionSearchFields(group)},q,['search']));
   });
+}
+function renderPromotionResultCount(filteredCount,totalCount){
+  const node=$('promotionResultCount');
+  if(!node)return;
+  if(!promotionDashboardLoaded&&!totalCount){
+    node.hidden=true;
+    node.textContent='';
+    return;
+  }
+  node.hidden=false;
+  node.textContent=String(filteredCount)+' / '+String(totalCount)+' โปรโมชั่น';
+}
+function renderPromotionStatusBadge(group){
+  const statusClass=String(group&&group.promotionStatusClass||PROMOTION_STATUS_CONFIG.NO_DATE.className).replace(/[^a-z-]/g,'')||PROMOTION_STATUS_CONFIG.NO_DATE.className;
+  const badge=createUiElement('span','promotion-status-badge promotion-status-'+statusClass);
+  badge.setAttribute('aria-label',getPromotionStatusAriaLabel(group));
+  const dot=createUiElement('span','promotion-status-dot');
+  dot.setAttribute('aria-hidden','true');
+  const text=createUiElement('span','promotion-status-text');
+  text.append(createUiElement('b','',String(group&&group.promotionStatusLabel||PROMOTION_STATUS_CONFIG.NO_DATE.label)),createUiElement('small','',String(group&&group.promotionStatusThaiLabel||PROMOTION_STATUS_CONFIG.NO_DATE.thaiLabel)));
+  badge.append(dot,text);
+  return badge;
+}
+function renderPromotionDateSummary(group){
+  const wrap=createUiElement('div','promotion-card-dates');
+  if(!group||!group.hasPromotionDateRange){
+    const missing=createUiElement('div','promotion-date-missing',PROMOTION_DATE_MISSING_TEXT);
+    missing.setAttribute('aria-label','วันที่โปรโมชั่น: '+PROMOTION_DATE_MISSING_TEXT);
+    wrap.appendChild(missing);
+    return wrap;
+  }
+  [
+    {className:'start',label:'เริ่ม',value:group.startDateLabel},
+    {className:'end',label:'หมดอายุ',value:group.endDateLabel}
+  ].forEach(item=>{
+    const box=createUiElement('div','promotion-date-box promotion-date-'+item.className);
+    box.setAttribute('aria-label',item.label+'โปรโมชั่น '+item.value);
+    const icon=createUiElement('span','promotion-date-icon','📅');
+    icon.setAttribute('aria-hidden','true');
+    const body=createUiElement('span','promotion-date-body');
+    body.append(createUiElement('small','',item.label),createUiElement('b','',item.value));
+    box.append(icon,body);
+    wrap.appendChild(box);
+  });
+  return wrap;
 }
 function renderPromotionCard(group){
   const card=createUiElement('article','card promotion-card');
   card.dataset.promotionKey=group.promotionKey||'';
+  card.appendChild(renderPromotionStatusBadge(group));
   const head=createUiElement('div','promotion-card-head');
   const brand=createUiElement('span','pill '+promotionBrandClass(group.brand),group.brand||'-');
   const code=createUiElement('b','promotion-code',group.promotionCode||'-');
   head.append(brand,code);
   const title=createUiElement('h3','',group.promotionSummary||'-');
   const text=createUiElement('p','promotion-card-text',group.promotionText||'-');
+  const dates=renderPromotionDateSummary(group);
   const meta=createUiElement('div','promotion-card-meta');
   meta.appendChild(createUiElement('span','',String(group.productCount||0)+' products'));
   const actions=createUiElement('div','promotion-card-actions');
@@ -2106,7 +2421,7 @@ function renderPromotionCard(group){
   productsButton.setAttribute('aria-label','View products in promotion '+(group.promotionCode||''));
   productsButton.addEventListener('click',()=>renderPromotionProductPanel(group.promotionKey));
   actions.append(detailButton,productsButton);
-  card.append(head,title,text,meta,actions);
+  card.append(head,title,text,dates,meta,actions);
   return card;
 }
 function renderPromos(){
@@ -2118,24 +2433,28 @@ function renderPromos(){
     closePromotionProductPanel();
   }
   if(promotionDashboardError){
-    renderPromotionState('Unable to load promotions.','error',true);
+    renderPromotionResultCount(0,getPromotionDashboardGroups().length);
+    renderPromotionState('ไม่สามารถโหลดโปรโมชั่นได้','error',true);
     clearNode(grid);
     return;
   }
   if(promotionDashboardPromise&&!promotionDashboardLoaded){
+    renderPromotionResultCount(0,0);
     renderPromotionState('Loading promotions...','loading',false);
     renderPromotionSkeleton(grid);
     return;
   }
   const groups=getFilteredPromotionGroups();
+  const totalGroups=getPromotionDashboardGroups().length;
+  renderPromotionResultCount(groups.length,totalGroups);
   clearNode(grid);
-  if(!promotionDashboardLoaded&&!getPromotionDashboardGroups().length){
+  if(!promotionDashboardLoaded&&!totalGroups){
     renderPromotionState('Loading promotions...','loading',false);
     renderPromotionSkeleton(grid);
     return;
   }
   if(!groups.length){
-    renderPromotionState('No promotions available.','empty',false);
+    renderPromotionState(totalGroups?'ไม่พบโปรโมชั่นที่ตรงกับตัวกรอง':'ยังไม่มีโปรโมชั่นในระบบ','empty',false);
     return;
   }
   renderPromotionState('', '', false);
@@ -2171,6 +2490,9 @@ function openPromotionDetail(promotionKey,event){
   const meta=createUiElement('div','promotion-detail-meta');
   appendPromotionDetailRow(meta,'Promotion Code',group.promotionCode);
   appendPromotionDetailRow(meta,'Brand',group.brand);
+  appendPromotionDetailRow(meta,'Status',getPromotionStatusDisplayText(group));
+  appendPromotionDetailRow(meta,'Start Date',group.hasPromotionDateRange?group.startDateLabel:PROMOTION_DATE_MISSING_TEXT);
+  appendPromotionDetailRow(meta,'End Date',group.hasPromotionDateRange?group.endDateLabel:PROMOTION_DATE_MISSING_TEXT);
   appendPromotionDetailRow(meta,'Product Count',group.productCount);
   detail.appendChild(meta);
   const full=createUiElement('div','promotion-detail-full',group.fullPromotionText||group.promotionText||'-');
