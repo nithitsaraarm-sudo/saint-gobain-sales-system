@@ -2713,7 +2713,15 @@ function renderProductPicker() {
     const thumbnail = typeof window !== 'undefined' && typeof window.renderProductThumbnailHtml === 'function'
       ? window.renderProductThumbnailHtml(p, { variant: 'small', className: 'quote-product-thumbnail' })
       : '<span class="product-thumbnail product-thumbnail--small is-fallback"><span class="product-thumbnail-generic" aria-hidden="true">📦</span></span>';
-    return `<div class="row"><div class="product-img product-thumbnail-cell">${thumbnail}</div><div><b>${escapeQuotationPrintHtml(p.productName || '-')}</b><br><small>${escapeQuotationPrintHtml(p.unit || '')} · ${money(p.listPrice)}</small></div><button type="button" class="tiny" style="margin-left:auto" data-product-id="${escapeQuotationPrintHtml(productId)}" data-product-record-key="${escapeQuotationPrintHtml(recordKey)}" data-product-source="SEARCH" onclick="addProductToQuoteByReference(event)">+ เพิ่ม</button></div>`;
+    const addButton = window.createAddProductButton({
+      attributes: {
+        'data-product-id': productId,
+        'data-product-record-key': recordKey,
+        'data-product-source': 'SEARCH'
+      },
+      onClick: 'addProductToQuoteByReference(event)'
+    });
+    return `<div class="row"><div class="product-img product-thumbnail-cell">${thumbnail}</div><div><b>${escapeQuotationPrintHtml(p.productName || '-')}</b><br><small>${escapeQuotationPrintHtml(p.unit || '')} · ${money(p.listPrice)}</small></div>${addButton}</div>`;
   }).join('');
 }
 
