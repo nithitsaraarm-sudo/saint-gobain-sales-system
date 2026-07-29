@@ -1053,3 +1053,278 @@ body.quotation-action-sheet-open{overflow:hidden;touch-action:none}
         transition:none;
     }
 }
+
+/* Shared UI standardization: local brand logos, compact action buttons, and status badges. */
+.sr-only{
+    position:absolute!important;
+    width:1px!important;
+    height:1px!important;
+    padding:0!important;
+    margin:-1px!important;
+    overflow:hidden!important;
+    clip:rect(0,0,0,0)!important;
+    white-space:nowrap!important;
+    border:0!important;
+}
+.sg-brand-logo-badge{
+    box-sizing:border-box;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    vertical-align:middle;
+    min-width:0;
+    max-width:100%;
+    border:1px solid var(--line);
+    border-radius:12px;
+    background:#fff;
+    color:var(--blue);
+    padding:3px 7px;
+    line-height:1;
+    overflow:hidden;
+}
+.sg-brand-logo-img{
+    display:block;
+    width:auto;
+    max-width:100%;
+    object-fit:contain;
+}
+.sg-brand-logo-fallback{
+    display:inline-block;
+    max-width:100%;
+    color:var(--blue);
+    font-weight:900;
+    line-height:1.15;
+    overflow-wrap:anywhere;
+    text-align:center;
+}
+.sg-brand-logo-fallback[hidden]{
+    display:none!important;
+}
+.sg-brand-logo--compact{
+    min-height:24px;
+    max-width:82px;
+    padding:3px 6px;
+}
+.sg-brand-logo--compact .sg-brand-logo-img{
+    height:18px;
+    max-height:18px;
+    max-width:76px;
+}
+.sg-brand-logo--compact .sg-brand-logo-fallback{
+    font-size:10px;
+}
+.sg-brand-logo--standard{
+    min-height:28px;
+    max-width:98px;
+    padding:4px 8px;
+}
+.sg-brand-logo--standard .sg-brand-logo-img{
+    height:22px;
+    max-height:22px;
+    max-width:90px;
+}
+.sg-brand-logo--standard .sg-brand-logo-fallback{
+    font-size:11px;
+}
+.sg-brand-logo--detail{
+    min-height:34px;
+    max-width:124px;
+    padding:5px 10px;
+    border-radius:14px;
+}
+.sg-brand-logo--detail .sg-brand-logo-img{
+    height:26px;
+    max-height:26px;
+    max-width:112px;
+}
+.sg-brand-logo--detail .sg-brand-logo-fallback{
+    font-size:12px;
+}
+.customer-brand-badges .sg-brand-logo-badge{
+    box-shadow:0 4px 12px rgba(15,42,82,.04);
+}
+.promotion-brand-logo-badge.sg-brand-logo-badge{
+    min-height:26px;
+    max-width:82px;
+    padding:3px 6px;
+}
+.promotion-brand-logo-badge .sg-brand-logo-img{
+    height:20px;
+    max-height:20px;
+    max-width:76px;
+}
+.product-card-brand-logo{
+    justify-self:start;
+    margin-bottom:4px;
+}
+.product-calc-brand-logo,
+.product-detail-brand-logo,
+.promotion-detail-brand-logo{
+    justify-self:start;
+}
+.product-img.product-brand-img{
+    padding:6px;
+    font-size:0;
+}
+.product-img.product-brand-img .sg-brand-logo-badge{
+    min-height:0;
+    max-width:100%;
+    border:0;
+    background:transparent;
+    padding:0;
+}
+.product-img.product-brand-img .sg-brand-logo-img{
+    height:24px;
+    max-height:24px;
+    max-width:52px;
+}
+.quote-product-title .sg-brand-logo-badge{
+    flex:0 0 auto;
+}
+.status-badge{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    min-height:28px;
+    border:1px solid transparent;
+    border-radius:999px;
+    padding:5px 10px;
+    font-size:12px;
+    font-weight:900;
+    line-height:1.15;
+    white-space:nowrap;
+}
+.status-badge--success{
+    background:#ecfdf3;
+    border-color:#bbf7d0;
+    color:#14833b;
+}
+.status-badge--warning{
+    background:#fff7e6;
+    border-color:#fed7aa;
+    color:#b45309;
+}
+.status-badge--danger{
+    background:#fff1f2;
+    border-color:#fecdd3;
+    color:#dc2626;
+}
+.status-badge--info{
+    background:#eff6ff;
+    border-color:#bfdbfe;
+    color:#1d5fd0;
+}
+.status-badge--neutral{
+    background:#f8fafc;
+    border-color:#e2e8f0;
+    color:#475569;
+}
+.card-action-row{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(44px,1fr));
+    gap:8px;
+    align-items:center;
+    min-width:0;
+    margin-top:12px;
+}
+.icon-action-button{
+    box-sizing:border-box;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    width:100%;
+    min-width:44px;
+    height:44px;
+    min-height:44px;
+    border:1px solid var(--line);
+    border-radius:15px;
+    background:#fff;
+    color:var(--blue);
+    padding:0;
+    cursor:pointer;
+    touch-action:manipulation;
+    -webkit-tap-highlight-color:transparent;
+    transition:background .16s ease,border-color .16s ease,box-shadow .16s ease,transform .12s ease,opacity .16s ease;
+}
+.icon-action-button .material-symbols-rounded{
+    font-size:22px;
+    line-height:1;
+}
+.icon-action-button:hover,
+.icon-action-button:focus-visible{
+    background:#eef6ff;
+    border-color:#c8ddf2;
+    box-shadow:0 8px 24px rgba(15,42,82,.08);
+    outline:3px solid rgba(0,91,172,.18);
+    outline-offset:2px;
+}
+.icon-action-button:active{
+    transform:scale(.96);
+}
+.icon-action-button:disabled,
+.icon-action-button[aria-disabled="true"]{
+    opacity:.58;
+    cursor:not-allowed;
+    transform:none;
+    box-shadow:none;
+}
+.icon-action-primary{
+    background:#eef6ff;
+    border-color:#bcd7f4;
+    color:var(--blue);
+}
+.icon-action-secondary{
+    color:#475569;
+}
+.icon-action-favorite{
+    background:#fffbea;
+    border-color:#f0d84b;
+    color:#9a6a00;
+}
+.icon-action-favorite.is-active{
+    background:#fff4a8;
+    color:#6b5600;
+}
+.icon-action-danger{
+    background:#fff1f2;
+    border-color:#fecdd3;
+    color:#dc2626;
+}
+.icon-action-button.is-loading .material-symbols-rounded{
+    animation:sgSpin 1s linear infinite;
+}
+.customer-actions.card-action-row{
+    grid-template-columns:repeat(auto-fit,minmax(44px,1fr));
+    gap:8px;
+}
+.customer-actions.card-action-row .icon-action-button{
+    width:100%;
+    min-width:44px;
+    flex:0 0 auto;
+}
+.favorite-card .customer-actions.card-action-row{
+    margin-top:12px;
+}
+@media(max-width:480px){
+    .customer-card-head{
+        display:grid;
+        grid-template-columns:minmax(0,1fr) auto;
+        align-items:start;
+    }
+    .customer-brand-badges{
+        justify-content:end;
+        margin-bottom:0;
+    }
+    .status-badge{
+        white-space:normal;
+        text-align:center;
+    }
+    .sg-brand-logo--standard .sg-brand-logo-img{
+        height:20px;
+        max-height:20px;
+    }
+    .sg-brand-logo--detail .sg-brand-logo-img{
+        height:24px;
+        max-height:24px;
+    }
+}

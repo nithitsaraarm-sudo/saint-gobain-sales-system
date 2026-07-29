@@ -118,7 +118,7 @@ function resetAuthenticatedFrontendState(){
 
 function checkAppVersion(){
   try{
-    const newVersion=String(window.APP_VERSION||'0.5.33').trim();
+    const newVersion=String(window.APP_VERSION||'0.5.34').trim();
     console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
     const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
     if(oldVersion===newVersion){
@@ -700,8 +700,8 @@ function getCustomerSearchFields(){
 }
 function customerBrandBadgesHtml(customer){
   const badges=[];
-  if(customer&&customer.sellsWeber)badges.push('<span class="pill yellow">Weber</span>');
-  if(customer&&customer.sellsGyproc)badges.push('<span class="pill blue">Gyproc</span>');
+  if(customer&&customer.sellsWeber)badges.push(renderBrandLogoHtml('WEBER','compact',{className:'customer-brand-logo',ariaLabel:'แบรนด์ Weber'}));
+  if(customer&&customer.sellsGyproc)badges.push(renderBrandLogoHtml('GYPROC','compact',{className:'customer-brand-logo',ariaLabel:'แบรนด์ Gyproc'}));
   if(!badges.length)badges.push('<span class="pill">ต้องตรวจสอบแบรนด์</span>');
   return badges.join(' ');
 }
@@ -1236,7 +1236,7 @@ function openProductPromotionDetail(productReference,event){
   const code=product.sku||product.productId||product.productCode||product.id||'-';
   body.classList.add('product-promo-modal-body');
   const promoFullHtml=renderPromotionLinesHtml(promoText,'full',{className:'product-promo-full',tabIndex:0});
-  body.innerHTML=`<div class="product-promo-detail"><div class="product-promo-detail-meta"><span class="pill ${brand==='Weber'?'yellow':'blue'}">${escapeHtml(brand)}</span><div><b>${escapeHtml(product.productName||product.name||'-')}</b><small>รหัสสินค้า: ${escapeHtml(code)} • ${escapeHtml(product.unit||'-')} • ${money(product.listPrice||product.price||0)}</small></div></div>${promoFullHtml}<div class="actions product-promo-actions"><button type="button" class="primary" onclick="closeModal()">ปิด</button></div></div>`;
+  body.innerHTML=`<div class="product-promo-detail"><div class="product-promo-detail-meta">${renderBrandLogoHtml(product,'detail',{className:'product-detail-brand-logo',fallbackLabel:brand})}<div><b>${escapeHtml(product.productName||product.name||'-')}</b><small>รหัสสินค้า: ${escapeHtml(code)} • ${escapeHtml(product.unit||'-')} • ${money(product.listPrice||product.price||0)}</small></div></div>${promoFullHtml}<div class="actions product-promo-actions"><button type="button" class="primary" onclick="closeModal()">ปิด</button></div></div>`;
   modal.classList.remove('customer-modal');
   modal.classList.add('product-promo-modal','show');
   document.body.classList.add('product-promo-scroll-locked');
@@ -1418,7 +1418,7 @@ function renderProductCalculator(){
     <div class="product-calc-head">
       <div class="product-calc-img">${imageUrl?`<img src="${htmlAttr(imageUrl)}" alt="">`:'📦'}</div>
       <div>
-        <span class="pill ${product.brand==='Weber'?'yellow':'blue'}">${escapeHtml(product.brand||'-')}</span>
+        ${renderBrandLogoHtml(product,'detail',{className:'product-calc-brand-logo'})}
         <h2>${escapeHtml(product.productName||'-')}</h2>
         <p>รหัสสินค้า: ${escapeHtml(productId)}</p>
         <p>หน่วย: ${escapeHtml(product.unit||'-')}</p>
@@ -1722,13 +1722,103 @@ function normalizeProductBusinessUnitForUi(product){
   if(text.indexOf('WEBER')>=0)return'WEBER';
   return'';
 }
+const BRAND_LOGO_ASSETS={WEBER:{src:'images/weber-logo.png',label:'Weber'},GYPROC:{src:'images/gyproc-logo.png',label:'Gyproc'}};
+function normalizeBrandKeyForUi(value){
+  const item=value&&typeof value==='object'?value:{};
+  const text=String(item.productBusinessUnit||item.businessUnit||item.quoteType||item.bu||item.brand||value||'').trim().toUpperCase();
+  const hasWeber=text.indexOf('WEBER')>=0;
+  const hasGyproc=text.indexOf('GYPROC')>=0;
+  if(hasWeber&&!hasGyproc)return 'WEBER';
+  if(hasGyproc&&!hasWeber)return 'GYPROC';
+  return '';
+}
+function getBrandFallbackLabel(value){
+  const key=normalizeBrandKeyForUi(value);
+  if(key&&BRAND_LOGO_ASSETS[key])return BRAND_LOGO_ASSETS[key].label;
+  const item=value&&typeof value==='object'?value:{};
+  return String(item.brand||item.businessUnit||item.quoteType||value||'-').trim()||'-';
+}
+function getBrandLogoClass(variant,className){
+  const safeVariant=String(variant||'standard').replace(/[^a-z0-9_-]/gi,'').toLowerCase()||'standard';
+  return 'sg-brand-logo-badge sg-brand-logo--'+safeVariant+(className?' '+String(className):'');
+}
+function renderBrandLogoHtml(value,variant,options){
+  const opts=options||{};
+  const key=normalizeBrandKeyForUi(value);
+  const config=key?BRAND_LOGO_ASSETS[key]:null;
+  const fallback=String(opts.fallbackLabel||getBrandFallbackLabel(value)||'-').trim()||'-';
+  const label=String(opts.ariaLabel||('แบรนด์ '+fallback)).trim();
+  const className=getBrandLogoClass(variant,opts.className);
+  if(!config){
+    return `<span class="${htmlAttr(className+' is-fallback')}" role="img" aria-label="${htmlAttr(label)}"><span class="sg-brand-logo-fallback">${escapeHtml(fallback)}</span></span>`;
+  }
+  return `<span class="${htmlAttr(className)}" role="img" aria-label="${htmlAttr(label)}"><img class="sg-brand-logo-img" src="${htmlAttr(config.src)}" alt="" aria-hidden="true" loading="lazy" decoding="async" onerror="this.hidden=true;this.nextElementSibling.hidden=false;this.closest('.sg-brand-logo-badge').classList.add('is-fallback')"><span class="sg-brand-logo-fallback" hidden>${escapeHtml(fallback)}</span></span>`;
+}
+function renderBrandLogoElement(value,variant,options){
+  const opts=options||{};
+  const key=normalizeBrandKeyForUi(value);
+  const config=key?BRAND_LOGO_ASSETS[key]:null;
+  const fallback=String(opts.fallbackLabel||getBrandFallbackLabel(value)||'-').trim()||'-';
+  const label=String(opts.ariaLabel||('แบรนด์ '+fallback)).trim();
+  const wrap=createUiElement('span',getBrandLogoClass(variant,opts.className));
+  wrap.setAttribute('role','img');
+  wrap.setAttribute('aria-label',label);
+  if(!config){
+    wrap.classList.add('is-fallback');
+    wrap.appendChild(createUiElement('span','sg-brand-logo-fallback',fallback));
+    return wrap;
+  }
+  const img=document.createElement('img');
+  img.className='sg-brand-logo-img';
+  img.src=config.src;
+  img.alt='';
+  img.setAttribute('aria-hidden','true');
+  img.loading='lazy';
+  img.decoding='async';
+  const fallbackNode=createUiElement('span','sg-brand-logo-fallback',fallback);
+  fallbackNode.hidden=true;
+  img.addEventListener('error',()=>{
+    img.hidden=true;
+    fallbackNode.hidden=false;
+    wrap.classList.add('is-fallback');
+  },{once:true});
+  wrap.append(img,fallbackNode);
+  return wrap;
+}
+function statusBadgeVariantForUi(value){
+  const text=String(value||'').trim().toUpperCase();
+  if(text==='CANCELLED'||text==='EXPIRED'||text==='LOCKED'||text==='INACTIVE')return 'danger';
+  if(text==='DRAFT'||text==='PENDING'||text.indexOf('UNSAVED')>=0)return 'warning';
+  if(text==='SAVED'||text==='ACTIVE'||text==='APPROVED')return 'success';
+  if(text==='UPCOMING')return 'info';
+  return 'neutral';
+}
+function renderStatusBadgeHtml(value,variant,options){
+  const text=String(value||'-').trim()||'-';
+  const safeVariant=String(variant||statusBadgeVariantForUi(text)).replace(/[^a-z0-9_-]/gi,'').toLowerCase()||'neutral';
+  const label=String(options&&options.ariaLabel||('สถานะ: '+text)).trim();
+  return `<span class="status-badge status-badge--${htmlAttr(safeVariant)}" aria-label="${htmlAttr(label)}">${escapeHtml(text)}</span>`;
+}
+function renderIconActionButtonHtml(options){
+  const opts=options||{};
+  const variant=String(opts.variant||'neutral').replace(/[^a-z0-9_-]/gi,'').toLowerCase()||'neutral';
+  const label=String(opts.label||opts.ariaLabel||opts.title||'Action').trim();
+  const icon=String(opts.icon||'more_horiz').replace(/[^a-z0-9_]/gi,'');
+  const pressed=opts.pressed===true||opts.pressed===false;
+  const disabled=opts.disabled?' disabled aria-disabled="true"':'';
+  const loading=opts.loading?' is-loading':'';
+  const active=opts.pressed?' is-active':'';
+  const onClick=opts.onClick?' onclick="'+htmlAttr(opts.onClick)+'"':'';
+  const extra=opts.className?' '+String(opts.className):'';
+  return `<button type="button" class="icon-action-button icon-action-${htmlAttr(variant)}${active}${loading}${htmlAttr(extra)}"${onClick}${disabled} aria-label="${htmlAttr(opts.ariaLabel||label)}" title="${htmlAttr(opts.title||label)}"${pressed?' aria-pressed="'+String(!!opts.pressed)+'"':''}><span class="material-symbols-rounded" aria-hidden="true">${escapeHtml(icon)}</span><span class="sr-only">${escapeHtml(label)}</span></button>`;
+}
 function quoteBusinessUnitLabel(value){return String(value||'').toUpperCase()==='GYPROC'?'Gyproc':'Weber'}
 function getSelectedQuoteBusinessUnitForProducts(){return typeof window.getCurrentQuoteBusinessUnit==='function'?window.getCurrentQuoteBusinessUnit():'WEBER'}
 function isQuoteBusinessUnitReadyForProducts(){return typeof window.isQuoteBusinessUnitSelected==='function'?window.isQuoteBusinessUnitSelected():true}
 function isActiveProductForQuote(product){const status=String(product&&(product.active||product.status)||'').trim().toLowerCase();return !status||status==='true'||status==='yes'||status==='1'||status==='active'}
 function productMatchesQuoteBusinessUnit(product,businessUnit){return normalizeProductBusinessUnitForUi(product)===String(businessUnit||'').toUpperCase()}
 function quoteBusinessUnitClass(value){return String(value||'').toUpperCase()==='GYPROC'?'gyproc':'weber'}
-function quoteProductBusinessUnitBadge(product,primaryBusinessUnit){const productUnit=normalizeProductBusinessUnitForUi(product);if(!productUnit)return'<span class="quote-product-bu">BU -</span>';const label=quoteBusinessUnitLabel(productUnit);const cross=productUnit&&String(productUnit).toUpperCase()!==String(primaryBusinessUnit||'').toUpperCase()?'<small class="quote-cross-bu-note">สินค้าร่วมข้าม BU</small>':'';return `<span class="quote-product-bu ${quoteBusinessUnitClass(productUnit)}">${label}</span>${cross}`}
+function quoteProductBusinessUnitBadge(product,primaryBusinessUnit){const productUnit=normalizeProductBusinessUnitForUi(product);if(!productUnit)return'<span class="quote-product-bu">BU -</span>';const cross=productUnit&&String(productUnit).toUpperCase()!==String(primaryBusinessUnit||'').toUpperCase()?'<small class="quote-cross-bu-note">สินค้าร่วมข้าม BU</small>':'';return renderBrandLogoHtml(productUnit,'compact',{className:'quote-product-bu-logo'})+cross}
 function rankQuoteProduct(product,query){const q=String(query||'').trim().toLowerCase();if(!q)return 1000;const sku=String(product.productId||product.sku||product.id||product.productCode||'').trim().toLowerCase();const name=String(product.productName||product.name||'').trim().toLowerCase();const brand=String(product.brand||'').trim().toLowerCase();const description=String(product.description||product.itemDesc||'').trim().toLowerCase();if(sku===q)return 0;if(name===q)return 1;if(name.indexOf(q)===0)return 2;if(name.indexOf(q)>=0)return 3;if(brand.indexOf(q)>=0||description.indexOf(q)>=0)return 4;return 9}
 function rankQuoteProductBusinessUnit(product,businessUnit){const unit=normalizeProductBusinessUnitForUi(product);const primary=String(businessUnit||'').toUpperCase();if(unit&&primary&&unit===primary)return 0;if(unit)return 1;return 2}
 function filterQuoteProductsByBusinessUnit(query,businessUnit){const fields=getQuoteProductFields();const q=String(query||'').trim();return DB.products.filter(isActiveProductForQuote).filter(p=>!q||smartMatch(p,q,fields)).sort((a,b)=>rankQuoteProductBusinessUnit(a,businessUnit)-rankQuoteProductBusinessUnit(b,businessUnit)||rankQuoteProduct(a,q)-rankQuoteProduct(b,q)||String(a.productName||'').localeCompare(String(b.productName||''),'th'))}
@@ -1793,10 +1883,6 @@ function promotionBrandClass(label){
   if(text.indexOf('GYPROC')>=0)return 'blue';
   return 'blue';
 }
-const PROMOTION_BRAND_LOGOS={
-  WEBER:{src:'images/weber-logo.png',alt:'Weber'},
-  GYPROC:{src:'images/gyproc-logo.png',alt:'Gyproc'}
-};
 function getPromotionBrandLogoKey(group){
   const item=group&&typeof group==='object'?group:{brand:group};
   const brandKeys=Array.isArray(item.brandKeys)?item.brandKeys.map(key=>String(key||'').trim().toUpperCase()).filter(Boolean):[];
@@ -1815,29 +1901,7 @@ function getPromotionBrandFallbackText(group){
 }
 function renderPromotionBrandLogo(group){
   const key=getPromotionBrandLogoKey(group);
-  const config=key?PROMOTION_BRAND_LOGOS[key]:null;
-  const fallbackText=getPromotionBrandFallbackText(group)||'-';
-  const wrap=createUiElement('span','promotion-brand-logo-badge');
-  if(!config){
-    wrap.classList.add('is-fallback');
-    wrap.appendChild(createUiElement('span','promotion-brand-logo-fallback',fallbackText));
-    return wrap;
-  }
-  const img=document.createElement('img');
-  img.className='promotion-brand-logo';
-  img.src=config.src;
-  img.alt=config.alt;
-  img.loading='lazy';
-  img.decoding='async';
-  const fallback=createUiElement('span','promotion-brand-logo-fallback',fallbackText);
-  fallback.hidden=true;
-  img.addEventListener('error',()=>{
-    img.hidden=true;
-    fallback.hidden=false;
-    wrap.classList.add('is-fallback');
-  },{once:true});
-  wrap.append(img,fallback);
-  return wrap;
+  return renderBrandLogoElement(key||getPromotionBrandFallbackText(group),'standard',{className:'promotion-brand-logo-badge',fallbackLabel:getPromotionBrandFallbackText(group)||'-'});
 }
 function getPromotionProductCode(product){
   const item=product&&typeof product==='object'?product:{};
@@ -2593,7 +2657,9 @@ function openPromotionDetail(promotionKey,event){
   const detail=createUiElement('div','promotion-detail');
   const meta=createUiElement('div','promotion-detail-meta');
   appendPromotionDetailRow(meta,'Promotion Code',group.promotionCode);
-  appendPromotionDetailRow(meta,'Brand',group.brand);
+  const brandRow=createUiElement('div','promotion-detail-row');
+  brandRow.append(createUiElement('small','','Brand'),renderBrandLogoElement(getPromotionBrandLogoKey(group)||group.brand,'detail',{className:'promotion-detail-brand-logo',fallbackLabel:group.brand||'-'}));
+  meta.appendChild(brandRow);
   appendPromotionDetailRow(meta,'Status',getPromotionStatusDisplayText(group));
   appendPromotionDetailRow(meta,'Start Date',group.hasPromotionDateRange?group.startDateLabel:PROMOTION_DATE_MISSING_TEXT);
   appendPromotionDetailRow(meta,'End Date',group.hasPromotionDateRange?group.endDateLabel:PROMOTION_DATE_MISSING_TEXT);
@@ -2644,7 +2710,7 @@ function renderPromotionProductPanel(promotionKey){
     const item=normalizePromotionProductForDashboard(product);
     const recordKey=registerProductRecordSelection(item,'promotion-dashboard');
     const row=createUiElement('div','row promotion-product-row');
-    const brand=createUiElement('span','pill '+promotionBrandClass(item.brand),item.brand||'-');
+    const brand=renderBrandLogoElement(item.brand,'compact',{className:'promotion-product-brand-logo'});
     const main=createUiElement('div','promotion-product-main');
     main.append(createUiElement('b','',item.productName||'-'),createUiElement('small','',(item.productCode||item.sku||item.productId||'-')+' · '+(item.unit||'-')));
     const price=createUiElement('b','promotion-product-price',money(item.listPrice||item.price||0));
@@ -2946,7 +3012,7 @@ function renderHistory(){
     const refJs=jsStringLiteralAttr(q.quoteId||q.quoteNo||'');
     const quoteNo=htmlAttr(q.quoteNo||'');
     const editAction=canEdit?`<button type="button" class="tiny" data-quote-edit-button data-quote-edit-source="quotation-history" data-quote-id="${refAttr}" data-quote-no="${quoteNo}" onclick="navigateToQuotationEdit(${refJs},event,{source:'quotation-history'})">แก้ไข</button>`:'';
-    return `<div class="row quote-history-row"><div><b>${escapeHtml(q.quoteNo||'-')}</b><br><small>${escapeHtml(q.customerName||'-')} · ${escapeHtml(q.customerId||'-')}</small></div><span class="quote-type-badge ${quoteTypeClassForUi(q.quoteType)}">${escapeHtml(quoteTypeLabelForUi(q.quoteType))}</span><span class="pill ${q.status==='CANCELLED'?'yellow':'blue'}">${escapeHtml(q.status||'-')}</span><span>${escapeHtml(formatDateTime(q.createdAt))}</span><b style="margin-left:auto">${money(q.grandTotal||q.total)}</b><button type="button" class="tiny" onclick="openQuotationDetail(${refJs})">เปิดดู</button>${editAction}</div>`;
+    return `<div class="row quote-history-row"><div><b>${escapeHtml(q.quoteNo||'-')}</b><br><small>${escapeHtml(q.customerName||'-')} · ${escapeHtml(q.customerId||'-')}</small></div>${renderBrandLogoHtml(q.quoteType,'compact',{className:'quote-history-brand-logo'})}${renderStatusBadgeHtml(q.status,statusBadgeVariantForUi(q.status),{ariaLabel:'สถานะใบเสนอราคา: '+(q.status||'-')})}<span>${escapeHtml(formatDateTime(q.createdAt))}</span><b style="margin-left:auto">${money(q.grandTotal||q.total)}</b><button type="button" class="tiny" onclick="openQuotationDetail(${refJs})">เปิดดู</button>${editAction}</div>`;
   }).join(''):'<p style="color:var(--muted)">ยังไม่มีใบเสนอราคา</p>';
 }
 async function refreshQuotationHistory(options){
@@ -3015,7 +3081,7 @@ function buildQuotationDetailHtml(data){
     `<button type="button" class="yellow" onclick="cancelQuotationFromHistory(${quoteIdJs})">Cancel</button>`
   ].join(''):'';
   const actionsHtml=(exportActions||editActions)?`<div class="actions no-print">${exportActions}${editActions}</div>`:'';
-  return `<div class="section-title"><div><h2>${escapeHtml(quote.quoteNo||quote.quoteId||'-')}</h2><p style="color:var(--muted);margin:4px 0 0">${escapeHtml(quote.customerName||'-')} · ${escapeHtml(quote.customerId||'-')}</p></div><span class="pill ${quote.status==='CANCELLED'?'yellow':'blue'}">${escapeHtml(quote.status||'-')}</span></div><div class="quote-detail-meta"><span>วันที่: ${escapeHtml(formatDateTime(quote.createdAt))}</span><span>ยอดสุทธิ: ${money(totals.grandTotal||quote.grandTotal)}</span></div><div class="list quote-detail-lines">${lines.length?lines.map((line,index)=>`<div class="row"><div><b>${escapeHtml(line.productName||'-')}</b><br><small>${escapeHtml(line.productId||'-')} · ${escapeHtml(line.unit||'-')}</small></div><span>จำนวน ${escapeHtml(line.qty||0)}</span><span>ราคา ${money(line.listPrice)}</span><span>ส่วนลด ${escapeHtml(line.discountPercent||0)}%</span><b style="margin-left:auto">${money(line.grandTotal||line.lineTotal)}</b></div>`).join(''):'<p style="color:var(--muted)">ไม่มีรายการสินค้า</p>'}</div><div class="quote-total-box"><p>Subtotal <b>${money(totals.subtotal||quote.subtotal)}</b></p><p>VAT <b>${money(totals.vat||quote.vat)}</b></p><p>Grand Total <b>${money(totals.grandTotal||quote.grandTotal)}</b></p></div>${actionsHtml}`;
+  return `<div class="section-title"><div><h2>${escapeHtml(quote.quoteNo||quote.quoteId||'-')}</h2><p style="color:var(--muted);margin:4px 0 0">${escapeHtml(quote.customerName||'-')} · ${escapeHtml(quote.customerId||'-')}</p></div>${renderStatusBadgeHtml(quote.status,statusBadgeVariantForUi(quote.status),{ariaLabel:'สถานะใบเสนอราคา: '+(quote.status||'-')})}</div><div class="quote-detail-meta"><span>วันที่: ${escapeHtml(formatDateTime(quote.createdAt))}</span><span>ยอดสุทธิ: ${money(totals.grandTotal||quote.grandTotal)}</span></div><div class="list quote-detail-lines">${lines.length?lines.map((line,index)=>`<div class="row"><div><b>${escapeHtml(line.productName||'-')}</b><br><small>${escapeHtml(line.productId||'-')} · ${escapeHtml(line.unit||'-')}</small></div><span>จำนวน ${escapeHtml(line.qty||0)}</span><span>ราคา ${money(line.listPrice)}</span><span>ส่วนลด ${escapeHtml(line.discountPercent||0)}%</span><b style="margin-left:auto">${money(line.grandTotal||line.lineTotal)}</b></div>`).join(''):'<p style="color:var(--muted)">ไม่มีรายการสินค้า</p>'}</div><div class="quote-total-box"><p>Subtotal <b>${money(totals.subtotal||quote.subtotal)}</b></p><p>VAT <b>${money(totals.vat||quote.vat)}</b></p><p>Grand Total <b>${money(totals.grandTotal||quote.grandTotal)}</b></p></div>${actionsHtml}`;
 }
 function renderQuotationDetail(data){
   const box=$('quoteDetail');
@@ -3879,11 +3945,17 @@ async function saveModal(type){
 }
 function toast(msg, options){if(typeof showToast==='function')return showToast(Object.assign({type:'info',message:msg},options||{}));const el=document.getElementById('toast'); if(!el)return; el.textContent=msg; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),2600)}
 
+const CUSTOMER_FAVORITE_PENDING=new Set();
 function isFavoriteCustomer(customerId){return FAVORITE_CUSTOMERS.some(c=>String(c.customerId||'')===String(customerId||''))}
+function isCustomerFavoritePending(customerId){return CUSTOMER_FAVORITE_PENDING.has(String(customerId||''))}
 function renderCustomerCard(c,isFavorite){
   const idAttr=htmlAttr(c.customerId||'');
   const idJs=jsStringLiteralAttr(c.customerId||'');
-  const quoteButton=currentRole()==='VIEWER'?'':`<button type="button" class="ghost" onclick="selectCustomer(${idJs})">ออกใบเสนอราคา</button>`;
+  const customerName=String(c.customerName||c.customerCode||c.customerId||'ร้านค้า').trim();
+  const quoteButton=currentRole()==='VIEWER'?'':renderIconActionButtonHtml({icon:'request_quote',variant:'primary',label:'ออกใบเสนอราคา',ariaLabel:'ออกใบเสนอราคาให้ร้าน '+customerName,title:'ออกใบเสนอราคา',onClick:`selectCustomer(${idJs})`});
+  const editButton=canEditCustomers()?renderIconActionButtonHtml({icon:'edit',variant:'secondary',label:'แก้ไขข้อมูล',ariaLabel:'แก้ไขข้อมูลร้าน '+customerName,title:'แก้ไขข้อมูล',onClick:`openCustomerEditModal(${idJs})`}):'';
+  const favoritePending=isCustomerFavoritePending(c.customerId);
+  const favoriteButton=renderIconActionButtonHtml({icon:isFavorite?'star':'star_outline',variant:'favorite',label:isFavorite?'นำออกจากร้านค้าโปรด':'เพิ่มในร้านค้าโปรด',ariaLabel:(isFavorite?'นำร้าน ':'เพิ่มร้าน ')+customerName+(isFavorite?' ออกจากร้านค้าโปรด':' เป็นร้านค้าโปรด'),title:isFavorite?'นำออกจากร้านค้าโปรด':'เพิ่มในร้านค้าโปรด',pressed:!!isFavorite,loading:favoritePending,disabled:favoritePending,onClick:`toggleFavoriteCustomer(${idJs})`});
   return `<div class="card ${isFavorite?'favorite-card':''}" ${isFavorite?`draggable="true" data-customer-id="${idAttr}"`:''}>
     <div class="customer-card-head"><h3>${escapeHtml(c.customerName||'-')}</h3><div class="customer-brand-badges">${customerBrandBadgesHtml(c)}</div></div>
     <p>รหัสร้านค้า: ${escapeHtml(c.customerCode||c.customerId||c.id||'-')}</p>
@@ -3893,8 +3965,7 @@ function renderCustomerCard(c,isFavorite){
     <p>โทร: ${renderPhoneLink(c.phone)||'-'}</p>
     <p>ที่อยู่: ${escapeHtml(c.address||'-')}</p>
     <p>หมายเหตุ: ${escapeHtml(c.notes||'-')}</p>
-    <div class="customer-actions">${quoteButton}${canEditCustomers()?`<button type="button" class="ghost" onclick="openCustomerEditModal(${idJs})">✏️ แก้ไขข้อมูล</button>`:''}</div>
-    <button type="button" class="favorite-toggle" onclick="toggleFavoriteCustomer(${idJs})">${isFavorite?'⭐ ยกเลิกปักหมุด':'☆ เพิ่มในร้านค้าโปรด'}</button>
+    <div class="customer-actions card-action-row">${quoteButton}${editButton}${favoriteButton}</div>
   </div>`;
 }
 function renderFavoriteCustomers(){
@@ -3978,7 +4049,27 @@ async function loadFavoriteCustomers(options){
   });
   return favoriteCustomersPromise;
 }
-async function toggleFavoriteCustomer(customerId){const favorite=isFavoriteCustomer(customerId);if(!favorite&&FAVORITE_CUSTOMERS.length>=5){toast('สามารถปักร้านค้าโปรดได้สูงสุด 5 ร้าน');return;}const response=await callApi(favorite?'removeFavoriteCustomer':'addFavoriteCustomer',{customerId:customerId});toast(response.message||(response.ok?'บันทึกแล้ว':'บันทึกไม่สำเร็จ'));if(response.ok)await loadFavoriteCustomers()}
+async function toggleFavoriteCustomer(customerId){
+  const id=String(customerId||'').trim();
+  if(!id||CUSTOMER_FAVORITE_PENDING.has(id))return;
+  const favorite=isFavoriteCustomer(id);
+  if(!favorite&&FAVORITE_CUSTOMERS.length>=5){toast('สามารถปักร้านค้าโปรดได้สูงสุด 5 ร้าน');return;}
+  CUSTOMER_FAVORITE_PENDING.add(id);
+  renderCustomers();
+  try{
+    const response=await callApi(favorite?'removeFavoriteCustomer':'addFavoriteCustomer',{customerId:id});
+    toast(response.message||(response.ok?'บันทึกแล้ว':'บันทึกไม่สำเร็จ'));
+    if(response.ok)await loadFavoriteCustomers();
+    return response;
+  }catch(error){
+    console.warn('Favorite customer update failed');
+    toast('บันทึกร้านค้าโปรดไม่สำเร็จ');
+    return {ok:false,message:String(error&&error.message?error.message:error)};
+  }finally{
+    CUSTOMER_FAVORITE_PENDING.delete(id);
+    renderCustomers();
+  }
+}
 async function persistFavoriteOrder(){const grid=$('favoriteCustomerGrid');if(!grid)return;const customerIds=Array.from(grid.querySelectorAll('[data-customer-id]')).map(el=>el.dataset.customerId);const response=await callApi('reorderFavoriteCustomers',{customerIds:customerIds});if(!response.ok){toast(response.message||'จัดลำดับไม่สำเร็จ');await loadFavoriteCustomers();return;}const map=new Map(FAVORITE_CUSTOMERS.map(c=>[String(c.customerId),c]));FAVORITE_CUSTOMERS=customerIds.map(id=>map.get(id)).filter(Boolean)}
 function bindFavoriteDragAndDrop(){const grid=$('favoriteCustomerGrid');if(!grid||grid.dataset.bound)return;grid.dataset.bound='true';let dragged=null;grid.addEventListener('dragstart',event=>{dragged=event.target.closest('.favorite-card');if(!dragged)return;dragged.classList.add('is-dragging');event.dataTransfer.effectAllowed='move'});grid.addEventListener('dragover',event=>{event.preventDefault();const target=event.target.closest('.favorite-card');if(dragged&&target&&target!==dragged)grid.insertBefore(dragged,target)});grid.addEventListener('dragend',()=>{if(dragged)dragged.classList.remove('is-dragging');dragged=null;persistFavoriteOrder()});let timer=null,touchCard=null;grid.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'||event.target.closest('button,a'))return;touchCard=event.target.closest('.favorite-card');if(touchCard)timer=setTimeout(()=>{touchCard.classList.add('is-dragging');touchCard.setPointerCapture(event.pointerId)},350)});grid.addEventListener('pointermove',event=>{if(!touchCard||!touchCard.classList.contains('is-dragging'))return;event.preventDefault();const target=document.elementFromPoint(event.clientX,event.clientY)?.closest('.favorite-card');if(target&&target!==touchCard)grid.insertBefore(touchCard,target)});const finish=()=>{clearTimeout(timer);if(touchCard&&touchCard.classList.contains('is-dragging')){touchCard.classList.remove('is-dragging');persistFavoriteOrder()}touchCard=null};grid.addEventListener('pointerup',finish);grid.addEventListener('pointercancel',finish)}
 
@@ -3988,9 +4079,8 @@ function renderProductCard(product,sourceListIndex){
   const key=htmlAttr(recordKey);
   const keyJs=jsStringLiteralAttr(recordKey);
   const identity=htmlAttr(createProductIdentityKey(p));
-  const brandClass=normalizeProductBusinessUnitForUi(p)==='WEBER'||p.brand==='Weber'?'yellow':'blue';
   const promoHtml=renderProductPromotionTeaser(p,recordKey,'product-list');
-  return `<div class="card product-card-clickable" role="button" tabindex="0" data-product-record-key="${key}" data-product-identity-key="${identity}" onclick="openProductCalculator(${keyJs})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProductCalculator(${keyJs})}"><span class="pill ${brandClass}">${escapeHtml(p.brand||'-')}</span><h3>${escapeHtml(p.productName||'-')}</h3><p>รหัสสินค้า: ${escapeHtml(p.sku||p.productId||p.id||'-')}</p><p>${escapeHtml(p.unit||'-')}</p><b>${money(p.listPrice)}</b>${promoHtml}<div class="product-card-actions"><button type="button" class="ghost" onclick="addProductCardToQuote(${keyJs},event)">เพิ่มลงใบเสนอราคา</button></div></div>`;
+  return `<div class="card product-card-clickable" role="button" tabindex="0" data-product-record-key="${key}" data-product-identity-key="${identity}" onclick="openProductCalculator(${keyJs})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProductCalculator(${keyJs})}">${renderBrandLogoHtml(p,'standard',{className:'product-card-brand-logo'})}<h3>${escapeHtml(p.productName||'-')}</h3><p>รหัสสินค้า: ${escapeHtml(p.sku||p.productId||p.id||'-')}</p><p>${escapeHtml(p.unit||'-')}</p><b>${money(p.listPrice)}</b>${promoHtml}<div class="product-card-actions"><button type="button" class="ghost" onclick="addProductCardToQuote(${keyJs},event)">เพิ่มลงใบเสนอราคา</button></div></div>`;
 }
 function renderProducts(){let q=$('searchProducts')?.value||''; let grid=$('productGrid'); if(!grid)return; let fields=['productId','sku','productName','description','brand','discountGroup','groupCode','unit','notes','promoText']; let products=DB.products.filter(p=>smartMatch(p,q,fields));let limited=limitList(products,LIST_RENDER_LIMIT); if(!productsLoaded&&!DB.products.length){grid.innerHTML='<p class="loading-text">กำลังโหลดข้อมูล...</p>';return;} resetProductCalculatorRecordRegistry(); grid.innerHTML=renderLimitNotice(limited.limited,LIST_RENDER_LIMIT)+limited.items.map(p=>renderProductCard(p,DB.products.indexOf(p))).join('')}
 
@@ -4252,7 +4342,7 @@ function renderQuoteProductPreferenceCard(product,options){
   const priceHtml=listPrice>0?money(listPrice):'<span class="quote-product-missing-price">ยังไม่มีราคา</span>';
   const promoHtml=renderProductPromotionTeaser(item,recordKey,'quote-product');
   const actions=canManageQuoteProductPreferences()?`<div class="quote-product-actions" data-no-drag><button type="button" class="quote-product-pref-button ${item.isFavoriteProduct?'is-active':''}" data-no-drag onclick='toggleFavoriteProduct(${jsId})'>${item.isFavoriteProduct?'♥':'♡'}</button><button type="button" class="quote-product-pref-button ${item.isPinnedProduct?'is-active':''}" data-no-drag onclick='togglePinnedProduct(${jsId})'>${item.isPinnedProduct?'📌':'📍'}</button><button type="button" class="tiny quote-add-product-button" data-no-drag data-product-id="${idAttr}" data-product-record-key="${recordKeyAttr}" data-product-source="${sourceAttr}" onclick="addProductToQuoteByReference(event)">+ เพิ่ม</button></div>`:'';
-  return `<div class="row quote-product-pref-card ${opts.pinned?'pinned-product-card':''}"${draggable}><div class="product-img">${productUnit==='WEBER'?'🟨':'🟦'}</div><div class="quote-product-pref-main"><div class="quote-product-title">${quoteProductBusinessUnitBadge(item,getSelectedQuoteBusinessUnitForProducts())}<b>${escapeHtml(item.productName||'-')}</b></div><small>${escapeHtml(item.brand||quoteBusinessUnitLabel(productUnit))} · ${escapeHtml(item.sku||item.productId||item.id||'-')} · ${escapeHtml(item.unit||'-')} · ${priceHtml}</small>${promoHtml}</div>${actions}</div>`;
+  return `<div class="row quote-product-pref-card ${opts.pinned?'pinned-product-card':''}"${draggable}><div class="product-img product-brand-img">${renderBrandLogoHtml(productUnit,'compact',{className:'quote-product-tile-logo'})}</div><div class="quote-product-pref-main"><div class="quote-product-title">${quoteProductBusinessUnitBadge(item,getSelectedQuoteBusinessUnitForProducts())}<b>${escapeHtml(item.productName||'-')}</b></div><small>${escapeHtml(item.brand||quoteBusinessUnitLabel(productUnit))} · ${escapeHtml(item.sku||item.productId||item.id||'-')} · ${escapeHtml(item.unit||'-')} · ${priceHtml}</small>${promoHtml}</div>${actions}</div>`;
 }
 function getProductPreferenceCollapseKey(type){return type==='favorite'?FAVORITE_PRODUCTS_COLLAPSED_KEY:PINNED_PRODUCTS_COLLAPSED_KEY}
 function isProductPreferenceCollapsed(type){try{return localStorage.getItem(getProductPreferenceCollapseKey(type))==='true'}catch(error){return false}}
