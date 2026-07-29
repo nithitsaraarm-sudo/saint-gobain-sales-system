@@ -29,6 +29,39 @@ If remaining weekly usage is shown as 30% or lower in the product UI, stop after
 | Phase 10 — Documentation Synchronization | Completed | `1786ac7448d41b35171bc28fe94b3cd59da736b4` |
 | Phase 11 — Test and Release Readiness | Completed | `13d85f7927299bc833f7a3b3e848c2b2f2429b5e` |
 | Phase 12 — V1 Final Pre-Release Audit Package | Completed | Documentation-only phase commit |
+| Phase 13 — Quotation Draft Expiration | Completed | Phase commit |
+
+## Phase 13 Completion Notes
+
+Date: 2026-07-29
+
+Scope: smallest safe frontend change to expire local quotation drafts before draft recovery modal.
+
+Files changed:
+
+- `js/quotation.js`
+- `TEST_CASES.md`
+- `REMEDIATION_PROGRESS.md`
+- `WORK_HISTORY.md`
+
+Implemented:
+
+- Added centralized `QUOTATION_DRAFT_TTL_DAYS = 14` and derived millisecond TTL.
+- Added safe preflight check before `initializeQuotationDraftRecovery()` shows any recovery modal.
+- Expired, missing timestamp, invalid timestamp, empty/corrupted JSON drafts now remove only the current user-specific local draft key.
+- Future timestamps are logged and allowed to continue existing recovery behavior.
+- Existing valid draft recovery, saved quotations, Apps Script APIs, Google Sheets schema, quotation numbering, and other user draft keys remain unchanged.
+
+Validation:
+
+- Static checks must be run before commit.
+- Runtime/browser/PWA tests are documented in `TEST_CASES.md` as `DRAFT-TTL-01` through `DRAFT-TTL-12`; they are not marked passed until executed in a browser/PWA environment.
+
+Rollback:
+
+```bash
+git checkout -- js/quotation.js TEST_CASES.md REMEDIATION_PROGRESS.md WORK_HISTORY.md
+```
 
 ## Phase 12 Completion Notes
 

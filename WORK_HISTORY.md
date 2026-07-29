@@ -1,5 +1,27 @@
 # Saint-Gobain Sales System - Work History
 
+## 2026-07-29 - Quotation local draft expiration
+
+### Branch
+
+`audit/full-remediation`
+
+### Files changed
+
+- `js/quotation.js`
+- `TEST_CASES.md`
+- `REMEDIATION_PROGRESS.md`
+- `WORK_HISTORY.md`
+
+### Summary
+
+- Added a 14-day TTL policy for local quotation drafts.
+- Draft expiration runs before the recovery modal is shown.
+- Expired, invalid-timestamp, missing-timestamp, empty, and corrupted current-user draft entries are removed silently from the exact scoped `localStorage` key.
+- Future timestamps are logged and allowed to continue existing recovery behavior.
+- Valid draft recovery, autosave, saved quotations, quotation APIs, Google Sheets, and quotation numbering were not changed.
+- Added manual/browser/PWA test coverage rows `DRAFT-TTL-01` through `DRAFT-TTL-12`.
+
 ## 2026-07-29 - V1 final pre-release audit documentation package
 
 ### Branch

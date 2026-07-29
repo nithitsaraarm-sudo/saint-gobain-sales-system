@@ -22,6 +22,8 @@ let QUOTE_SAVE_REQUEST_ID = '';
 let QUOTE_SAVE_REQUEST_SIGNATURE = '';
 const PENDING_QUOTATION_CONTEXT_KEY = 'sg_pending_quotation_context_v1';
 const QUOTATION_LOCAL_DRAFT_VERSION = 1;
+const QUOTATION_DRAFT_TTL_DAYS = 14;
+const QUOTATION_DRAFT_TTL_MS = QUOTATION_DRAFT_TTL_DAYS * 24 * 60 * 60 * 1000;
 const QUOTATION_LOCAL_DRAFT_KEY_PREFIX = 'saintgobain_quotation_draft_v1_';
 const QUOTATION_LOCAL_DRAFT_DEBOUNCE_MS = 1500;
 const QUOTATION_DRAFT_STORAGE_KEYS = [
@@ -220,6 +222,17 @@ function getQuotationDraftUser() {
 function getQuotationLocalDraftStorageKey() {
   const user = getQuotationDraftUser();
   return user.scope ? QUOTATION_LOCAL_DRAFT_KEY_PREFIX + user.scope : '';
+}
+
+function removeCurrentQuotationLocalDraftKey(reason, detail) {
+  const key = getQuotationLocalDraftStorageKey();
+  if (!key || typeof localStorage === 'undefined') return false;
+  removeQuotationStorageKey(localStorage, key);
+  QUOTATION_LOCAL_DRAFT_SIGNATURE = '';
+  QUOTATION_LOCAL_DRAFT_ID = '';
+  setQuotationDraftStatus('', '', '');
+  logQuotationDraftEvent(reason || 'draft_removed', detail || '');
+  return true;
 }
 
 function logQuotationDraftEvent(eventName, detail) {
@@ -493,6 +506,86 @@ function readQuotationLocalDraftRaw() {
     logQuotationDraftEvent('draft_read_failed', error && error.message || String(error || ''));
     return null;
   }
+}
+
+function parseQuotationLocalDraftJson(rawValue) {
+  if (typeof rawValue !== 'string') {
+    return rawValue && typeof rawValue === 'object'
+      ? { ok: true, data: rawValue }
+      : { ok: false, code: 'DRAFT_JSON_INVALID' };
+  }
+  if (!rawValue.trim()) {
+    return { ok: false, code: 'DRAFT_JSON_EMPTY' };
+  }
+  try {
+    const parsed = JSON.parse(rawValue);
+    return parsed && typeof parsed === 'object'
+      ? { ok: true, data: parsed }
+      : { ok: false, code: 'DRAFT_JSON_INVALID' };
+  } catch (error) {
+    return { ok: false, code: 'DRAFT_JSON_INVALID' };
+  }
+}
+
+function isQuotationLocalDraftOwnedByCurrentUser(draft) {
+  const data = draft && typeof draft === 'object' ? draft : {};
+  const currentUser = getQuotationDraftUser();
+  const draftUserId = String(data.userId || '').trim();
+  const draftUsername = String(data.username || '').trim();
+  return Boolean(
+    (currentUser.userId && draftUserId && currentUser.userId === draftUserId)
+    || (currentUser.username && draftUsername && currentUser.username === draftUsername)
+  );
+}
+
+function parseQuotationDraftSavedAtMs(value) {
+  if (value === undefined || value === null) return NaN;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) return NaN;
+    return value < 1000000000000 ? value * 1000 : value;
+  }
+  const text = String(value || '').trim();
+  if (!text) return NaN;
+  if (/^\d+(\.\d+)?$/.test(text)) {
+    const numeric = Number(text);
+    if (!Number.isFinite(numeric) || numeric <= 0) return NaN;
+    return numeric < 1000000000000 ? numeric * 1000 : numeric;
+  }
+  const parsed = Date.parse(text);
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function getQuotationDraftAgeDays(ageMs) {
+  return Math.max(0, ageMs) / (24 * 60 * 60 * 1000);
+}
+
+function inspectQuotationLocalDraftExpiration(rawValue) {
+  const parsed = parseQuotationLocalDraftJson(rawValue);
+  if (!parsed.ok) {
+    removeCurrentQuotationLocalDraftKey('QUOTATION_DRAFT_CORRUPTED', 'code=' + parsed.code);
+    return { ok: false, discarded: true, reason: 'corrupted_draft' };
+  }
+  const draft = parsed.data || {};
+  if (!isQuotationLocalDraftOwnedByCurrentUser(draft)) {
+    return { ok: true, data: draft, ownerMismatch: true };
+  }
+  const savedAtMs = parseQuotationDraftSavedAtMs(draft.savedAt);
+  if (!Number.isFinite(savedAtMs)) {
+    removeCurrentQuotationLocalDraftKey('QUOTATION_DRAFT_INVALID_TIMESTAMP', 'savedAt=invalid');
+    return { ok: false, discarded: true, reason: 'invalid_timestamp' };
+  }
+  const nowMs = Date.now();
+  const ageMs = nowMs - savedAtMs;
+  if (ageMs < 0) {
+    logQuotationDraftEvent('QUOTATION_DRAFT_FUTURE_TIMESTAMP', 'futureMs=' + Math.abs(ageMs));
+    return { ok: true, data: draft, futureTimestamp: true };
+  }
+  if (ageMs >= QUOTATION_DRAFT_TTL_MS) {
+    const ageDays = getQuotationDraftAgeDays(ageMs).toFixed(2);
+    removeCurrentQuotationLocalDraftKey('QUOTATION_DRAFT_EXPIRED', 'ageDays=' + ageDays + ';ttlDays=' + QUOTATION_DRAFT_TTL_DAYS);
+    return { ok: false, discarded: true, reason: 'expired_draft', ageDays: ageDays };
+  }
+  return { ok: true, data: draft };
 }
 
 function discardQuotationLocalDraft(reason) {
@@ -1032,8 +1125,12 @@ async function initializeQuotationDraftRecovery(options) {
   }
   QUOTATION_LOCAL_DRAFT_RECOVERY_SCOPE = scope;
   var raw = readQuotationLocalDraftRaw();
-  if (!raw) return { ok: true, skipped: true };
-  var validation = validateQuotationLocalDraft(raw);
+  if (raw === null || raw === undefined) return { ok: true, skipped: true };
+  const expiration = inspectQuotationLocalDraftExpiration(raw);
+  if (!expiration.ok) {
+    return { ok: true, discarded: Boolean(expiration.discarded), reason: expiration.reason || 'draft_expiration_skipped' };
+  }
+  var validation = validateQuotationLocalDraft(expiration.data || raw);
   var retryCount = 0;
   if (!validation.ok) {
     while (!validation.ok) {
