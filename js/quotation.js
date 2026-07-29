@@ -2701,10 +2701,20 @@ function renderQuote() {
 }
 
 function renderProductPicker() {
+  if (typeof window !== 'undefined' && typeof window.renderQuoteProductPicker === 'function' && window.renderQuoteProductPicker !== renderProductPicker) {
+    return window.renderQuoteProductPicker();
+  }
   const q = (document.getElementById('productSearch')?.value || '').toLowerCase();
   const picker = document.getElementById('productPicker');
   if (!picker) return;
-  picker.innerHTML = DB.products.filter(p => JSON.stringify(p).toLowerCase().includes(q)).slice(0, 8).map(p => `<div class="row"><div class="product-img">${p.brand === 'Weber' ? '🟨' : '🟦'}</div><div><b>${p.productName}</b><br><small>${p.unit || ''} · ${money(p.listPrice)}</small></div><button type="button" class="tiny" style="margin-left:auto" onclick='addCart(${JSON.stringify(p)})'>+ เพิ่ม</button></div>`).join('');
+  picker.innerHTML = DB.products.filter(p => JSON.stringify(p).toLowerCase().includes(q)).slice(0, 8).map(p => {
+    const recordKey = typeof window !== 'undefined' && typeof window.registerProductRecordSelection === 'function' ? window.registerProductRecordSelection(p, 'quote-legacy') : '';
+    const productId = String(p.productId || p.sku || p.productCode || p.id || '').trim();
+    const thumbnail = typeof window !== 'undefined' && typeof window.renderProductThumbnailHtml === 'function'
+      ? window.renderProductThumbnailHtml(p, { variant: 'small', className: 'quote-product-thumbnail' })
+      : '<span class="product-thumbnail product-thumbnail--small is-fallback"><span class="product-thumbnail-generic" aria-hidden="true">📦</span></span>';
+    return `<div class="row"><div class="product-img product-thumbnail-cell">${thumbnail}</div><div><b>${escapeQuotationPrintHtml(p.productName || '-')}</b><br><small>${escapeQuotationPrintHtml(p.unit || '')} · ${money(p.listPrice)}</small></div><button type="button" class="tiny" style="margin-left:auto" data-product-id="${escapeQuotationPrintHtml(productId)}" data-product-record-key="${escapeQuotationPrintHtml(recordKey)}" data-product-source="SEARCH" onclick="addProductToQuoteByReference(event)">+ เพิ่ม</button></div>`;
+  }).join('');
 }
 
 function addCart(p) {

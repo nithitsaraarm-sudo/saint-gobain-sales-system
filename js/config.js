@@ -1,8 +1,8 @@
 window.APP_CONFIG = Object.assign({
   appName: "Saint-Gobain Sales System",
-  version: "0.5.34",
+  version: "0.5.35",
   environment: "production",
-  cacheVersion: "0.5.34",
+  cacheVersion: "0.5.35",
   enableDemoLogin: false,
   gasWebAppUrl: "https://script.google.com/macros/s/AKfycbyuhRP2aIYI11vzMsIzGr2ncuhrflHb1u9flm_OwjpjZOJOTXvAg1HQu4iq62ZwjJn3RQ/exec"
 }, window.APP_CONFIG || {});
