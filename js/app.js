@@ -118,7 +118,7 @@ function resetAuthenticatedFrontendState(){
 
 function checkAppVersion(){
   try{
-    const newVersion=String(window.APP_VERSION||'0.5.32').trim();
+    const newVersion=String(window.APP_VERSION||'0.5.33').trim();
     console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
     const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
     if(oldVersion===newVersion){
@@ -1117,11 +1117,49 @@ let PRODUCT_PROMO_LAST_FOCUS=null, productPromoEscapeBound=false;
 function getProductPromoText(product){
   return normalizeProductPromoText(product&&product.promoText);
 }
+function getPromotionDisplayLines(value){
+  if(value===null||value===undefined)return [];
+  const text=String(value).replace(/\r\n/g,'\n').replace(/\r/g,'\n').trim();
+  const lowered=text.toLowerCase();
+  if(!text||lowered==='null'||lowered==='undefined')return [];
+  return text.split(/[;\n]+/).map(line=>line.trim()).filter(Boolean);
+}
+function getPromotionDisplayText(value){
+  return getPromotionDisplayLines(value).join('\n');
+}
+function renderPromotionLinesHtml(value,mode,options){
+  const lines=getPromotionDisplayLines(value);
+  if(!lines.length)return '';
+  const displayMode=mode==='full'?'full':'compact';
+  const opts=options||{};
+  const limit=displayMode==='compact'?Math.max(1,Number(opts.maxLines||3)||3):lines.length;
+  const visibleLines=displayMode==='compact'?lines.slice(0,limit):lines;
+  const containerTag=String(opts.containerTag||'div').toLowerCase()==='span'?'span':'div';
+  const lineTag=String(opts.lineTag||'div').toLowerCase()==='span'?'span':'div';
+  const className='promotion-lines promotion-lines--'+displayMode+(opts.className?' '+String(opts.className):'');
+  const attrs=[];
+  if(opts.tabIndex!==undefined)attrs.push('tabindex="'+htmlAttr(opts.tabIndex)+'"');
+  if(opts.role)attrs.push('role="'+htmlAttr(opts.role)+'"');
+  if(displayMode==='compact'&&visibleLines.length<lines.length)attrs.push('aria-label="'+htmlAttr(lines.join('\n'))+'"');
+  const attrText=attrs.length?' '+attrs.join(' '):'';
+  return `<${containerTag} class="${htmlAttr(className)}"${attrText}>${visibleLines.map(line=>`<${lineTag} class="promotion-line">${escapeHtml(line)}</${lineTag}>`).join('')}</${containerTag}>`;
+}
+function renderPromotionLinesElement(value,mode,className,options){
+  const lines=getPromotionDisplayLines(value);
+  if(!lines.length)return null;
+  const displayMode=mode==='full'?'full':'compact';
+  const opts=options||{};
+  const limit=displayMode==='compact'?Math.max(1,Number(opts.maxLines||3)||3):lines.length;
+  const visibleLines=displayMode==='compact'?lines.slice(0,limit):lines;
+  const wrap=createUiElement('div','promotion-lines promotion-lines--'+displayMode+(className?' '+className:''));
+  if(opts.tabIndex!==undefined)wrap.tabIndex=Number(opts.tabIndex);
+  if(opts.role)wrap.setAttribute('role',String(opts.role));
+  if(displayMode==='compact'&&visibleLines.length<lines.length)wrap.setAttribute('aria-label',lines.join('\n'));
+  visibleLines.forEach(line=>wrap.appendChild(createUiElement('div','promotion-line',line)));
+  return wrap;
+}
 function getProductPromoLines(product){
-  return String(getProductPromoText(product)||'')
-    .split(';')
-    .map(line=>line.trim())
-    .filter(Boolean);
+  return getPromotionDisplayLines(getProductPromoText(product));
 }
 function hasProductPromotion(product){
   return getProductPromoLines(product).length>0;
@@ -1153,9 +1191,12 @@ function renderProductPromotionTeaser(product,recordKey,context){
   const contextAttr=htmlAttr(context||'product');
   const productName=String(product&&product.productName||product&&product.name||'สินค้า').trim()||'สินค้า';
   const ariaLabel=htmlAttr('ดูโปรโมชั่นของสินค้า '+productName);
-  const promoSummary=context==='product-list'
-    ? `<span class="product-promo-list" role="list">${promoLines.map(line=>`<span class="product-promo-line" role="listitem">${escapeHtml(line)}</span>`).join('')}</span>`
-    : `<span class="product-promo-summary">${escapeHtml(promoText)}</span>`;
+  const promoSummary=renderPromotionLinesHtml(promoText,'compact',{
+    className:context==='product-list'?'product-promo-list':'product-promo-summary',
+    containerTag:'span',
+    lineTag:'span',
+    maxLines:context==='product-list'?3:2
+  });
   return `<div class="product-promo-teaser" data-no-drag data-context="${contextAttr}"><button type="button" class="product-promo-button" data-no-drag onclick='openProductPromotionDetail(${jsRecordKey},event)' aria-label="${ariaLabel}"><span class="product-promo-badge" aria-hidden="true">🎁 มีโปรโมชั่น</span>${promoSummary}<span class="product-promo-detail-link">ดูรายละเอียด</span></button></div>`;
 }
 function ensureProductPromoEscapeHandler(){
@@ -1194,7 +1235,8 @@ function openProductPromotionDetail(productReference,event){
   const brand=product.brand||quoteBusinessUnitLabel(normalizeProductBusinessUnitForUi(product))||'-';
   const code=product.sku||product.productId||product.productCode||product.id||'-';
   body.classList.add('product-promo-modal-body');
-  body.innerHTML=`<div class="product-promo-detail"><div class="product-promo-detail-meta"><span class="pill ${brand==='Weber'?'yellow':'blue'}">${escapeHtml(brand)}</span><div><b>${escapeHtml(product.productName||product.name||'-')}</b><small>รหัสสินค้า: ${escapeHtml(code)} • ${escapeHtml(product.unit||'-')} • ${money(product.listPrice||product.price||0)}</small></div></div><div class="product-promo-full" tabindex="0">${escapeHtml(promoText)}</div><div class="actions product-promo-actions"><button type="button" class="primary" onclick="closeModal()">ปิด</button></div></div>`;
+  const promoFullHtml=renderPromotionLinesHtml(promoText,'full',{className:'product-promo-full',tabIndex:0});
+  body.innerHTML=`<div class="product-promo-detail"><div class="product-promo-detail-meta"><span class="pill ${brand==='Weber'?'yellow':'blue'}">${escapeHtml(brand)}</span><div><b>${escapeHtml(product.productName||product.name||'-')}</b><small>รหัสสินค้า: ${escapeHtml(code)} • ${escapeHtml(product.unit||'-')} • ${money(product.listPrice||product.price||0)}</small></div></div>${promoFullHtml}<div class="actions product-promo-actions"><button type="button" class="primary" onclick="closeModal()">ปิด</button></div></div>`;
   modal.classList.remove('customer-modal');
   modal.classList.add('product-promo-modal','show');
   document.body.classList.add('product-promo-scroll-locked');
@@ -2467,8 +2509,7 @@ function renderPromotionCard(group){
   left.append(renderPromotionStatusBadge(group),renderPromotionBrandLogo(group));
   const code=createUiElement('b','promotion-code',group.promotionCode||'-');
   head.append(left,code);
-  const promotionText=String(group.promotionText||'').trim();
-  const text=promotionText?createUiElement('h3','promotion-card-text promotion-card-primary-text',promotionText):null;
+  const text=renderPromotionLinesElement(group.promotionText,'compact','promotion-card-text promotion-card-primary-text',{maxLines:3});
   const dates=renderPromotionDateSummary(group);
   const meta=createUiElement('div','promotion-card-meta');
   meta.appendChild(createUiElement('span','',String(group.productCount||0)+' products'));
@@ -2558,7 +2599,7 @@ function openPromotionDetail(promotionKey,event){
   appendPromotionDetailRow(meta,'End Date',group.hasPromotionDateRange?group.endDateLabel:PROMOTION_DATE_MISSING_TEXT);
   appendPromotionDetailRow(meta,'Product Count',group.productCount);
   detail.appendChild(meta);
-  const full=createUiElement('div','promotion-detail-full',group.fullPromotionText||group.promotionText||'-');
+  const full=renderPromotionLinesElement(group.fullPromotionText||group.promotionText,'full','promotion-detail-full')||createUiElement('div','promotion-detail-full','-');
   full.tabIndex=0;
   detail.appendChild(full);
   const actions=createUiElement('div','actions promotion-card-actions');
