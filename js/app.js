@@ -32,7 +32,7 @@ const PINNED_PRODUCTS_COLLAPSED_KEY='sg_pinned_products_collapsed';
 const FAVORITE_PRODUCTS_COLLAPSED_KEY='sg_favorite_products_collapsed';
 const PRODUCT_PROMOTIONS_CACHE_KEY='sg_product_promotions_cache';
 const PRODUCT_PROMO_CACHE_SCHEMA_KEY='sg_product_promo_cache_schema';
-const PRODUCT_PROMO_CACHE_SCHEMA_VERSION='1';
+const PRODUCT_PROMO_CACHE_SCHEMA_VERSION='2';
 const $=id=>document.getElementById(id); const money=n=>Number(n||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
 let sidebarDrawerFocusReturn=null, sidebarDrawerHistoryPushed=false, sidebarDrawerClosingFromHistory=false;
 
@@ -115,7 +115,7 @@ function resetAuthenticatedFrontendState(){
 
 function checkAppVersion(){
   try{
-    const newVersion=String(window.APP_VERSION||'0.5.27').trim();
+    const newVersion=String(window.APP_VERSION||'0.5.28').trim();
     console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
     const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
     if(oldVersion===newVersion){
@@ -368,6 +368,9 @@ function normalizeProduct(product){
     imageUrl:String(p.imageUrl||'').trim(),
     active:String(p.active||p.status||'').trim(),
     notes:String(p.notes||'').trim(),
+    promoCode:normalizeProductPromotionMetadata(p.promoCode||p.promotionCode),
+    promoStartDate:normalizeProductPromotionMetadata(p.promoStartDate),
+    promoEndDate:normalizeProductPromotionMetadata(p.promoEndDate),
     promoText:normalizeProductPromoText(getProductPromoTextValue(p))
   };
 }
@@ -387,6 +390,14 @@ function getProductPromoTextValue(product){
     if(Object.prototype.hasOwnProperty.call(item,fields[i])&&String(item[fields[i]]??'').trim()!=='')return item[fields[i]];
   }
   return item.promoText||'';
+}
+
+function normalizeProductPromotionMetadata(value){
+  if(value===null||value===undefined)return '';
+  const text=String(value).replace(/[\r\n\t]+/g,' ').replace(/\s+/g,' ').trim();
+  const lowered=text.toLowerCase();
+  if(!text||lowered==='null'||lowered==='undefined')return '';
+  return text;
 }
 
 function normalizeProductIdentityPart(value){
@@ -425,7 +436,7 @@ function createProductIdentityKey(product){
 }
 function getProductCompletenessScore(product){
   const item=product&&typeof product==='object'?product:{};
-  const fields=['productId','sku','productCode','productName','description','brand','businessUnit','productBusinessUnit','discountGroup','groupCode','unit','rawListPrice','listPrice','priceType','priceList','promotionId','priceSource','promoText','imageUrl','notes','active'];
+  const fields=['productId','sku','productCode','productName','description','brand','businessUnit','productBusinessUnit','discountGroup','groupCode','unit','rawListPrice','listPrice','priceType','priceList','promotionId','promoCode','promoStartDate','promoEndDate','priceSource','promoText','imageUrl','notes','active'];
   return fields.reduce((score,field)=>score+(item[field]!==undefined&&item[field]!==null&&String(item[field]).trim()!==''?1:0),0);
 }
 function shouldReplaceDedupedProduct(current,candidate){

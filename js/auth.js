@@ -41,7 +41,7 @@ function saveSession(user, sessionToken) {
     if (typeof clearPrivateApiCaches === 'function') {
       clearPrivateApiCaches();
     } else {
-      ['sg_bootstrap_cache', 'sg_products_cache', 'sg_customers_cache', 'sg_quotation_history_cache', 'sg_quotation_cache', 'sg_discount_cache'].forEach(function (key) {
+      ['sg_bootstrap_cache', 'sg_products_cache', 'sg_product_promotions_cache', 'sg_customers_cache', 'sg_quotation_history_cache', 'sg_quotation_cache', 'sg_discount_cache'].forEach(function (key) {
         localStorage.removeItem(key);
       });
     }

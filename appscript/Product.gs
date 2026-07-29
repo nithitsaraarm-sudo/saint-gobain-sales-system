@@ -264,6 +264,9 @@ function saveProduct(payload) {
       listPrice: String(data.listPrice || 0),
       imageUrl: String(data.imageUrl || ''),
       notes: String(data.notes || ''),
+      promoCode: sanitizeProductPromotionMetadata_(data.promoCode || data.promotionCode),
+      promoStartDate: sanitizeProductPromotionMetadata_(data.promoStartDate),
+      promoEndDate: sanitizeProductPromotionMetadata_(data.promoEndDate),
       promoText: normalizeProductPromoText_(getProductPromoTextValue_(data)),
       active: 'TRUE',
       createdAt: now,
@@ -420,6 +423,14 @@ function getProductPromoTextValue_(source) {
   return item.promoText || '';
 }
 
+function sanitizeProductPromotionMetadata_(value) {
+  if (value === null || value === undefined) return '';
+  const text = String(value).replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const lowered = text.toLowerCase();
+  if (!text || lowered === 'null' || lowered === 'undefined') return '';
+  return text;
+}
+
 function normalizeProductObject(row) {
   const source = row && typeof row === 'object' ? row : {};
   const productId = String(source.productId || '').trim();
@@ -449,6 +460,9 @@ function normalizeProductObject(row) {
     imageUrl: String(source.imageUrl || '').trim(),
     active: String(source.active || source.status || '').trim(),
     notes: String(source.notes || '').trim(),
+    promoCode: sanitizeProductPromotionMetadata_(source.promoCode || source.promotionCode),
+    promoStartDate: sanitizeProductPromotionMetadata_(source.promoStartDate),
+    promoEndDate: sanitizeProductPromotionMetadata_(source.promoEndDate),
     promoText: normalizeProductPromoText_(getProductPromoTextValue_(source))
   });
 }
@@ -645,7 +659,10 @@ function buildProductPromotionSnapshot_(product) {
     priceType: String(item.priceType || item.priceListType || '').trim(),
     priceList: String(item.priceList || item.priceListId || item.priceListName || '').trim(),
     promotionId: String(item.promotionId || item.promoId || '').trim(),
+    promoCode: sanitizeProductPromotionMetadata_(item.promoCode || item.promotionCode),
     promotionCode: getProductPromotionCodeValue_(item),
+    promoStartDate: sanitizeProductPromotionMetadata_(item.promoStartDate),
+    promoEndDate: sanitizeProductPromotionMetadata_(item.promoEndDate),
     priceSource: String(item.priceSource || item.priceListSource || item.promotionSource || '').trim(),
     discountGroup: String(item.discountGroup || '').trim(),
     groupCode: String(item.groupCode || item.group || item.category || '').trim(),
