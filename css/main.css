@@ -450,8 +450,10 @@ body.quote-reordering .quote-line{touch-action:none}
 .quote-product-pref-card{align-items:center;gap:10px;border:1px solid var(--line);background:#fff;border-radius:16px;padding:10px;transition:box-shadow .16s ease,opacity .16s ease,transform .16s ease}
 .quote-product-pref-main{min-width:0;flex:1}.quote-product-pref-main b{display:inline;word-break:break-word}.quote-product-pref-main small{display:block;color:var(--muted);font-weight:700;line-height:1.35}
 .quote-product-actions{margin-left:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
-.quote-product-pref-button{border:1px solid var(--line);border-radius:999px;background:#fff;color:#475467;min-width:36px;height:36px;padding:0 10px;font-weight:900}
+.quote-product-pref-button{border:1px solid var(--line);border-radius:999px;background:#fff;color:#475467;min-width:44px;height:44px;padding:0 10px;font-weight:900;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .quote-product-pref-button.is-active{border-color:#f0d84b;background:#fff7bd;color:#6b5600}
+.quote-product-pref-button:focus-visible{outline:3px solid rgba(0,91,172,.24);outline-offset:2px}
+.quote-product-pref-button:disabled,.quote-product-pref-button[aria-disabled="true"]{opacity:.55;cursor:not-allowed}
 .pinned-product-card{border-color:#f0d84b;background:#fffdf0;cursor:grab;touch-action:pan-y}
 .pinned-product-card.is-dragging{opacity:.6;cursor:grabbing;box-shadow:0 22px 48px rgba(15,42,82,.18)}
 .quote-preference-empty{border:1px dashed var(--line);border-radius:16px;background:#fff;color:var(--muted);padding:12px;font-weight:800}
@@ -462,7 +464,7 @@ body.quote-reordering .quote-line{touch-action:none}
   .quote-product-pref-main b{display:block;word-break:normal;overflow-wrap:anywhere;line-height:1.35}
   .quote-product-actions{grid-column:1/-1;width:100%;margin-left:0;justify-content:flex-start}
   .quote-product-actions .app-add-product-button{flex:1 1 120px;min-width:120px}
-  .quote-product-pref-button{min-width:42px}
+  .quote-product-pref-button{min-width:44px}
 }
 
 .nav button.hidden,.main-action.hidden,.actions.hidden,#quoteHistory button.hidden{display:none!important}

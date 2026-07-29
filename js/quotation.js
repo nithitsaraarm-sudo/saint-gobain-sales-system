@@ -2704,6 +2704,9 @@ function renderProductPicker() {
   if (typeof window !== 'undefined' && typeof window.renderQuoteProductPicker === 'function' && window.renderQuoteProductPicker !== renderProductPicker) {
     return window.renderQuoteProductPicker();
   }
+  if (typeof window !== 'undefined' && typeof window.bindProductCardActions === 'function') {
+    window.bindProductCardActions();
+  }
   const q = (document.getElementById('productSearch')?.value || '').toLowerCase();
   const picker = document.getElementById('productPicker');
   if (!picker) return;
@@ -2715,11 +2718,11 @@ function renderProductPicker() {
       : '<span class="product-thumbnail product-thumbnail--small is-fallback"><span class="product-thumbnail-generic" aria-hidden="true">📦</span></span>';
     const addButton = window.createAddProductButton({
       attributes: {
+        'data-product-action': 'add',
         'data-product-id': productId,
         'data-product-record-key': recordKey,
         'data-product-source': 'SEARCH'
-      },
-      onClick: 'addProductToQuoteByReference(event)'
+      }
     });
     return `<div class="row"><div class="product-img product-thumbnail-cell">${thumbnail}</div><div><b>${escapeQuotationPrintHtml(p.productName || '-')}</b><br><small>${escapeQuotationPrintHtml(p.unit || '')} · ${money(p.listPrice)}</small></div>${addButton}</div>`;
   }).join('');

@@ -10,10 +10,10 @@ This catalogue remains the production test source of truth for V1. During the fi
 
 Current execution status:
 
-- Total catalogue: 77 tests
-- Static checks passed: 16
-- Runtime integration tests blocked/not run: 32
-- Manual browser/PWA tests blocked/not run: 18
+- Total catalogue: 80 tests
+- Static checks passed: 17
+- Runtime integration tests blocked/not run: 33
+- Manual browser/PWA tests blocked/not run: 19
 - Production smoke tests blocked/not run: 11
 - Failed tests reported by this audit: 0
 
@@ -109,11 +109,11 @@ Create or verify these records in a UAT spreadsheet before runtime execution:
 
 | Suite | Total | Static Check Passed | Not Run | Blocked | Failed | Notes |
 |---|---:|---:|---:|---:|---:|---|
-| Automated/static checks | 16 | 16 | 0 | 0 | 0 | Static checks were executed locally in repository context. |
-| Runtime integration tests | 32 | 0 | 0 | 32 | 0 | Blocked until live Apps Script, Google Sheets UAT data, and credentials are available. |
-| Manual browser/PWA tests | 18 | 0 | 0 | 18 | 0 | Blocked until browsers/devices/PWA install session are available. |
+| Automated/static checks | 17 | 17 | 0 | 0 | 0 | Static checks were executed locally in repository context. |
+| Runtime integration tests | 33 | 0 | 0 | 33 | 0 | Blocked until live Apps Script, Google Sheets UAT data, and credentials are available. |
+| Manual browser/PWA tests | 19 | 0 | 0 | 19 | 0 | Blocked until browsers/devices/PWA install session are available. |
 | Production post-deployment smoke tests | 11 | 0 | 0 | 11 | 0 | Blocked until production deployment exists. |
-| Total | 77 | 16 | 0 | 61 | 0 | No runtime/manual pass is claimed in this document. |
+| Total | 80 | 17 | 0 | 63 | 0 | No runtime/manual pass is claimed in this document. |
 
 ## 7. Test case counts by module and priority
 
@@ -125,7 +125,7 @@ Create or verify these records in a UAT spreadsheet before runtime execution:
 | CUST | 3 | 6 | 1 | 10 |
 | DISC | 3 | 0 | 0 | 3 |
 | PERF | 0 | 3 | 1 | 4 |
-| PROD | 0 | 3 | 0 | 3 |
+| PROD | 0 | 6 | 0 | 6 |
 | PROFILE | 0 | 3 | 0 | 3 |
 | PROMO | 2 | 1 | 2 | 5 |
 | PWA | 2 | 1 | 0 | 3 |
@@ -133,9 +133,9 @@ Create or verify these records in a UAT spreadsheet before runtime execution:
 | RBAC | 6 | 1 | 0 | 7 |
 | REG | 1 | 2 | 2 | 5 |
 | USER | 2 | 1 | 0 | 3 |
-| Total | 38 | 33 | 6 | 77 |
+| Total | 38 | 36 | 6 | 80 |
 
-Note: The canonical executable test catalogue below contains 77 rows.
+Note: The canonical executable test catalogue below contains 80 rows.
 
 ## 8. Automated/static checks
 
@@ -148,6 +148,7 @@ Note: The canonical executable test catalogue below contains 77 rows.
 | RBAC-STATIC-001 | RBAC | P0 | Automated/static check | SUPER_ADMIN, ADMIN, MANAGER, SALES, VIEWER | Repository available | `appscript/Permission.gs`, `js/app.js` | 1. Inspect canonical permission helpers. 2. Inspect frontend guards. | Backend and frontend use canonical permission flags for route/action visibility. | Canonical policy documented and implemented in Phase 2 files. | Static Check Passed | Local repository / PowerShell / ripgrep | `REMEDIATION_PROGRESS.md` Phase 2 notes | H-6, Phase 2 | Runtime role matrix still required. |
 | CUST-STATIC-001 | CUST | P0 | Automated/static check | SALES, ADMIN, SUPER_ADMIN | Repository available | `appscript/Customer.gs`, `appscript/Api.gs` | 1. Inspect customer form options action. 2. Inspect assignment metadata gating. | Lower roles do not receive assignable sales metadata. | Phase 2 notes and code references confirm reduced option response. | Static Check Passed | Local repository / PowerShell / ripgrep | `REMEDIATION_PROGRESS.md` Phase 2 notes | M-11, Phase 2 | Runtime response payload test still required. |
 | CUST-STATIC-002 | CUST | P1 | Automated/static check | SUPER_ADMIN, ADMIN, SALES, VIEWER | Repository available | `js/app.js`, `css/main.css` | 1. Inspect `renderCustomerCard`. 2. Inspect customer action button markup. 3. Inspect delegated click handler and busy/error helpers. | Customer card Details/Edit/Favorite buttons use `data-customer-action`, validate `customerId`, route through one delegated handler, expose accessible labels/tooltips, and have loading/disabled states. | `renderCustomerActionButtonHtml`, `bindCustomerCardActions`, `handleCustomerAction`, `openCustomerDetailsModal`, and scoped customer lookup found; customer detail CSS found. | Static Check Passed | Local repository / PowerShell / ripgrep | Search command: `data-customer-action`, `CUSTOMER_ACTION_PENDING`, `openCustomerDetailsModal` in `js/app.js`; `.customer-detail` in `css/main.css`. | Customer Card action button regression | Runtime browser/API validation still required. |
+| PROD-STATIC-002 | PROD | P1 | Automated/static check | SUPER_ADMIN, ADMIN, SALES | Repository available | `js/app.js`, `js/quotation.js`, `css/main.css` | 1. Inspect Product Card renderer. 2. Inspect `createAddProductButton`. 3. Inspect delegated product action handler. 4. Search for inline product favorite/add handlers. | Product favorite/add actions use `data-product-action`, validate against resolved product records, prevent duplicate clicks, and expose busy/disabled/accessibility state. | `renderProductCard`, `renderQuoteProductPreferenceCard`, `createAddProductButton`, `bindProductCardActions`, `handleProductAction`, and optimistic `toggleFavoriteProduct` flow found; no inline product favorite/add onclick remains. | Static Check Passed | Local repository / PowerShell / ripgrep | Search commands: `data-product-action`, `onclick=.*(toggleFavoriteProduct|addProductCardToQuote|addProductToQuoteByReference)`, and `git diff --check`. | Product Card action button regression | Runtime browser/API validation still required. |
 | PROMO-STATIC-001 | PROMO | P0 | Automated/static check | SUPER_ADMIN, ADMIN | Repository available | `appscript/Code.gs`, `appscript/Api.gs` | 1. Search for old promotion stub success. 2. Inspect save path. | `savePromotion()` persists with validation instead of returning fake success. | Old stub removed; promotion persistence added in Phase 3. | Static Check Passed | Local repository / PowerShell / ripgrep | `REMEDIATION_PROGRESS.md` Phase 3 notes | M-6, Phase 3 | Runtime sheet write test still required. |
 | AUTH-STATIC-001 | AUTH | P1 | Automated/static check | All | Repository available | `index.html`, `js/config.js` | 1. Inspect demo login config. 2. Inspect demo login markup. | Demo Login is hidden in production unless explicitly enabled. | `ENABLE_DEMO_LOGIN = false` documented in Phase 3 notes. | Static Check Passed | Local repository / PowerShell / ripgrep | `REMEDIATION_PROGRESS.md` Phase 3 notes | Demo-login production risk | Runtime production check still required. |
 | API-STATIC-003 | API | P1 | Automated/static check | All | Repository available | Runtime/config files | 1. Search runtime files for stale version strings. | Runtime version/cache strings align to current release. | No old runtime version strings found outside preserved audit baseline. | Static Check Passed | Local repository / PowerShell / ripgrep | Search command: old `0.5.x` and `sales-system-v5-0.5.24` strings in runtime files. | M-7, Phase 4 | Audit baseline intentionally keeps old examples. |
@@ -179,6 +180,7 @@ These tests require a live Apps Script deployment, UAT Google Sheets data, and r
 | DISC-INT-002 | DISC | P0 | Runtime integration | VIEWER, MANAGER | Read-only credentials | Any discount payload | 1. Attempt direct discount API call. | Unauthorized role/scope cannot retrieve restricted discount data. | Not executed. | Blocked - live credentials unavailable | Apps Script/UAT | Required: API response/log | Discount access prevention | Verify backend, not frontend-only. |
 | PROD-INT-001 | PROD | P1 | Runtime integration | Allowed product roles | Products API/UAT sheet available | Products sheet with exact duplicate rows | 1. Load products. 2. Search exact duplicate SKU. | Exact duplicates do not produce duplicate cards if dedupe guard is active. | Not executed. | Blocked - live product data unavailable | Apps Script/UAT | Required: screenshots/API payload | Product duplicate requirement | If dedupe is frontend-only, verify selected product record. |
 | PROD-INT-002 | PROD | P1 | Runtime integration | SALES, ADMIN | Product records same code but different price/unit/brand | Product variants | 1. Load products. 2. Search same code/name variants. | Different price/unit/brand records remain separately selectable. | Not executed. | Blocked - live product data unavailable | Apps Script/UAT | Required: screenshots | Product duplicate rule | Calculator compatibility gate. |
+| PROD-INT-003 | PROD | P1 | Runtime integration | SUPER_ADMIN, ADMIN, SALES | Live API deployment, product preferences endpoint, quotation workflow available | One active product; one inactive product; current quote customer/BU | 1. Load Product List. 2. Toggle favorite on/off. 3. Rapid-click favorite. 4. Add product to quotation. 5. Repeat from quote search/favorite/pinned sections. | Favorite persists or rolls back on API failure; duplicate favorite/add requests are prevented; add uses the selected product record and respects existing quotation readiness/business rules. | Not executed. | Blocked - live deployment, UAT data, and credentials unavailable | Apps Script/UAT | Required: screenshots/API responses/network log | Product Card action button regression | Include negative inactive/out-of-scope product cases if available. |
 | PROMO-INT-001 | PROMO | P0 | Runtime integration | ADMIN, SUPER_ADMIN | Promotion sheet available | Valid promotion payload | 1. Save promotion. 2. Reload promotions. 3. Inspect sheet row. | Promotion persists; no fake success. | Not executed. | Blocked - live deployment unavailable | Apps Script/UAT | Required: sheet row/API response | M-6, Phase 3 | Include validation error path. |
 | PROMO-INT-002 | PROMO | P1 | Runtime integration | SALES, VIEWER, MANAGER | Lower-role credentials | Promotion save payload | 1. Attempt save promotion directly. | Backend denies unauthorized promotion save. | Not executed. | Blocked - live credentials unavailable | Apps Script/UAT | Required: API response/log | RBAC write protection | Direct API check. |
 | QUOTE-INT-001 | QUOTE | P0 | Runtime integration | SALES, ADMIN, SUPER_ADMIN | Customer in scope; Weber products | Weber quote payload | 1. Create quote. 2. Add Weber product. 3. Save. 4. Load by quoteNo. | Quote saves and reloads with correct totals/status/owner. | Not executed. | Blocked - live deployment unavailable | Apps Script/UAT | Required: API response/sheet rows | Quotation core workflow | Include idempotency key. |
@@ -207,6 +209,7 @@ These tests require actual browsers/devices. See `ACCESSIBILITY_CHECKLIST.md` fo
 | RBAC-MAN-001 | RBAC | P1 | Manual browser/PWA | All roles | Browser and credentials available | Role users | 1. Login each role. 2. Inspect sidebar/topbar/settings/buttons. | Menus and action buttons match canonical RBAC; backend still denies direct invalid actions. | Not executed. | Blocked - credentials/browser unavailable | Desktop Chrome/Edge | Required: screenshots per role | Phase 2/3 | UI visibility is not security proof. |
 | CUST-MAN-001 | CUST | P1 | Manual browser/PWA | SALES, ADMIN | Browser and UAT data | Scoped customers | 1. Open Customers. 2. Search/filter. 3. Open add/edit modal. | Cards, summary counts, area/brand display, modal scroll, and filters work without leakage. | Not executed. | Blocked - browser/UAT data unavailable | Desktop/mobile browsers | Required: screenshots | Customer area/brand workflow | Include iPhone Safari. |
 | PROD-MAN-001 | PROD | P1 | Manual browser/PWA | SALES, ADMIN | Browser and product data | Products with promos/duplicates | 1. Open Products. 2. Search. 3. Open calculator. 4. Add to quote. | Product card uses selected record; calculator and quote use same price/unit. | Not executed. | Blocked - browser/UAT data unavailable | Desktop/mobile browsers | Required: screenshots | Product card/calculator compatibility | Include duplicate variants. |
+| PROD-MAN-002 | PROD | P1 | Manual browser/PWA | SUPER_ADMIN, ADMIN, SALES | Browser/device and role credentials available | Product cards plus quote product picker results | 1. Open Product List on Desktop Chrome/Edge. 2. Toggle Favorite and Add Product. 3. Repeat on Android Chrome. 4. Repeat on iPhone Safari/PWA if installed. 5. Repeat from quotation search, favorite products, and pinned products. 6. Rapid-tap buttons and inspect console/network. | Favorite icon updates immediately; API failure rolls back; Add Product shows busy/disabled state and adds the correct product once; no JS errors, duplicate requests, touch conflicts, or broken quotation workflow. | Not executed. | Blocked - browser/device/live API unavailable | Desktop Chrome/Edge, Android Chrome, iPhone Safari, PWA | Required: screenshots/video/network log | Product Card action button regression | Validate minimum 44px touch targets and no card-click propagation. |
 | PROMO-MAN-001 | PROMO | P2 | Manual browser/PWA | ADMIN, SALES | Browser and promotion data | Active/inactive promos | 1. Open Promotions. 2. Search. 3. View product promo teaser. | Promotions render correctly and save controls match role. | Not executed. | Blocked - browser/UAT data unavailable | Desktop/mobile browsers | Required: screenshots | Promotion persistence/UI | Lower priority if no active promos. |
 | QUOTE-MAN-001 | QUOTE | P0 | Manual browser/PWA | SALES, ADMIN | Browser and UAT data | Customer/products | 1. Create quote. 2. Select BU/customer/product. 3. Edit cart. 4. Save. | No layout break; totals are correct; save button state prevents double-submit. | Not executed. | Blocked - browser/UAT data unavailable | Desktop Chrome/Edge, Android Chrome, iPhone Safari | Required: screenshots/video | Quotation workflow/mobile requirements | Critical manual gate. |
 | QUOTE-MAN-002 | QUOTE | P1 | Manual browser/PWA | Quote-view roles | Browser and existing quotes | Saved quote | 1. Open history. 2. Search. 3. Open detail. 4. Print/PDF/PNG/share. | History/detail/export UI works and controls match role. | Not executed. | Blocked - browser/UAT data unavailable | Desktop/mobile browsers | Required: screenshots/files | Export/share requirements | Attach exported files. |

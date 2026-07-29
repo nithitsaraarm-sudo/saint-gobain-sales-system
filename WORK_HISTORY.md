@@ -372,3 +372,56 @@ Validation notes:
 ```powershell
 git checkout -- js/app.js css/main.css index.html js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
 ```
+
+## 2026-07-29 — Product Card action buttons audit/fix
+
+Scope:
+
+- Fixed Product Card action buttons: Favorite and Add Product.
+- Covered Product List and Quotation product search / Favorite Products / Pinned Products surfaces that use the same product action component.
+- No backend, API, Google Sheet schema, RBAC policy, or quotation/product business rules were changed.
+
+Audit result:
+
+- Product Card renderer: `js/app.js` → `renderProductCard(product, sourceListIndex)`.
+- Shared Add Product component: `js/app.js` → `createAddProductButton(options)`.
+- Quotation product card renderer: `js/app.js` → `renderQuoteProductPreferenceCard(product, options)`.
+- Legacy quotation search fallback: `js/quotation.js` → `renderProductPicker()`.
+- Existing Product Card action buttons relied on inline `onclick` while the full card also had a card-level `onclick` for the calculator.
+- Failure paths could appear silent when product resolution or add handler routing failed.
+- CSS did not contain an overlay/z-index/pointer-events blocker for the product card action row; however quote preference buttons had touch targets below the 44px requirement on some breakpoints.
+
+Implementation:
+
+- Added delegated product action flow with `data-product-action="favorite"` and `data-product-action="add"`.
+- Added `bindProductCardActions()` and `handleProductAction()` to centralize validation, propagation control, duplicate-click prevention, busy state, and error handling.
+- Updated `renderProductCard()` to route Favorite/Add through product record keys instead of inline handlers.
+- Updated `renderQuoteProductPreferenceCard()` and the legacy `js/quotation.js` fallback picker to use the same Add Product action component without inline add handlers.
+- Updated `toggleFavoriteProduct()` with optimistic UI update, duplicate-request lock, rollback on API failure, and toast feedback.
+- Updated `addProductCardToQuote()` so missing product records or missing handlers show user feedback instead of failing silently.
+- Kept Add Product on the existing `addProductToQuoteByReference()` quotation workflow, preserving BU/customer/product validation.
+- Raised quote product favorite/pinned touch targets to 44px and added focus/disabled states.
+- Bumped app/service-worker version to `0.5.39` so browser/PWA cache picks up the action handler changes.
+
+Files changed:
+
+- `js/app.js`
+- `js/quotation.js`
+- `css/main.css`
+- `index.html`
+- `js/api.js`
+- `js/config.js`
+- `service-worker.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Validation notes:
+
+- Static scan confirmed no inline `toggleFavoriteProduct`, `addProductCardToQuote`, or `addProductToQuoteByReference(event)` handlers remain for product favorite/add actions.
+- `git diff --check` passed with only line-ending warnings.
+- Runtime browser/device/API validation is still required on Desktop Chrome/Edge, Android Chrome, iPhone Safari, and PWA with live Apps Script credentials.
+- Rollback command for this phase:
+
+```powershell
+git checkout -- js/app.js js/quotation.js css/main.css index.html js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
+```
