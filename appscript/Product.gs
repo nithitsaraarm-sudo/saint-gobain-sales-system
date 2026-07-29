@@ -562,6 +562,39 @@ function getProductPromotionGroupKey_(product, promoText) {
   return 'text:' + normalizeProductPromotionGroupText_(promoText);
 }
 
+function createProductPromotionDedupeKey_(product) {
+  const item = product && typeof product === 'object' ? product : {};
+  const productPart = createProductIdentityKey(item);
+  const promoText = normalizeProductPromoText_(getProductPromoTextValue_(item));
+  const promotionPart = getProductPromotionCodeValue_(item) || promoText;
+  if (!productPart.replace(/\|/g, '').trim() && !String(promotionPart || '').trim()) return '';
+  return productPart + '|promotion:' + normalizeProductPromotionGroupText_(promotionPart);
+}
+
+function dedupeExactPromotionProducts_(products) {
+  const list = Array.isArray(products) ? products : [];
+  const result = [];
+  const byKey = {};
+  list.forEach(function (product) {
+    const item = product && typeof product === 'object' ? product : {};
+    const key = createProductPromotionDedupeKey_(item);
+    if (!key.replace(/[|:]/g, '')) {
+      result.push(item);
+      return;
+    }
+    if (!byKey[key]) {
+      byKey[key] = { index: result.length, product: item };
+      result.push(item);
+      return;
+    }
+    if (getProductCompletenessScore_(item) > getProductCompletenessScore_(byKey[key].product)) {
+      byKey[key].product = item;
+      result[byKey[key].index] = item;
+    }
+  });
+  return result;
+}
+
 function getProductPromotionBrandKey_(product) {
   const item = product && typeof product === 'object' ? product : {};
   const text = String(item.productBusinessUnit || item.businessUnit || item.quoteType || item.bu || item.brand || '').trim().toUpperCase();
@@ -623,7 +656,7 @@ function buildProductPromotionSnapshot_(product) {
 
 function createProductPromotionDashboard_(products) {
   const sourceProducts = Array.isArray(products) ? products : [];
-  const dedupedProducts = dedupeExactProducts(sourceProducts);
+  const dedupedProducts = dedupeExactPromotionProducts_(sourceProducts);
   const groupsByKey = {};
   const groupOrder = [];
   dedupedProducts.forEach(function (product) {
@@ -653,7 +686,7 @@ function createProductPromotionDashboard_(products) {
   });
   const groups = groupOrder.map(function (key) {
     const group = groupsByKey[key];
-    const products = dedupeExactProducts(group.products);
+    const products = dedupeExactPromotionProducts_(group.products);
     const brandKeys = Object.keys(group.brandKeysMap).filter(function (brandKey) { return brandKey; });
     return {
       promotionKey: group.promotionKey,

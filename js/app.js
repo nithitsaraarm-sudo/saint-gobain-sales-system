@@ -1768,6 +1768,50 @@ function createPromotionGroupKey(product,promoText){
   if(code)return 'code:'+normalizePromotionTextForGroup(code);
   return 'text:'+normalizePromotionTextForGroup(promoText);
 }
+function createPromotionProductDedupeKey(product){
+  const item=product&&typeof product==='object'?product:{};
+  const productPart=createProductIdentityKey(item);
+  const promoText=getProductPromoText(item);
+  const promotionPart=getPromotionCodeValue(item)||promoText;
+  if(!productPart.replace(/\|/g,'').trim()&&!String(promotionPart||'').trim())return '';
+  return productPart+'|promotion:'+normalizePromotionTextForGroup(promotionPart);
+}
+function dedupeExactPromotionProducts(products,source){
+  const list=Array.isArray(products)?products:[];
+  const result=[];
+  const byKey=new Map();
+  list.forEach((product,index)=>{
+    const item=product&&typeof product==='object'?product:{};
+    const key=createPromotionProductDedupeKey(item);
+    if(!key.replace(/[|:]/g,'')){
+      result.push(item);
+      return;
+    }
+    if(!byKey.has(key)){
+      byKey.set(key,{index:result.length,product:item,sourceIndexes:[index]});
+      result.push(item);
+      return;
+    }
+    const entry=byKey.get(key);
+    entry.sourceIndexes.push(index);
+    if(shouldReplaceDedupedProduct(entry.product,item)){
+      entry.product=item;
+      result[entry.index]=item;
+    }
+  });
+  if(typeof console!=='undefined'&&typeof console.info==='function'){
+    const removedDuplicateCount=Math.max(0,list.length-result.length);
+    if(removedDuplicateCount>0||getProductDedupeDebugEnabled()){
+      console.info('[PROMOTION_DEDUPE]',{
+        source:source||'promotionDashboard',
+        sourceCount:list.length,
+        deduplicatedCount:result.length,
+        removedDuplicateCount
+      });
+    }
+  }
+  return result;
+}
 function summarizePromotionText(text){
   const clean=String(text||'').replace(/\s+/g,' ').trim();
   if(!clean)return '-';
@@ -1788,7 +1832,7 @@ function normalizePromotionProductForDashboard(product){
 }
 function normalizePromotionGroupForDashboard(group){
   const item=group&&typeof group==='object'?group:{};
-  const products=dedupeExactProducts((Array.isArray(item.products)?item.products:[]).map(normalizePromotionProductForDashboard),'promotionDashboard.groupProducts');
+  const products=dedupeExactPromotionProducts((Array.isArray(item.products)?item.products:[]).map(normalizePromotionProductForDashboard),'promotionDashboard.groupProducts');
   const brandKeys=Array.isArray(item.brandKeys)&&item.brandKeys.length
     ? item.brandKeys.map(key=>String(key||'').trim().toUpperCase()).filter(Boolean)
     : Array.from(new Set(products.map(getPromotionProductBrandKey))).filter(Boolean);
@@ -1820,7 +1864,7 @@ function buildPromotionDashboardSummary(groups){
 }
 function buildPromotionDashboardFromProducts(products){
   const sourceList=(Array.isArray(products)?products:[]).map(normalizeProduct);
-  const list=dedupeExactProducts(sourceList,'promotionDashboard.sourceProducts');
+  const list=dedupeExactPromotionProducts(sourceList,'promotionDashboard.sourceProducts');
   const groupsByKey=new Map();
   list.forEach(product=>{
     const promoText=getProductPromoText(product);
@@ -1847,7 +1891,7 @@ function buildPromotionDashboardFromProducts(products){
     group.products.push(normalizePromotionProductForDashboard(product));
   });
   const groups=Array.from(groupsByKey.values()).map(group=>{
-    const products=dedupeExactProducts(group.products,'promotionDashboard.products');
+    const products=dedupeExactPromotionProducts(group.products,'promotionDashboard.products');
     const brandKeys=Array.from(group.brandKeys).filter(Boolean);
     return normalizePromotionGroupForDashboard(Object.assign({},group,{
       brandKeys,
