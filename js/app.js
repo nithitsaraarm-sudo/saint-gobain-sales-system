@@ -118,7 +118,7 @@ function resetAuthenticatedFrontendState(){
 
 function checkAppVersion(){
   try{
-    const newVersion=String(window.APP_VERSION||'0.5.30').trim();
+    const newVersion=String(window.APP_VERSION||'0.5.31').trim();
     console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
     const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
     if(oldVersion===newVersion){
@@ -1751,6 +1751,52 @@ function promotionBrandClass(label){
   if(text.indexOf('GYPROC')>=0)return 'blue';
   return 'blue';
 }
+const PROMOTION_BRAND_LOGOS={
+  WEBER:{src:'images/weber-logo.png',alt:'Weber'},
+  GYPROC:{src:'images/gyproc-logo.png',alt:'Gyproc'}
+};
+function getPromotionBrandLogoKey(group){
+  const item=group&&typeof group==='object'?group:{brand:group};
+  const brandKeys=Array.isArray(item.brandKeys)?item.brandKeys.map(key=>String(key||'').trim().toUpperCase()).filter(Boolean):[];
+  const uniqueKeys=Array.from(new Set(brandKeys.filter(key=>key==='WEBER'||key==='GYPROC')));
+  if(uniqueKeys.length===1)return uniqueKeys[0];
+  const text=String(item.brand||'').trim().toUpperCase();
+  if(text.indexOf('WEBER')>=0&&text.indexOf('GYPROC')<0)return 'WEBER';
+  if(text.indexOf('GYPROC')>=0&&text.indexOf('WEBER')<0)return 'GYPROC';
+  return '';
+}
+function getPromotionBrandFallbackText(group){
+  const item=group&&typeof group==='object'?group:{brand:group};
+  const text=String(item.brand||'').trim();
+  if(text)return text;
+  return promotionBrandLabelFromKeys(Array.isArray(item.brandKeys)?item.brandKeys:[]);
+}
+function renderPromotionBrandLogo(group){
+  const key=getPromotionBrandLogoKey(group);
+  const config=key?PROMOTION_BRAND_LOGOS[key]:null;
+  const fallbackText=getPromotionBrandFallbackText(group)||'-';
+  const wrap=createUiElement('span','promotion-brand-logo-badge');
+  if(!config){
+    wrap.classList.add('is-fallback');
+    wrap.appendChild(createUiElement('span','promotion-brand-logo-fallback',fallbackText));
+    return wrap;
+  }
+  const img=document.createElement('img');
+  img.className='promotion-brand-logo';
+  img.src=config.src;
+  img.alt=config.alt;
+  img.loading='lazy';
+  img.decoding='async';
+  const fallback=createUiElement('span','promotion-brand-logo-fallback',fallbackText);
+  fallback.hidden=true;
+  img.addEventListener('error',()=>{
+    img.hidden=true;
+    fallback.hidden=false;
+    wrap.classList.add('is-fallback');
+  },{once:true});
+  wrap.append(img,fallback);
+  return wrap;
+}
 function getPromotionProductCode(product){
   const item=product&&typeof product==='object'?product:{};
   return String(item.productCode||item.sku||item.productId||item.id||item.itemCode||'').trim();
@@ -2416,11 +2462,11 @@ function renderPromotionDateSummary(group){
 function renderPromotionCard(group){
   const card=createUiElement('article','card promotion-card');
   card.dataset.promotionKey=group.promotionKey||'';
-  card.appendChild(renderPromotionStatusBadge(group));
   const head=createUiElement('div','promotion-card-head');
-  const brand=createUiElement('span','pill '+promotionBrandClass(group.brand),group.brand||'-');
+  const left=createUiElement('div','promotion-card-header-left');
+  left.append(renderPromotionStatusBadge(group),renderPromotionBrandLogo(group));
   const code=createUiElement('b','promotion-code',group.promotionCode||'-');
-  head.append(brand,code);
+  head.append(left,code);
   const promotionText=String(group.promotionText||'').trim();
   const text=promotionText?createUiElement('h3','promotion-card-text promotion-card-primary-text',promotionText):null;
   const dates=renderPromotionDateSummary(group);
