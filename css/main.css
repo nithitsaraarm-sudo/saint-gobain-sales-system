@@ -1316,6 +1316,52 @@ body.quotation-action-sheet-open{overflow:hidden;touch-action:none}
 .favorite-card .customer-actions.card-action-row{
     margin-top:12px;
 }
+.customer-detail{
+    display:grid;
+    gap:14px;
+    min-width:0;
+}
+.customer-detail-header{
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap:12px;
+    min-width:0;
+}
+.customer-detail-header h3{
+    margin:0 0 4px;
+}
+.customer-detail-header p{
+    margin:0;
+    color:var(--muted);
+    font-weight:800;
+}
+.customer-detail-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+    gap:10px;
+}
+.customer-detail-row{
+    min-width:0;
+    border:1px solid var(--line);
+    border-radius:16px;
+    background:#f8fbff;
+    padding:10px 12px;
+}
+.customer-detail-row small{
+    display:block;
+    color:var(--muted);
+    font-weight:900;
+    margin-bottom:3px;
+}
+.customer-detail-row b{
+    display:block;
+    color:#08223c;
+    overflow-wrap:anywhere;
+}
+.customer-detail-actions{
+    justify-content:flex-end;
+}
 @media(max-width:480px){
     .customer-card-head{
         display:grid;
@@ -1329,6 +1375,15 @@ body.quotation-action-sheet-open{overflow:hidden;touch-action:none}
     .status-badge{
         white-space:normal;
         text-align:center;
+    }
+    .customer-detail-header{
+        display:grid;
+    }
+    .customer-detail-grid{
+        grid-template-columns:1fr;
+    }
+    .customer-detail-actions .primary{
+        width:100%;
     }
     .sg-brand-logo--standard .sg-brand-logo-img{
         height:20px;

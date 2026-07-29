@@ -121,7 +121,7 @@ function resetAuthenticatedFrontendState(){
 
 function checkAppVersion(){
   try{
-    const newVersion=String(window.APP_VERSION||'0.5.37').trim();
+    const newVersion=String(window.APP_VERSION||'0.5.38').trim();
     console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
     const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
     if(oldVersion===newVersion){
@@ -4068,17 +4068,88 @@ async function saveModal(type){
 function toast(msg, options){if(typeof showToast==='function')return showToast(Object.assign({type:'info',message:msg},options||{}));const el=document.getElementById('toast'); if(!el)return; el.textContent=msg; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),2600)}
 
 const CUSTOMER_FAVORITE_PENDING=new Set();
+const CUSTOMER_ACTION_PENDING=new Set();
 function isFavoriteCustomer(customerId){return FAVORITE_CUSTOMERS.some(c=>String(c.customerId||'')===String(customerId||''))}
 function isCustomerFavoritePending(customerId){return CUSTOMER_FAVORITE_PENDING.has(String(customerId||''))}
+function getCustomerActionId(customer){
+  return String(customer&& (customer.customerId||customer.customerCode||customer.id) || '').trim();
+}
+function findCustomerForAction(customerId){
+  const id=String(customerId||'').trim();
+  if(!id)return null;
+  return (Array.isArray(DB.customers)?DB.customers:[]).find(customer=>{
+    return [customer.customerId,customer.customerCode,customer.id].some(value=>String(value||'').trim()===id);
+  })||null;
+}
+function renderCustomerActionButtonHtml(options){
+  const opts=options||{};
+  const action=String(opts.action||'').replace(/[^a-z0-9_-]/gi,'').toLowerCase();
+  const id=String(opts.customerId||'').trim();
+  const variant=String(opts.variant||'secondary').replace(/[^a-z0-9_-]/gi,'').toLowerCase()||'secondary';
+  const icon=String(opts.icon||'info').replace(/[^a-z0-9_]/gi,'')||'info';
+  const label=String(opts.label||opts.title||action||'Action').trim();
+  const disabled=opts.disabled?' disabled aria-disabled="true"':'';
+  const active=opts.pressed?' is-active':'';
+  const loading=opts.loading?' is-loading':'';
+  return `<button type="button" class="icon-action-button icon-action-${htmlAttr(variant)}${active}${loading}" data-customer-action="${htmlAttr(action)}" data-customer-id="${htmlAttr(id)}" aria-label="${htmlAttr(opts.ariaLabel||label)}" title="${htmlAttr(opts.title||label)}"${opts.pressed!==undefined?' aria-pressed="'+String(!!opts.pressed)+'"':''}${disabled}><span class="material-symbols-rounded" aria-hidden="true">${escapeHtml(icon)}</span><span class="sr-only">${escapeHtml(label)}</span></button>`;
+}
+function customerDetailRowHtml(label,value){
+  const text=String(value||'').trim()||'-';
+  return `<div class="customer-detail-row"><small>${escapeHtml(label)}</small><b>${escapeHtml(text)}</b></div>`;
+}
+function openCustomerDetailsModal(customerId){
+  const id=String(customerId||'').trim();
+  if(!id){
+    toast('ไม่พบรหัสร้านค้า');
+    return {ok:false,code:'CUSTOMER_ID_REQUIRED'};
+  }
+  const customer=findCustomerForAction(id);
+  if(!customer){
+    toast('ไม่พบข้อมูลร้านค้า หรืออยู่นอกสิทธิ์การเข้าถึง');
+    return {ok:false,code:'CUSTOMER_NOT_FOUND'};
+  }
+  const modal=$('modal'),title=$('modalTitle'),body=$('modalBody');
+  if(!modal||!title||!body){
+    toast('ไม่สามารถเปิดรายละเอียดร้านค้าได้');
+    return {ok:false,code:'CUSTOMER_MODAL_NOT_FOUND'};
+  }
+  if(typeof deactivateCustomerModalLayout==='function')deactivateCustomerModalLayout();
+  title.textContent='รายละเอียดร้านค้า';
+  const detailId=htmlAttr(getCustomerActionId(customer));
+  const assignedSales=String(customer.assignedSalesNameSnapshot||customer.assignedSalesUsername||customer.assignedSalesUserId||'').trim();
+  const location=[customer.province,customer.district].map(value=>String(value||'').trim()).filter(Boolean).join(' / ');
+  const quoteAction=canCreateQuotationsUi()?`<button type="button" class="primary" data-customer-action="quote" data-customer-id="${detailId}">ออกใบเสนอราคา</button>`:'';
+  body.innerHTML=`<div class="customer-detail">
+    <div class="customer-detail-header"><div><h3>${escapeHtml(customer.customerName||'-')}</h3><p>${escapeHtml(customer.customerCode||customer.customerId||customer.id||'-')}</p></div><div class="customer-brand-badges">${customerBrandBadgesHtml(customer)}</div></div>
+    <div class="customer-detail-grid">
+      ${customerDetailRowHtml('เขตการดูแล',customer.salesArea)}
+      ${customerDetailRowHtml('Sales ผู้ดูแล',assignedSales)}
+      ${customerDetailRowHtml('ประเภท',customer.customerType)}
+      ${customerDetailRowHtml('จังหวัด/อำเภอ',location)}
+      ${customerDetailRowHtml('โทร',customer.phone)}
+      ${customerDetailRowHtml('ที่อยู่',customer.address)}
+      ${customerDetailRowHtml('หมายเหตุ',customer.notes)}
+    </div>
+    ${quoteAction?`<div class="actions customer-detail-actions">${quoteAction}</div>`:''}
+  </div>`;
+  modal.classList.add('show');
+  const card=modal.querySelector('.modal-card');
+  if(card){
+    card.setAttribute('role','dialog');
+    card.setAttribute('aria-modal','true');
+    card.setAttribute('aria-labelledby','modalTitle');
+  }
+  return {ok:true,data:customer};
+}
 function renderCustomerCard(c,isFavorite){
-  const idAttr=htmlAttr(c.customerId||'');
-  const idJs=jsStringLiteralAttr(c.customerId||'');
+  const customerId=getCustomerActionId(c);
+  const idAttr=htmlAttr(customerId);
   const customerName=String(c.customerName||c.customerCode||c.customerId||'ร้านค้า').trim();
-  const quoteButton=currentRole()==='VIEWER'?'':renderIconActionButtonHtml({icon:'request_quote',variant:'primary',label:'ออกใบเสนอราคา',ariaLabel:'ออกใบเสนอราคาให้ร้าน '+customerName,title:'ออกใบเสนอราคา',onClick:`selectCustomer(${idJs})`});
-  const editButton=canEditCustomers()?renderIconActionButtonHtml({icon:'edit',variant:'secondary',label:'แก้ไขข้อมูล',ariaLabel:'แก้ไขข้อมูลร้าน '+customerName,title:'แก้ไขข้อมูล',onClick:`openCustomerEditModal(${idJs})`}):'';
-  const favoritePending=isCustomerFavoritePending(c.customerId);
-  const favoriteButton=renderIconActionButtonHtml({icon:isFavorite?'star':'star_outline',variant:'favorite',label:isFavorite?'นำออกจากร้านค้าโปรด':'เพิ่มในร้านค้าโปรด',ariaLabel:(isFavorite?'นำร้าน ':'เพิ่มร้าน ')+customerName+(isFavorite?' ออกจากร้านค้าโปรด':' เป็นร้านค้าโปรด'),title:isFavorite?'นำออกจากร้านค้าโปรด':'เพิ่มในร้านค้าโปรด',pressed:!!isFavorite,loading:favoritePending,disabled:favoritePending,onClick:`toggleFavoriteCustomer(${idJs})`});
-  return `<div class="card ${isFavorite?'favorite-card':''}" ${isFavorite?`draggable="true" data-customer-id="${idAttr}"`:''}>
+  const detailButton=renderCustomerActionButtonHtml({action:'detail',customerId:customerId,icon:'info',variant:'primary',label:'รายละเอียด',ariaLabel:'ดูรายละเอียดร้าน '+customerName,title:'รายละเอียด'});
+  const editButton=canEditCustomers()?renderCustomerActionButtonHtml({action:'edit',customerId:customerId,icon:'edit',variant:'secondary',label:'แก้ไขข้อมูล',ariaLabel:'แก้ไขข้อมูลร้าน '+customerName,title:'แก้ไขข้อมูล'}):'';
+  const favoritePending=isCustomerFavoritePending(customerId);
+  const favoriteButton=renderCustomerActionButtonHtml({action:'favorite',customerId:customerId,icon:isFavorite?'star':'star_outline',variant:'favorite',label:isFavorite?'นำออกจากร้านค้าโปรด':'เพิ่มในร้านค้าโปรด',ariaLabel:(isFavorite?'นำร้าน ':'เพิ่มร้าน ')+customerName+(isFavorite?' ออกจากร้านค้าโปรด':' เป็นร้านค้าโปรด'),title:isFavorite?'นำออกจากร้านค้าโปรด':'เพิ่มในร้านค้าโปรด',pressed:!!isFavorite,loading:favoritePending,disabled:favoritePending});
+  return `<div class="card ${isFavorite?'favorite-card':''}" data-customer-id="${idAttr}" ${isFavorite?'draggable="true"':''}>
     <div class="customer-card-head"><h3>${escapeHtml(c.customerName||'-')}</h3><div class="customer-brand-badges">${customerBrandBadgesHtml(c)}</div></div>
     <p>รหัสร้านค้า: ${escapeHtml(c.customerCode||c.customerId||c.id||'-')}</p>
     <p>เขตการดูแล: ${escapeHtml(c.salesArea||'-')}${(c.assignedSalesNameSnapshot||c.assignedSalesUsername)?` · Sales: ${escapeHtml(c.assignedSalesNameSnapshot||c.assignedSalesUsername)}`:''}</p>
@@ -4087,7 +4158,7 @@ function renderCustomerCard(c,isFavorite){
     <p>โทร: ${renderPhoneLink(c.phone)||'-'}</p>
     <p>ที่อยู่: ${escapeHtml(c.address||'-')}</p>
     <p>หมายเหตุ: ${escapeHtml(c.notes||'-')}</p>
-    <div class="customer-actions card-action-row">${quoteButton}${editButton}${favoriteButton}</div>
+    <div class="customer-actions card-action-row">${detailButton}${editButton}${favoriteButton}</div>
   </div>`;
 }
 function renderFavoriteCustomers(){
@@ -4099,6 +4170,7 @@ function renderFavoriteCustomers(){
   if(q){box.querySelectorAll('[draggable]').forEach(card=>card.removeAttribute('draggable'))}else{bindFavoriteDragAndDrop()}
 }
 function renderCustomers(){
+  bindCustomerCardActions();
   ensureCustomerCrmUi();
   let q=$('customerSearch')?.value||'';
   let brand=($('customerTypeFilter')?.value||'');
@@ -4173,24 +4245,136 @@ async function loadFavoriteCustomers(options){
 }
 async function toggleFavoriteCustomer(customerId){
   const id=String(customerId||'').trim();
-  if(!id||CUSTOMER_FAVORITE_PENDING.has(id))return;
+  if(!id){
+    toast('ไม่พบรหัสร้านค้า');
+    return {ok:false,code:'CUSTOMER_ID_REQUIRED'};
+  }
+  if(CUSTOMER_FAVORITE_PENDING.has(id))return {ok:false,code:'CUSTOMER_FAVORITE_PENDING'};
+  const customer=findCustomerForAction(id);
+  if(!customer){
+    toast('ไม่พบข้อมูลร้านค้า หรืออยู่นอกสิทธิ์การเข้าถึง');
+    return {ok:false,code:'CUSTOMER_NOT_FOUND'};
+  }
   const favorite=isFavoriteCustomer(id);
-  if(!favorite&&FAVORITE_CUSTOMERS.length>=5){toast('สามารถปักร้านค้าโปรดได้สูงสุด 5 ร้าน');return;}
+  if(!favorite&&FAVORITE_CUSTOMERS.length>=5){
+    toast('สามารถปักร้านค้าโปรดได้สูงสุด 5 ร้าน');
+    return {ok:false,code:'CUSTOMER_FAVORITE_LIMIT'};
+  }
+  const previousRows=FAVORITE_CUSTOMER_ROWS.slice();
+  const previousCustomers=FAVORITE_CUSTOMERS.slice();
   CUSTOMER_FAVORITE_PENDING.add(id);
+  if(favorite){
+    FAVORITE_CUSTOMER_ROWS=FAVORITE_CUSTOMER_ROWS.filter(row=>String(row.customerId||'').trim()!==id);
+    FAVORITE_CUSTOMERS=FAVORITE_CUSTOMERS.filter(item=>String(getCustomerActionId(item)).trim()!==id);
+  }else{
+    FAVORITE_CUSTOMERS=FAVORITE_CUSTOMERS.concat([Object.assign({},customer,{sortOrder:FAVORITE_CUSTOMERS.length+1})]);
+  }
   renderCustomers();
   try{
     const response=await callApi(favorite?'removeFavoriteCustomer':'addFavoriteCustomer',{customerId:id});
-    toast(response.message||(response.ok?'บันทึกแล้ว':'บันทึกไม่สำเร็จ'));
+    if(!response||!response.ok){
+      FAVORITE_CUSTOMER_ROWS=previousRows;
+      FAVORITE_CUSTOMERS=previousCustomers;
+      toast(response&&response.message?response.message:'บันทึกไม่สำเร็จ');
+      renderCustomers();
+      return response||{ok:false,code:'CUSTOMER_FAVORITE_FAILED'};
+    }
+    toast(response.message||'บันทึกแล้ว');
     if(response.ok)await loadFavoriteCustomers();
     return response;
   }catch(error){
-    console.warn('Favorite customer update failed');
+    FAVORITE_CUSTOMER_ROWS=previousRows;
+    FAVORITE_CUSTOMERS=previousCustomers;
+    console.warn('[CUSTOMER_ACTION] favorite update failed',{customerId:id,message:String(error&&error.message?error.message:error)});
     toast('บันทึกร้านค้าโปรดไม่สำเร็จ');
     return {ok:false,message:String(error&&error.message?error.message:error)};
   }finally{
     CUSTOMER_FAVORITE_PENDING.delete(id);
     renderCustomers();
   }
+}
+function setCustomerActionButtonBusy(button,busy){
+  if(!button)return;
+  button.classList.toggle('is-loading',!!busy);
+  if(busy){
+    button.dataset.wasDisabled=button.disabled?'true':'false';
+    button.disabled=true;
+    button.setAttribute('aria-disabled','true');
+    button.setAttribute('aria-busy','true');
+  }else{
+    if(button.dataset.wasDisabled!=='true')button.disabled=false;
+    if(button.dataset.wasDisabled!=='true')button.removeAttribute('aria-disabled');
+    button.removeAttribute('aria-busy');
+    delete button.dataset.wasDisabled;
+  }
+}
+async function handleCustomerAction(action,customerId,button){
+  const id=String(customerId||'').trim();
+  const normalizedAction=String(action||'').trim().toLowerCase();
+  if(!normalizedAction)return {ok:false,code:'CUSTOMER_ACTION_REQUIRED'};
+  if(!id){
+    toast('ไม่พบรหัสร้านค้า');
+    return {ok:false,code:'CUSTOMER_ID_REQUIRED'};
+  }
+  const pendingKey=normalizedAction+':'+id;
+  if(CUSTOMER_ACTION_PENDING.has(pendingKey))return {ok:false,code:'CUSTOMER_ACTION_PENDING'};
+  CUSTOMER_ACTION_PENDING.add(pendingKey);
+  setCustomerActionButtonBusy(button,true);
+  try{
+    if(normalizedAction==='detail'){
+      return openCustomerDetailsModal(id);
+    }
+    if(normalizedAction==='edit'){
+      if(!canEditCustomers()){
+        toast('คุณไม่มีสิทธิ์แก้ไขข้อมูลร้านค้า');
+        return {ok:false,code:'CUSTOMER_EDIT_FORBIDDEN'};
+      }
+      const customer=findCustomerForAction(id);
+      if(!customer){
+        toast('ไม่พบข้อมูลร้านค้า หรืออยู่นอกสิทธิ์การเข้าถึง');
+        return {ok:false,code:'CUSTOMER_NOT_FOUND'};
+      }
+      openCustomerEditModal(id);
+      return {ok:true,data:customer};
+    }
+    if(normalizedAction==='favorite'){
+      return await toggleFavoriteCustomer(id);
+    }
+    if(normalizedAction==='quote'){
+      if(!canCreateQuotationsUi()){
+        toast('ไม่มีสิทธิ์ออกใบเสนอราคา');
+        return {ok:false,code:'QUOTE_CREATE_FORBIDDEN'};
+      }
+      if(typeof window.selectCustomer!=='function'){
+        toast('ไม่สามารถเปิดใบเสนอราคาได้');
+        return {ok:false,code:'QUOTE_HANDLER_MISSING'};
+      }
+      closeModal();
+      return await window.selectCustomer(id);
+    }
+    toast('ไม่รู้จักคำสั่งร้านค้า');
+    return {ok:false,code:'CUSTOMER_ACTION_UNKNOWN'};
+  }catch(error){
+    console.warn('[CUSTOMER_ACTION]',{action:normalizedAction,customerId:id,message:String(error&&error.message?error.message:error)});
+    toast('ดำเนินการร้านค้าไม่สำเร็จ');
+    return {ok:false,message:String(error&&error.message?error.message:error)};
+  }finally{
+    CUSTOMER_ACTION_PENDING.delete(pendingKey);
+    setCustomerActionButtonBusy(button,false);
+  }
+}
+function handleCustomerCardActionClick(event){
+  const button=event.target&&event.target.closest?event.target.closest('[data-customer-action]'):null;
+  if(!button)return;
+  event.preventDefault();
+  event.stopPropagation();
+  if(button.disabled||button.getAttribute('aria-disabled')==='true')return;
+  handleCustomerAction(button.dataset.customerAction,button.dataset.customerId,button);
+}
+function bindCustomerCardActions(){
+  if(window.__customerCardActionsBound)return;
+  document.addEventListener('click',handleCustomerCardActionClick);
+  window.__customerCardActionsBound=true;
 }
 async function persistFavoriteOrder(){const grid=$('favoriteCustomerGrid');if(!grid)return;const customerIds=Array.from(grid.querySelectorAll('[data-customer-id]')).map(el=>el.dataset.customerId);const response=await callApi('reorderFavoriteCustomers',{customerIds:customerIds});if(!response.ok){toast(response.message||'จัดลำดับไม่สำเร็จ');await loadFavoriteCustomers();return;}const map=new Map(FAVORITE_CUSTOMERS.map(c=>[String(c.customerId),c]));FAVORITE_CUSTOMERS=customerIds.map(id=>map.get(id)).filter(Boolean)}
 function bindFavoriteDragAndDrop(){const grid=$('favoriteCustomerGrid');if(!grid||grid.dataset.bound)return;grid.dataset.bound='true';let dragged=null;grid.addEventListener('dragstart',event=>{dragged=event.target.closest('.favorite-card');if(!dragged)return;dragged.classList.add('is-dragging');event.dataTransfer.effectAllowed='move'});grid.addEventListener('dragover',event=>{event.preventDefault();const target=event.target.closest('.favorite-card');if(dragged&&target&&target!==dragged)grid.insertBefore(dragged,target)});grid.addEventListener('dragend',()=>{if(dragged)dragged.classList.remove('is-dragging');dragged=null;persistFavoriteOrder()});let timer=null,touchCard=null;grid.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'||event.target.closest('button,a'))return;touchCard=event.target.closest('.favorite-card');if(touchCard)timer=setTimeout(()=>{touchCard.classList.add('is-dragging');touchCard.setPointerCapture(event.pointerId)},350)});grid.addEventListener('pointermove',event=>{if(!touchCard||!touchCard.classList.contains('is-dragging'))return;event.preventDefault();const target=document.elementFromPoint(event.clientX,event.clientY)?.closest('.favorite-card');if(target&&target!==touchCard)grid.insertBefore(touchCard,target)});const finish=()=>{clearTimeout(timer);if(touchCard&&touchCard.classList.contains('is-dragging')){touchCard.classList.remove('is-dragging');persistFavoriteOrder()}touchCard=null};grid.addEventListener('pointerup',finish);grid.addEventListener('pointercancel',finish)}
@@ -4541,6 +4725,6 @@ async function persistPinnedProductOrder(){const grid=$('pinnedProductGrid');if(
 function bindPinnedProductDragAndDrop(){const grid=$('pinnedProductGrid');if(!grid||grid.dataset.bound)return;grid.dataset.bound='true';let dragged=null;grid.addEventListener('dragstart',event=>{dragged=event.target.closest('.pinned-product-card');if(!dragged)return;dragged.classList.add('is-dragging');event.dataTransfer.effectAllowed='move'});grid.addEventListener('dragover',event=>{event.preventDefault();const target=event.target.closest('.pinned-product-card');if(dragged&&target&&target!==dragged)grid.insertBefore(dragged,target)});grid.addEventListener('dragend',()=>{if(dragged)dragged.classList.remove('is-dragging');dragged=null;persistPinnedProductOrder()});let timer=null,touchCard=null;grid.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'||event.target.closest('button,a,[data-no-drag]'))return;touchCard=event.target.closest('.pinned-product-card');if(touchCard)timer=setTimeout(()=>{touchCard.classList.add('is-dragging');try{touchCard.setPointerCapture(event.pointerId)}catch(error){}},350)});grid.addEventListener('pointermove',event=>{if(!touchCard||!touchCard.classList.contains('is-dragging'))return;event.preventDefault();const target=document.elementFromPoint(event.clientX,event.clientY)?.closest('.pinned-product-card');if(target&&target!==touchCard)grid.insertBefore(touchCard,target)});const finish=()=>{clearTimeout(timer);if(touchCard&&touchCard.classList.contains('is-dragging')){touchCard.classList.remove('is-dragging');persistPinnedProductOrder()}touchCard=null};grid.addEventListener('pointerup',finish);grid.addEventListener('pointercancel',finish)}
 const baseFilterQuoteProductsByBusinessUnitForPreferences=filterQuoteProductsByBusinessUnit;
 filterQuoteProductsByBusinessUnit=function(query,businessUnit){return baseFilterQuoteProductsByBusinessUnitForPreferences(query,businessUnit).map(decorateQuotePreferenceProduct).sort((a,b)=>productPreferenceRank(a)-productPreferenceRank(b)||rankQuoteProductBusinessUnit(a,businessUnit)-rankQuoteProductBusinessUnit(b,businessUnit)||rankQuoteProduct(a,query)-rankQuoteProduct(b,query)||String(a.productName||'').localeCompare(String(b.productName||''),'th'))};
-window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.createAddProductButton=createAddProductButton; window.addProductCardToQuote=addProductCardToQuote; window.openProductPromotionDetail=openProductPromotionDetail; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.loadPromotionDashboard=loadPromotionDashboard; window.refreshPromotionDashboard=refreshPromotionDashboard; window.openPromotionDetail=openPromotionDetail; window.renderPromotionProductPanel=renderPromotionProductPanel; window.closePromotionProductPanel=closePromotionProductPanel; window.goToPromotionProduct=goToPromotionProduct; window.buildProductPromotionDashboardFromProducts=buildPromotionDashboardFromProducts; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.resetAuthenticatedFrontendState=resetAuthenticatedFrontendState; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.canCreateQuotationsUi=canCreateQuotationsUi; window.canEditQuotationsUi=canEditQuotationsUi; window.canViewQuotationsUi=canViewQuotationsUi; window.canExportQuotationsUi=canExportQuotationsUi; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
+window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.openCustomerDetailsModal=openCustomerDetailsModal; window.openCustomerEditModal=openCustomerEditModal; window.toggleFavoriteCustomer=toggleFavoriteCustomer; window.handleCustomerAction=handleCustomerAction; window.bindCustomerCardActions=bindCustomerCardActions; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.createAddProductButton=createAddProductButton; window.addProductCardToQuote=addProductCardToQuote; window.openProductPromotionDetail=openProductPromotionDetail; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.loadPromotionDashboard=loadPromotionDashboard; window.refreshPromotionDashboard=refreshPromotionDashboard; window.openPromotionDetail=openPromotionDetail; window.renderPromotionProductPanel=renderPromotionProductPanel; window.closePromotionProductPanel=closePromotionProductPanel; window.goToPromotionProduct=goToPromotionProduct; window.buildProductPromotionDashboardFromProducts=buildPromotionDashboardFromProducts; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.resetAuthenticatedFrontendState=resetAuthenticatedFrontendState; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.canCreateQuotationsUi=canCreateQuotationsUi; window.canEditQuotationsUi=canEditQuotationsUi; window.canViewQuotationsUi=canViewQuotationsUi; window.canExportQuotationsUi=canExportQuotationsUi; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
 window.createProductIdentityKey=createProductIdentityKey; window.dedupeExactProducts=dedupeExactProducts; window.dedupeExactProductsWithReport=dedupeExactProductsWithReport; window.cloneProductRecordForSelection=cloneProductRecordForSelection; window.getStableProductRecordKey=getStableProductRecordKey; window.registerProductRecordSelection=registerProductRecordSelection; window.resolveProductRecordSelection=resolveProductRecordSelection; window.renderProductThumbnailHtml=renderProductThumbnailHtml; window.getProductImageSource=getProductImageSource;
 window.normalizeSystemIdentitySettings=normalizeSystemIdentitySettings; window.applySystemIdentityToUI=applySystemIdentityToUI; window.renderLoginBranding=renderLoginBranding; window.renderSidebarBranding=renderSidebarBranding; window.refreshPublicSystemSettings=refreshPublicSystemSettings; window.setPublicSystemSettings=setPublicSystemSettings; window.loadSystemIdentitySettingsForSettings=loadSystemIdentitySettingsForSettings; window.saveSystemIdentitySettings=saveSystemIdentitySettings; window.savePersonalGreetingSettings=savePersonalGreetingSettings; window.saveSystemGreetingSettings=saveSystemGreetingSettings; window.canManageSystemIdentitySettings=canManageSystemIdentitySettings; window.applySettingsPermissionUi=applySettingsPermissionUi;

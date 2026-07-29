@@ -325,3 +325,50 @@ Data / Export:
 
 - `CHANGELOG.md` = ประวัติการเปลี่ยนแปลงระดับ release
 - `WORK_HISTORY.md` = ประวัติการทำงานละเอียดสำหรับ handoff / sync Codex
+
+## 2026-07-29 — Customer Card action buttons audit/fix
+
+Scope:
+
+- Fixed only the Customer Card action buttons: Details, Edit, Favorite.
+- No backend, API, Google Sheet schema, RBAC policy, or area-permission logic was changed.
+
+Audit result:
+
+- Renderer: `js/app.js` → `renderCustomerCard(c, isFavorite)`.
+- Handler location: `js/app.js` customer UI/action helpers.
+- Existing customer cards relied on inline `onclick` handlers for quote/edit/favorite actions.
+- The card did not have a true Details action button/workflow; the first action was actually quotation selection.
+- Per-button loading/error handling was inconsistent and a failed/undefined inline handler could appear as a silent no-op.
+
+Implementation:
+
+- Replaced Customer Card inline action markup with a scoped `data-customer-action` delegated click flow.
+- Added `renderCustomerActionButtonHtml()` for the card action buttons.
+- Added `bindCustomerCardActions()` and `handleCustomerAction()` to centralize validation, busy state, error handling, and action routing.
+- Added `openCustomerDetailsModal()` so Details opens an existing customer detail view from the scoped customer list.
+- Kept Edit behind existing `canEditCustomers()` UI permission and existing edit modal workflow.
+- Kept Favorite backend validation and added optimistic UI update with rollback on API failure.
+- Added customer detail modal CSS only; existing `.icon-action-button` design/touch target remains the base.
+- Bumped app/service-worker version to `0.5.38` so updated UI assets are picked up by PWA/browser cache.
+
+Files changed:
+
+- `js/app.js`
+- `css/main.css`
+- `index.html`
+- `js/api.js`
+- `js/config.js`
+- `service-worker.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Validation notes:
+
+- Static repository checks were added to `TEST_CASES.md`.
+- Runtime browser/device/API validation is still required on Desktop Chrome/Edge, Android Chrome, iPhone Safari, and PWA with live Apps Script credentials.
+- Rollback command for this phase:
+
+```powershell
+git checkout -- js/app.js css/main.css index.html js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
+```

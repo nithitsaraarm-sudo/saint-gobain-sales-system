@@ -10,10 +10,10 @@ This catalogue remains the production test source of truth for V1. During the fi
 
 Current execution status:
 
-- Total catalogue: 74 tests
-- Static checks passed: 15
-- Runtime integration tests blocked/not run: 31
-- Manual browser/PWA tests blocked/not run: 17
+- Total catalogue: 77 tests
+- Static checks passed: 16
+- Runtime integration tests blocked/not run: 32
+- Manual browser/PWA tests blocked/not run: 18
 - Production smoke tests blocked/not run: 11
 - Failed tests reported by this audit: 0
 
@@ -109,11 +109,11 @@ Create or verify these records in a UAT spreadsheet before runtime execution:
 
 | Suite | Total | Static Check Passed | Not Run | Blocked | Failed | Notes |
 |---|---:|---:|---:|---:|---:|---|
-| Automated/static checks | 15 | 15 | 0 | 0 | 0 | Static checks were executed locally in repository context. |
-| Runtime integration tests | 31 | 0 | 0 | 31 | 0 | Blocked until live Apps Script, Google Sheets UAT data, and credentials are available. |
-| Manual browser/PWA tests | 17 | 0 | 0 | 17 | 0 | Blocked until browsers/devices/PWA install session are available. |
+| Automated/static checks | 16 | 16 | 0 | 0 | 0 | Static checks were executed locally in repository context. |
+| Runtime integration tests | 32 | 0 | 0 | 32 | 0 | Blocked until live Apps Script, Google Sheets UAT data, and credentials are available. |
+| Manual browser/PWA tests | 18 | 0 | 0 | 18 | 0 | Blocked until browsers/devices/PWA install session are available. |
 | Production post-deployment smoke tests | 11 | 0 | 0 | 11 | 0 | Blocked until production deployment exists. |
-| Total | 74 | 15 | 0 | 59 | 0 | No runtime/manual pass is claimed in this document. |
+| Total | 77 | 16 | 0 | 61 | 0 | No runtime/manual pass is claimed in this document. |
 
 ## 7. Test case counts by module and priority
 
@@ -122,7 +122,7 @@ Create or verify these records in a UAT spreadsheet before runtime execution:
 | A11Y | 1 | 4 | 0 | 5 |
 | API | 4 | 2 | 0 | 6 |
 | AUTH | 2 | 2 | 0 | 4 |
-| CUST | 3 | 3 | 1 | 7 |
+| CUST | 3 | 6 | 1 | 10 |
 | DISC | 3 | 0 | 0 | 3 |
 | PERF | 0 | 3 | 1 | 4 |
 | PROD | 0 | 3 | 0 | 3 |
@@ -133,9 +133,9 @@ Create or verify these records in a UAT spreadsheet before runtime execution:
 | RBAC | 6 | 1 | 0 | 7 |
 | REG | 1 | 2 | 2 | 5 |
 | USER | 2 | 1 | 0 | 3 |
-| Total | 38 | 30 | 6 | 74 |
+| Total | 38 | 33 | 6 | 77 |
 
-Note: The canonical executable test catalogue below contains 74 rows.
+Note: The canonical executable test catalogue below contains 77 rows.
 
 ## 8. Automated/static checks
 
@@ -147,6 +147,7 @@ Note: The canonical executable test catalogue below contains 74 rows.
 | DISC-STATIC-001 | DISC | P0 | Automated/static check | All authenticated roles | Repository available | `appscript/Api.gs` | 1. Inspect `discount` API case. 2. Confirm scope validation before `getDiscount`. | `validateDiscountCustomerScope_()` runs before returning discount data. | Validation helper and dispatch call found. | Static Check Passed | Local repository / PowerShell / ripgrep | Search command: `case 'discount'` and `validateDiscountCustomerScope_` in `appscript/Api.gs`. | H-1, Phase 1 | Runtime test still required. |
 | RBAC-STATIC-001 | RBAC | P0 | Automated/static check | SUPER_ADMIN, ADMIN, MANAGER, SALES, VIEWER | Repository available | `appscript/Permission.gs`, `js/app.js` | 1. Inspect canonical permission helpers. 2. Inspect frontend guards. | Backend and frontend use canonical permission flags for route/action visibility. | Canonical policy documented and implemented in Phase 2 files. | Static Check Passed | Local repository / PowerShell / ripgrep | `REMEDIATION_PROGRESS.md` Phase 2 notes | H-6, Phase 2 | Runtime role matrix still required. |
 | CUST-STATIC-001 | CUST | P0 | Automated/static check | SALES, ADMIN, SUPER_ADMIN | Repository available | `appscript/Customer.gs`, `appscript/Api.gs` | 1. Inspect customer form options action. 2. Inspect assignment metadata gating. | Lower roles do not receive assignable sales metadata. | Phase 2 notes and code references confirm reduced option response. | Static Check Passed | Local repository / PowerShell / ripgrep | `REMEDIATION_PROGRESS.md` Phase 2 notes | M-11, Phase 2 | Runtime response payload test still required. |
+| CUST-STATIC-002 | CUST | P1 | Automated/static check | SUPER_ADMIN, ADMIN, SALES, VIEWER | Repository available | `js/app.js`, `css/main.css` | 1. Inspect `renderCustomerCard`. 2. Inspect customer action button markup. 3. Inspect delegated click handler and busy/error helpers. | Customer card Details/Edit/Favorite buttons use `data-customer-action`, validate `customerId`, route through one delegated handler, expose accessible labels/tooltips, and have loading/disabled states. | `renderCustomerActionButtonHtml`, `bindCustomerCardActions`, `handleCustomerAction`, `openCustomerDetailsModal`, and scoped customer lookup found; customer detail CSS found. | Static Check Passed | Local repository / PowerShell / ripgrep | Search command: `data-customer-action`, `CUSTOMER_ACTION_PENDING`, `openCustomerDetailsModal` in `js/app.js`; `.customer-detail` in `css/main.css`. | Customer Card action button regression | Runtime browser/API validation still required. |
 | PROMO-STATIC-001 | PROMO | P0 | Automated/static check | SUPER_ADMIN, ADMIN | Repository available | `appscript/Code.gs`, `appscript/Api.gs` | 1. Search for old promotion stub success. 2. Inspect save path. | `savePromotion()` persists with validation instead of returning fake success. | Old stub removed; promotion persistence added in Phase 3. | Static Check Passed | Local repository / PowerShell / ripgrep | `REMEDIATION_PROGRESS.md` Phase 3 notes | M-6, Phase 3 | Runtime sheet write test still required. |
 | AUTH-STATIC-001 | AUTH | P1 | Automated/static check | All | Repository available | `index.html`, `js/config.js` | 1. Inspect demo login config. 2. Inspect demo login markup. | Demo Login is hidden in production unless explicitly enabled. | `ENABLE_DEMO_LOGIN = false` documented in Phase 3 notes. | Static Check Passed | Local repository / PowerShell / ripgrep | `REMEDIATION_PROGRESS.md` Phase 3 notes | Demo-login production risk | Runtime production check still required. |
 | API-STATIC-003 | API | P1 | Automated/static check | All | Repository available | Runtime/config files | 1. Search runtime files for stale version strings. | Runtime version/cache strings align to current release. | No old runtime version strings found outside preserved audit baseline. | Static Check Passed | Local repository / PowerShell / ripgrep | Search command: old `0.5.x` and `sales-system-v5-0.5.24` strings in runtime files. | M-7, Phase 4 | Audit baseline intentionally keeps old examples. |
@@ -173,6 +174,7 @@ These tests require a live Apps Script deployment, UAT Google Sheets data, and r
 | CUST-INT-002 | CUST | P0 | Runtime integration | SALES | SALES_A credentials | Customer assigned to SALES_B | 1. Login SALES_A. 2. Request customer assigned to SALES_B. | Customer outside assigned-sales scope is denied. | Not executed. | Blocked - live UAT data unavailable | Apps Script/UAT | Required: API response/log | Assigned-sales isolation | Validate exact response code/message. |
 | CUST-INT-003 | CUST | P1 | Runtime integration | ADMIN, SUPER_ADMIN | Admin credentials | New customer payload with salesArea/brands | 1. Open customer form options. 2. Create customer. 3. Reload customers. | Customer is saved with salesArea, assigned sales snapshot, and at least one brand. | Not executed. | Blocked - live deployment unavailable | Apps Script/UAT | Required: sheet row/screenshot | Customer area/brand requirements | Include Weber-only, Gyproc-only, both. |
 | CUST-INT-004 | CUST | P1 | Runtime integration | ADMIN, SUPER_ADMIN | Existing customer | Customer with assigned sales | 1. Edit salesArea/assigned sales/brand flags. 2. Save. 3. Reload as affected SALES. | Scope and card display update correctly; no data loss. | Not executed. | Blocked - live UAT data unavailable | Apps Script/UAT | Required: before/after sheet row | Customer migration/backward compatibility | Verify old rows remain intact. |
+| CUST-INT-005 | CUST | P1 | Runtime integration | SUPER_ADMIN, ADMIN, SALES, VIEWER | Live deployment and scoped customer data available | One in-scope customer per role; one out-of-scope customer for SALES negative test | 1. Load customers through the UI/API. 2. Click Details for in-scope customer. 3. Click Edit as allowed role and as VIEWER. 4. Toggle Favorite twice. 5. Attempt out-of-scope customer action by direct API/DOM manipulation. | Details opens for scoped data; Edit follows RBAC; Favorite add/remove persists and prevents duplicate requests; out-of-scope access is still denied by backend. | Not executed. | Blocked - live deployment, UAT data, and credentials unavailable | Apps Script/UAT | Required: screenshots/API responses with identifiers redacted | Customer Card action button regression | Confirms frontend fix does not replace backend permission checks. |
 | DISC-INT-001 | DISC | P0 | Runtime integration | SALES | SALES_A credentials | Discount for AREA_A and AREA_B customers | 1. Request discount for AREA_A customer/product group. 2. Request discount for AREA_B customer/product group. | In-scope discount returns; out-of-scope discount is denied. | Not executed. | Blocked - live UAT data unavailable | Apps Script/UAT | Required: API response/log | H-1, Phase 1 | Security gate. |
 | DISC-INT-002 | DISC | P0 | Runtime integration | VIEWER, MANAGER | Read-only credentials | Any discount payload | 1. Attempt direct discount API call. | Unauthorized role/scope cannot retrieve restricted discount data. | Not executed. | Blocked - live credentials unavailable | Apps Script/UAT | Required: API response/log | Discount access prevention | Verify backend, not frontend-only. |
 | PROD-INT-001 | PROD | P1 | Runtime integration | Allowed product roles | Products API/UAT sheet available | Products sheet with exact duplicate rows | 1. Load products. 2. Search exact duplicate SKU. | Exact duplicates do not produce duplicate cards if dedupe guard is active. | Not executed. | Blocked - live product data unavailable | Apps Script/UAT | Required: screenshots/API payload | Product duplicate requirement | If dedupe is frontend-only, verify selected product record. |
@@ -218,6 +220,7 @@ These tests require actual browsers/devices. See `ACCESSIBILITY_CHECKLIST.md` fo
 | REG-MAN-002 | REG | P2 | Manual browser/PWA | All | Browser available | Legacy assets/cache | 1. Hard refresh. 2. Open old bookmarked routes if any. 3. Verify assets/logos/icons. | No stale missing asset or broken icon. | Not executed. | Blocked - browser/deployment unavailable | Desktop/mobile browsers | Required: screenshots | Version/cache backward compatibility | Include service worker update. |
 | QUOTE-MAN-003 | QUOTE | P1 | Manual browser/PWA | SALES | Browser and product preferences | Favorite/pinned products | 1. Add favorite/pinned product. 2. Reorder pinned. 3. Search product picker. | Favorites/pinned render, persist, and do not duplicate or hide search results. | Not executed. | Blocked - browser/live API unavailable | Desktop/mobile browsers | Required: screenshots/API responses | Product favorite/pinned workflow | Also tests generated button type. |
 | CUST-MAN-002 | CUST | P2 | Manual browser/PWA | SALES | Browser and favorites data | 5 favorite customers | 1. Add/reorder/remove favorites. 2. Change search/filter. | Favorites respect max count and area scope; no duplicate favorite cards. | Not executed. | Blocked - browser/live API unavailable | Desktop/mobile browsers | Required: screenshots/API responses | Favorite customer scope | Include out-of-scope negative case. |
+| CUST-MAN-003 | CUST | P1 | Manual browser/PWA | SUPER_ADMIN, ADMIN, SALES, VIEWER | Browser/device and role credentials available | Customer cards visible in each role scope | 1. Open Customers on Desktop Chrome/Edge. 2. Click Details, Edit, and Favorite. 3. Repeat on Android Chrome. 4. Repeat on iPhone Safari/PWA if installed. 5. Rapid-tap Favorite. 6. Inspect console/network. | Buttons respond on desktop/mobile; Details modal opens; Edit opens only when permitted; Favorite shows busy state, toggles once per click, rolls back on API failure, and shows toast feedback; no JS errors or horizontal/touch issues. | Not executed. | Blocked - browser/device/live API unavailable | Desktop Chrome/Edge, Android Chrome, iPhone Safari, PWA | Required: screenshots/video/network log | Customer Card action button regression | Validate 44px touch target and backend area enforcement. |
 
 ## 11. Production post-deployment smoke tests
 
