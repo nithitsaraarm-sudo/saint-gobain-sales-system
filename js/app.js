@@ -1203,14 +1203,30 @@ function go(page,btn,options){
     console.warn('[NAV] Page not found:',target);
     return {ok:false,message:'Page not found',page:target};
   }
+
+  const routeOptions=Object.assign({},options||{});
+  const sidebar=document.getElementById('sidebar');
+  const mobileDrawerOpen=isMobileSidebar()&&!!sidebar?.classList.contains('open');
+
+  /*
+   * The mobile drawer adds a temporary history entry when opened.
+   * Do not call toggleMenu(false) after pushing the destination route,
+   * because setSidebarDrawer(false) would call history.back() and undo
+   * the navigation. Close the drawer state first and replace its temporary
+   * history entry with the destination route.
+   */
+  if(mobileDrawerOpen){
+    setSidebarDrawer(false,{fromHistory:true,restoreFocus:false});
+    routeOptions.replaceRoute=true;
+  }
+
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   pageEl.classList.add('active');
   document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('active'));
   const passedButton=btn&&getNavigationButtonRoute(btn)===target?btn:null;
   const navButton=passedButton||getNavButtonForPage(target);
   if(navButton)navButton.classList.add('active');
-  setAppPageRoute(target,options);
-  if(isMobileSidebar())toggleMenu(false);
+  setAppPageRoute(target,routeOptions);
   window.scrollTo({top:0,behavior:'smooth'});
   const pageData=ensurePageData(target);
   if(target==='quotes')ensureQuotationHistoryLoaded();
