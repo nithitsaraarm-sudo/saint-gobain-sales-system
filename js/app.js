@@ -253,7 +253,7 @@ function resetAuthenticatedFrontendState(){
 
 function checkAppVersion(){
   try{
-    const newVersion=String(window.APP_VERSION||'0.5.46').trim();
+    const newVersion=String(window.APP_VERSION||'0.5.47').trim();
     console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
     const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
     if(oldVersion===newVersion){
