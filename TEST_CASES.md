@@ -10,8 +10,8 @@ This catalogue remains the production test source of truth for V1. During the fi
 
 Current execution status:
 
-- Total catalogue: 82 tests
-- Static checks passed: 19
+- Total catalogue: 83 tests
+- Static checks passed: 20
 - Runtime integration tests blocked/not run: 33
 - Manual browser/PWA tests blocked/not run: 19
 - Production smoke tests blocked/not run: 11
@@ -109,11 +109,11 @@ Create or verify these records in a UAT spreadsheet before runtime execution:
 
 | Suite | Total | Static Check Passed | Not Run | Blocked | Failed | Notes |
 |---|---:|---:|---:|---:|---:|---|
-| Automated/static checks | 19 | 19 | 0 | 0 | 0 | Static checks were executed locally in repository context. |
+| Automated/static checks | 20 | 20 | 0 | 0 | 0 | Static checks were executed locally in repository context. |
 | Runtime integration tests | 33 | 0 | 0 | 33 | 0 | Blocked until live Apps Script, Google Sheets UAT data, and credentials are available. |
 | Manual browser/PWA tests | 19 | 0 | 0 | 19 | 0 | Blocked until browsers/devices/PWA install session are available. |
 | Production post-deployment smoke tests | 11 | 0 | 0 | 11 | 0 | Blocked until production deployment exists. |
-| Total | 82 | 19 | 0 | 63 | 0 | No runtime/manual pass is claimed in this document. |
+| Total | 83 | 20 | 0 | 63 | 0 | No runtime/manual pass is claimed in this document. |
 
 ## 7. Test case counts by module and priority
 
@@ -131,11 +131,11 @@ Create or verify these records in a UAT spreadsheet before runtime execution:
 | PWA | 2 | 1 | 0 | 3 |
 | QUOTE | 12 | 4 | 0 | 16 |
 | RBAC | 6 | 1 | 0 | 7 |
-| REG | 1 | 2 | 2 | 5 |
+| REG | 1 | 3 | 2 | 6 |
 | USER | 2 | 1 | 0 | 3 |
-| Total | 38 | 38 | 6 | 82 |
+| Total | 38 | 39 | 6 | 83 |
 
-Note: The canonical executable test catalogue below contains 82 rows.
+Note: The canonical executable test catalogue below contains 83 rows.
 
 ## 8. Automated/static checks
 
@@ -160,6 +160,7 @@ Note: The canonical executable test catalogue below contains 82 rows.
 | A11Y-STATIC-004 | A11Y | P1 | Automated/static check | All | Repository available | `js/app.js`, `css/main.css` | 1. Inspect Dashboard renderer and responsive CSS. 2. Confirm approved sections are present. 3. Confirm mobile tracks show two KPI cards per view and desktop uses grid. 4. Confirm no new API fields or quotation/customer status names are invented. | Dashboard renders Sales KPI, Business KPI, Quotation KPI, Customer KPI, Top Product, and Top Customer sections; KPI sections use mobile horizontal tracks and desktop responsive grids; metrics use existing loaded data fields. | `renderHomeDashboardRedesign`, `renderDashboardSection`, `customerKpi`, `dashboard-section__track`, and six Dashboard section ids found; CSS has desktop grid defaults and mobile `flex: 0 0 calc((100% - 12px)/2)` KPI cards. | Static Check Passed | Local repository / PowerShell / ripgrep | Search commands: Dashboard redesign selectors in `js/app.js` and `css/main.css`; `git diff --check`; version scan for `0.5.42`. | Approved mobile Dashboard redesign | Runtime browser/device/PWA validation still required. |
 | PERF-STATIC-001 | PERF | P1 | Automated/static check | All | Repository available | `appscript/Database.gs`, `appscript/Quotation.gs`, `appscript/User.gs` | 1. Inspect row update/delete helpers. | Batch helpers are present for contiguous row writes/deletes. | Phase 6 helpers and adoption documented. | Static Check Passed | Local repository / PowerShell / ripgrep | `REMEDIATION_PROGRESS.md` Phase 6 notes | Apps Script performance risk | Live performance test still required. |
 | REG-STATIC-002 | REG | P2 | Automated/static check | All | Repository available | Documentation | 1. Inspect release docs. 2. Confirm test/readiness links. | `RELEASE_READINESS.md`, `TEST_CASES.md`, and checklist are present and linked. | `TEST_CASES.md` is present; release link added in this task. | Static Check Passed | Local repository | File existence and docs inspection | Release readiness requirement | Documentation-only. |
+| REG-STATIC-003 | REG | P1 | Automated/static check | All | Repository available | `index.html`, runtime version files | 1. Inspect sidebar labels, tooltips, and aria labels. 2. Inspect Users page header. 3. Confirm routes remain `home` and `users`. 4. Confirm runtime cache version is current. | Current Dashboard navigation displays `Dashboard`; Users navigation and page header display `ผู้ใช้งาน`; existing routes and internal names remain unchanged. | `data-page="home"` still calls `go('home')` and displays `Dashboard`; `data-page="users"` still calls `go('users')` and displays `ผู้ใช้งาน`; `#page-users h1` displays `ผู้ใช้งาน`; runtime files use `0.5.43`. | Static Check Passed | Local repository / PowerShell / ripgrep | Search commands: `Dashboard`, `ผู้ใช้งาน`, `data-page="home"`, `data-page="users"`, and version scan. | Navigation label clarity update | Runtime desktop/mobile/PWA navigation validation still required. |
 
 ## 9. Runtime integration tests
 

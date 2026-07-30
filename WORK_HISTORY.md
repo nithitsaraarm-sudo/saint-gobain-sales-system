@@ -373,6 +373,64 @@ Validation notes:
 git checkout -- js/app.js css/main.css index.html js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
 ```
 
+## 2026-07-30 — Navigation label clarity update
+
+Scope:
+
+- Updated visible application navigation labels only.
+- Current Dashboard route and functionality remain on the existing `home` route.
+- No new Home page was created in this phase.
+- No backend, API, database schema, RBAC policy, area permission, authentication, Dashboard calculation, or route-name changes were made.
+
+Audit result:
+
+- Sidebar/mobile drawer navigation is static markup in `index.html` under `.nav`.
+- Mobile navigation reuses the same sidebar DOM; `enhanceSidebarNavItems()` reads `.nav-label` and sets `title` / `aria-label`.
+- Navigation handler is `go(page, btn)` in `js/app.js`; it maps route names to `#page-${page}`.
+- Current Dashboard page is `#page-home`; route name remains `home` for backward compatibility.
+- Users page header is static markup in `index.html`.
+- No breadcrumb renderer or page-title renderer was found in the app code.
+- `Users` occurrences in `appscript/*` and API/config files are internal sheet/API/function names and were intentionally left unchanged.
+
+Implementation:
+
+- Renamed sidebar label, tooltip, and accessible name:
+  - `หน้าหลัก` → `Dashboard`
+- Renamed Users navigation label, tooltip, accessible name, and page header:
+  - `Users` → `ผู้ใช้งาน`
+- Kept unchanged labels:
+  - `ออกใบเสนอราคา`
+  - `ร้านค้า`
+  - `สินค้า`
+  - `โปรโมชั่น`
+  - `ประวัติใบเสนอราคา`
+  - `รายงาน`
+  - `ตั้งค่า`
+- Bumped app/service-worker version to `0.5.43` so browser/PWA cache picks up the label updates.
+
+Files changed:
+
+- `index.html`
+- `js/app.js`
+- `js/api.js`
+- `js/config.js`
+- `service-worker.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Validation notes:
+
+- Static scan confirmed sidebar `data-page="home"` now shows `Dashboard` while keeping `go('home')`.
+- Static scan confirmed sidebar `data-page="users"` and `#page-users h1` now show `ผู้ใช้งาน` while keeping `go('users')`.
+- Static scan confirmed checked runtime files use version `0.5.43`.
+- `git diff --check` passed with only line-ending warnings.
+- Runtime browser/device/PWA validation is still required on Desktop Chrome/Edge, Android Chrome, iPhone Safari, and PWA.
+- Rollback command for this phase:
+
+```powershell
+git checkout -- index.html js/app.js js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
+```
+
 ## 2026-07-29 — Product Card action buttons audit/fix
 
 Scope:
