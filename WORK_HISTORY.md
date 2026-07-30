@@ -1,5 +1,48 @@
 # Saint-Gobain Sales System - Work History
 
+## 2026-07-30 — Announcement/News frontend setting
+
+Scope completed in the provided file set:
+
+- Added the dedicated `setAnnouncementText` textarea to the existing SUPER_ADMIN System Greeting / News settings section.
+- Added `maxlength=500`, multiline input, helper text, accessible live character counter, and mobile-safe textarea styling.
+- Loaded `DB.settings.announcementText` into the form with backward-compatible empty-string normalization.
+- Added trimmed `announcementText` to the existing `updateSettings` payload.
+- Preserved entered form values when save fails and retained the existing loading/error/success flow.
+- Added a duplicate-submission guard and `aria-busy` state to the existing save button.
+- Changed the Home News card to render only `announcementText` by `textContent`; it no longer reuses `welcomeText`.
+- Added the empty state `ยังไม่มีข่าวสารหรือประกาศจากระบบ`.
+- Added safe multiline rendering with `white-space: pre-line` and `overflow-wrap: anywhere`.
+- Preserved the existing welcome/hero behavior controlled by `welcomeText`.
+
+Files changed:
+
+- `index.html`
+- `js/app.js`
+- `css/main.css`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Validation completed:
+
+- Static syntax/structure checks passed for the modified frontend files.
+- Static checks confirmed the Home announcement path no longer reads `welcomeText`.
+- Static checks confirmed the textarea, 500-character limit, helper text, counter, plain-text rendering, empty state, trimming, duplicate-submit guard, and bootstrap cache invalidation are present.
+
+Not completed because the provided file set did not include Apps Script/backend files:
+
+- Server allowlist/schema/default validation.
+- Google Sheet Settings storage migration/support.
+- Live SUPER_ADMIN authorization verification.
+- Live API, browser, iPhone Safari, Android, and installed PWA execution.
+
+Rollback command for the provided frontend/documentation scope:
+
+```powershell
+git checkout -- index.html js/app.js css/main.css TEST_CASES.md WORK_HISTORY.md
+```
+
+
 ## 2026-07-30 — Sidebar route-key navigation hardening
 
 Scope:
@@ -849,3 +892,13 @@ Validation notes:
 ```powershell
 git checkout -- js/app.js css/main.css index.html js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
 ```
+
+
+## Announcement Settings Backend Patch
+
+- Added `announcementText` to backend default settings and bootstrap defaults.
+- Added `announcementText` to the Settings save allowlist.
+- Added server-side validation: trim, maximum 500 characters, HTML/script rejection, and spreadsheet-formula prefix rejection.
+- Included `announcementText` in role-filtered bootstrap settings so Home can render it for authorized users.
+- Kept the existing key-value Settings sheet structure; no destructive database migration is required.
+- Normalized the `updateSettings` API payload and attached the authenticated user context.

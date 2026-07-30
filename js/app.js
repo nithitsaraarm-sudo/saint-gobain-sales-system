@@ -1,5 +1,7 @@
 const SYSTEM_IDENTITY_FALLBACK={companyName:'SAINT-GOBAIN',systemName:'SALES SYSTEM',appName:'SALES SYSTEM'};
 const PUBLIC_SETTINGS_CACHE_KEY='sg_public_settings_cache';
+const ANNOUNCEMENT_TEXT_MAX_LENGTH=500;
+const ANNOUNCEMENT_EMPTY_STATE='ยังไม่มีข่าวสารหรือประกาศจากระบบ';
 window.appState=window.appState||{};
 window.appState.publicSettings=normalizeSystemIdentitySettings(window.appState.publicSettings||SYSTEM_IDENTITY_FALLBACK);
 let DB=normalizeDb(), USER=null, CART=[], selectedCustomerId='';
@@ -465,6 +467,7 @@ function normalizeDb(data){
   }
   const identity=normalizeSystemIdentitySettings(source.publicSettings||existing.publicSettings||window.appState?.publicSettings||source.settings||existing.settings||SYSTEM_IDENTITY_FALLBACK);
   const settings=Object.assign({},existing.settings||{},source.settings&&typeof source.settings==='object'?source.settings:{},identity);
+  settings.announcementText=String(settings.announcementText??'');
   window.appState.publicSettings=identity;
   return {
     ...source,
@@ -3439,8 +3442,8 @@ function renderHomeCommandCenter(){
   setText('homeAppVersion',String(window.APP_VERSION||window.CACHE_VERSION||'-'));
   const avatar=$('homeProfileAvatar');
   if(avatar)renderProfileImageElement(avatar,currentProfileImage(),USER);
-  const announcement=String(DB.settings?.welcomeText||'').trim();
-  setText('homeAnnouncementText',announcement||'ยังไม่มีข่าวสารระบบเพิ่มเติมในขณะนี้');
+  const announcement=String(DB.settings?.announcementText??'').trim();
+  setText('homeAnnouncementText',announcement||ANNOUNCEMENT_EMPTY_STATE);
   const quickRoot=$('homeQuickActions');
   if(quickRoot){
     const actions=getHomeQuickActionDefinitions().filter(action=>canAccessPage(action.page));
@@ -3798,6 +3801,8 @@ renderSettings=function(){
   set('setCompany',identity.companyName);
   set('setAppName',identity.systemName);
   set('setWelcome',s.welcomeText);
+  set('setAnnouncementText',s.announcementText);
+  updateAnnouncementCharacterCounter();
   set('setMorning',s.greetingMorning);
   set('setAfternoon',s.greetingAfternoon);
   set('setEvening',s.greetingEvening);
@@ -3989,16 +3994,37 @@ saveProfile=async function(){
   }
 };
 
+
+function updateAnnouncementCharacterCounter(){
+  const input=$('setAnnouncementText');
+  const counter=$('setAnnouncementTextCounter');
+  if(!input||!counter)return;
+  const length=String(input.value||'').length;
+  counter.textContent=`${length}/${ANNOUNCEMENT_TEXT_MAX_LENGTH}`;
+  counter.setAttribute('aria-label',`ใช้ไป ${length} จาก ${ANNOUNCEMENT_TEXT_MAX_LENGTH} ตัวอักษร`);
+}
+
+function normalizeAnnouncementTextInput(value){
+  return String(value??'').trim();
+}
+
 async function saveSystemGreetingSettings(){
   const btn=$('saveSettingsBtn');
+  if(btn&&btn.disabled)return {ok:false,code:'DUPLICATE_SUBMISSION',message:'กำลังบันทึกข้อมูล'};
   try{
-    if(btn){btn.disabled=true;btn.textContent='กำลังบันทึก...';}
+    if(btn){btn.disabled=true;btn.setAttribute('aria-busy','true');btn.textContent='กำลังบันทึก...';}
+    const announcementText=normalizeAnnouncementTextInput($('setAnnouncementText')?.value||'');
+    if(announcementText.length>ANNOUNCEMENT_TEXT_MAX_LENGTH){
+      toast(`ข้อความข่าวสารต้องไม่เกิน ${ANNOUNCEMENT_TEXT_MAX_LENGTH} ตัวอักษร`);
+      return {ok:false,code:'VALIDATION_ERROR',message:'Announcement text is too long'};
+    }
     let p={
-      welcomeText: $('setWelcome')?.value||'',
-      greetingMorning: $('setMorning')?.value||'',
-      greetingAfternoon: $('setAfternoon')?.value||'',
-      greetingEvening: $('setEvening')?.value||'',
-      greetingNight: $('setNight')?.value||''
+      welcomeText: String($('setWelcome')?.value||'').trim(),
+      announcementText: announcementText,
+      greetingMorning: String($('setMorning')?.value||'').trim(),
+      greetingAfternoon: String($('setAfternoon')?.value||'').trim(),
+      greetingEvening: String($('setEvening')?.value||'').trim(),
+      greetingNight: String($('setNight')?.value||'').trim()
     };
     let r=await gas('updateSettings',p);
     toast(r.message||'Settings saved');
@@ -4014,7 +4040,7 @@ async function saveSystemGreetingSettings(){
     console.error(error);
     toast(error&&error.message?error.message:'Settings save failed');
   }finally{
-    if(btn){btn.disabled=false;btn.textContent='บันทึกคำทักทายจากระบบ';}
+    if(btn){btn.disabled=false;btn.removeAttribute('aria-busy');btn.textContent='บันทึกคำทักทายจากระบบ';}
   }
 }
 
@@ -5300,4 +5326,4 @@ filterQuoteProductsByBusinessUnit=function(query,businessUnit){return baseFilter
 window.NAVIGATION_LABELS=NAVIGATION_LABELS; window.NAVIGATION_ITEMS=NAVIGATION_ITEMS; window.getNavigationLabel=getNavigationLabel; window.getNavigationLabelForPage=getNavigationLabelForPage; window.getNavigationRoute=getNavigationRoute; window.getNavigationButtonRoute=getNavigationButtonRoute; window.renderSidebarNavigation=renderSidebarNavigation; window.bindSidebarNavigationEvents=bindSidebarNavigationEvents; window.applyNavigationLabels=applyNavigationLabels;
 window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderDashboard=renderDashboard; window.renderCustomers=renderCustomers; window.openCustomerDetailsModal=openCustomerDetailsModal; window.openCustomerEditModal=openCustomerEditModal; window.toggleFavoriteCustomer=toggleFavoriteCustomer; window.handleCustomerAction=handleCustomerAction; window.bindCustomerCardActions=bindCustomerCardActions; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.handleProductCardCalculatorClick=handleProductCardCalculatorClick; window.isProductCardInteractiveClick=isProductCardInteractiveClick; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.createAddProductButton=createAddProductButton; window.addProductCardToQuote=addProductCardToQuote; window.handleProductAction=handleProductAction; window.bindProductCardActions=bindProductCardActions; window.openProductPromotionDetail=openProductPromotionDetail; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.loadPromotionDashboard=loadPromotionDashboard; window.refreshPromotionDashboard=refreshPromotionDashboard; window.openPromotionDetail=openPromotionDetail; window.renderPromotionProductPanel=renderPromotionProductPanel; window.closePromotionProductPanel=closePromotionProductPanel; window.goToPromotionProduct=goToPromotionProduct; window.buildProductPromotionDashboardFromProducts=buildPromotionDashboardFromProducts; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.resetAuthenticatedFrontendState=resetAuthenticatedFrontendState; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.canCreateQuotationsUi=canCreateQuotationsUi; window.canEditQuotationsUi=canEditQuotationsUi; window.canViewQuotationsUi=canViewQuotationsUi; window.canExportQuotationsUi=canExportQuotationsUi; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
 window.createProductIdentityKey=createProductIdentityKey; window.dedupeExactProducts=dedupeExactProducts; window.dedupeExactProductsWithReport=dedupeExactProductsWithReport; window.cloneProductRecordForSelection=cloneProductRecordForSelection; window.getStableProductRecordKey=getStableProductRecordKey; window.registerProductRecordSelection=registerProductRecordSelection; window.resolveProductRecordSelection=resolveProductRecordSelection; window.renderProductThumbnailHtml=renderProductThumbnailHtml; window.getProductImageSource=getProductImageSource;
-window.normalizeSystemIdentitySettings=normalizeSystemIdentitySettings; window.applySystemIdentityToUI=applySystemIdentityToUI; window.renderLoginBranding=renderLoginBranding; window.renderSidebarBranding=renderSidebarBranding; window.refreshPublicSystemSettings=refreshPublicSystemSettings; window.setPublicSystemSettings=setPublicSystemSettings; window.loadSystemIdentitySettingsForSettings=loadSystemIdentitySettingsForSettings; window.saveSystemIdentitySettings=saveSystemIdentitySettings; window.savePersonalGreetingSettings=savePersonalGreetingSettings; window.saveSystemGreetingSettings=saveSystemGreetingSettings; window.canManageSystemIdentitySettings=canManageSystemIdentitySettings; window.applySettingsPermissionUi=applySettingsPermissionUi;
+window.updateAnnouncementCharacterCounter=updateAnnouncementCharacterCounter; window.normalizeSystemIdentitySettings=normalizeSystemIdentitySettings; window.applySystemIdentityToUI=applySystemIdentityToUI; window.renderLoginBranding=renderLoginBranding; window.renderSidebarBranding=renderSidebarBranding; window.refreshPublicSystemSettings=refreshPublicSystemSettings; window.setPublicSystemSettings=setPublicSystemSettings; window.loadSystemIdentitySettingsForSettings=loadSystemIdentitySettingsForSettings; window.saveSystemIdentitySettings=saveSystemIdentitySettings; window.savePersonalGreetingSettings=savePersonalGreetingSettings; window.saveSystemGreetingSettings=saveSystemGreetingSettings; window.canManageSystemIdentitySettings=canManageSystemIdentitySettings; window.applySettingsPermissionUi=applySettingsPermissionUi;

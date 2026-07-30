@@ -2040,3 +2040,360 @@ body.quotation-action-sheet-open{overflow:hidden;touch-action:none}
         scroll-behavior:auto;
     }
 }
+
+/* FINAL FIX V2: Keep company name complete on one line on desktop and mobile. */
+.sidebar-header {
+  position: relative !important;
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  min-height: 58px !important;
+  height: auto !important;
+  margin: 0 !important;
+  padding: 0 54px 0 0 !important;
+  overflow: visible !important;
+}
+
+.sidebar-brand {
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: visible !important;
+}
+
+#brandCompany {
+  display: block !important;
+  width: max-content !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  font-size: 20px !important;
+  line-height: 1.15 !important;
+  letter-spacing: 0 !important;
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  word-break: normal !important;
+  overflow-wrap: normal !important;
+}
+
+#brandApp {
+  display: block !important;
+  width: max-content !important;
+  max-width: none !important;
+  margin: 8px 0 0 !important;
+  padding: 0 !important;
+  font-size: 10px !important;
+  line-height: 1.2 !important;
+  letter-spacing: .22em !important;
+  white-space: nowrap !important;
+  overflow: visible !important;
+  word-break: normal !important;
+  overflow-wrap: normal !important;
+}
+
+.sidebar-header .sidebar-toggle {
+  position: absolute !important;
+  top: 0 !important;
+  right: 0 !important;
+  left: auto !important;
+  margin: 0 !important;
+  width: 44px !important;
+  min-width: 44px !important;
+  height: 44px !important;
+  min-height: 44px !important;
+  z-index: 2 !important;
+}
+
+@media (max-width: 900px) {
+  .sidebar,
+  .sidebar.open {
+    gap: 20px !important;
+  }
+
+  .sidebar-header,
+  .sidebar.open .sidebar-header {
+    padding-right: 54px !important;
+  }
+
+  #brandCompany {
+    font-size: 20px !important;
+  }
+
+  #brandApp {
+    font-size: 10px !important;
+  }
+
+  .sidebar .nav,
+  .sidebar.open .nav {
+    position: static !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border-top: 0 !important;
+    transform: none !important;
+  }
+}
+
+@media (max-width: 380px) {
+  #brandCompany {
+    font-size: 19px !important;
+  }
+
+  #brandApp {
+    font-size: 9px !important;
+    letter-spacing: .18em !important;
+  }
+}
+
+/* FINAL MINI SIDEBAR FIX:
+   Hide branding and center the toggle only in collapsed desktop mode. */
+@media (min-width: 901px) {
+  .app.sidebar-mini .sidebar-header {
+    position: static !important;
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    justify-items: center !important;
+    align-items: start !important;
+    width: 100% !important;
+    min-height: 52px !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  .app.sidebar-mini .sidebar-brand {
+    display: none !important;
+  }
+
+  .app.sidebar-mini .sidebar-header .sidebar-toggle {
+    position: static !important;
+    top: auto !important;
+    right: auto !important;
+    left: auto !important;
+    justify-self: center !important;
+    align-self: start !important;
+    margin: 0 auto !important;
+  }
+}
+
+/* COMPACT MOBILE SIDEBAR:
+   Natural header height with balanced spacing before navigation. */
+@media (max-width: 900px) {
+  .sidebar,
+  .sidebar.open {
+    gap: 0 !important;
+  }
+
+  .sidebar-header,
+  .sidebar.open .sidebar-header {
+    min-height: 48px !important;
+    height: auto !important;
+    padding: 0 54px 0 0 !important;
+    margin: 0 !important;
+  }
+
+  .sidebar .nav,
+  .sidebar.open .nav {
+    margin-top: 18px !important;
+    padding-top: 0 !important;
+  }
+}
+
+@media (max-width: 380px) {
+  .sidebar-header,
+  .sidebar.open .sidebar-header {
+    min-height: 46px !important;
+  }
+
+  .sidebar .nav,
+  .sidebar.open .nav {
+    margin-top: 16px !important;
+  }
+}
+
+/* RESPONSIVE SCROLL FIX:
+   Horizontal scrolling is mobile-only. Desktop/tablet uses normal grids. */
+@media (min-width: 769px) {
+  html,
+  body,
+  .app,
+  .main,
+  .page {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .ds-horizontal-scroll {
+    display: grid !important;
+    flex-wrap: initial !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: visible !important;
+    overflow-y: visible !important;
+    scroll-snap-type: none !important;
+    scroll-behavior: auto !important;
+    overscroll-behavior-x: auto !important;
+    touch-action: auto !important;
+    padding-bottom: 0 !important;
+  }
+
+  .ds-horizontal-scroll > * {
+    width: auto !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    flex: initial !important;
+    scroll-snap-align: none !important;
+  }
+
+  .dashboard-kpi-grid.ds-horizontal-scroll {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  }
+
+  .dashboard-widget-grid.ds-horizontal-scroll {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .dashboard-widget-list.ds-horizontal-scroll {
+    grid-template-columns: 1fr !important;
+  }
+
+  .dashboard-best-products.ds-horizontal-scroll {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .promotion-summary-grid.ds-horizontal-scroll {
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  }
+
+  .promotion-grid.ds-horizontal-scroll {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)) !important;
+    align-items: stretch !important;
+  }
+
+  .promotion-summary-grid.ds-horizontal-scroll > .promotion-summary-card,
+  .promotion-grid.ds-horizontal-scroll > .promotion-card {
+    width: auto !important;
+    max-width: 100% !important;
+  }
+
+  .favorite-grid {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)) !important;
+    overflow-x: visible !important;
+    overflow-y: visible !important;
+    scroll-snap-type: none !important;
+    padding-bottom: 0 !important;
+  }
+
+  .favorite-grid > .favorite-card {
+    width: auto !important;
+    max-width: 100% !important;
+    flex: initial !important;
+    scroll-snap-align: none !important;
+  }
+
+  .quote-preference-list {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)) !important;
+    overflow-x: visible !important;
+    overflow-y: visible !important;
+    scroll-snap-type: none !important;
+    padding-bottom: 0 !important;
+  }
+
+  .quote-preference-list > .quote-product-pref-card {
+    width: auto !important;
+    max-width: 100% !important;
+    flex: initial !important;
+    scroll-snap-align: none !important;
+  }
+}
+
+/* Mobile-only horizontal scrolling. */
+@media (max-width: 768px) {
+  .ds-horizontal-scroll {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    gap: 12px !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scroll-snap-type: x proximity !important;
+    -webkit-overflow-scrolling: touch !important;
+    overscroll-behavior-x: contain !important;
+    touch-action: pan-x pan-y !important;
+    padding-bottom: 10px !important;
+  }
+
+  .ds-horizontal-scroll > * {
+    flex: 0 0 auto !important;
+    scroll-snap-align: start !important;
+  }
+
+  .promotion-summary-grid.ds-horizontal-scroll > .promotion-summary-card {
+    width: min(320px, 78vw) !important;
+  }
+
+  .promotion-grid.ds-horizontal-scroll > .promotion-card {
+    width: min(340px, 86vw) !important;
+  }
+
+  .dashboard-kpi-grid.ds-horizontal-scroll > .stat {
+    width: min(240px, 76vw) !important;
+  }
+
+  .dashboard-widget-grid.ds-horizontal-scroll > .card {
+    width: min(360px, 88vw) !important;
+  }
+}
+
+/* STICKY SIDEBAR FIX:
+   Keep desktop grid behavior without breaking sticky sidebar. */
+@media (min-width: 769px) {
+  html,
+  body {
+    max-width: 100%;
+    overflow-x: clip !important;
+  }
+
+  .app,
+  .main,
+  .page {
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .app {
+    overflow: visible !important;
+  }
+
+  .main,
+  .page {
+    overflow-x: visible !important;
+  }
+
+  .sidebar {
+    position: sticky !important;
+    top: 0 !important;
+    align-self: flex-start !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+/* System announcement setting and Home News rendering */
+#homeAnnouncementText{white-space:pre-line;overflow-wrap:anywhere;word-break:break-word}
+.announcement-setting-field textarea{min-height:112px;resize:vertical;line-height:1.55}
+.field-help-row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.field-help,.field-counter{color:var(--muted);font-size:12px;line-height:1.45}
+.field-counter{flex:0 0 auto;font-variant-numeric:tabular-nums}
+@media(max-width:480px){.field-help-row{gap:8px}.announcement-setting-field textarea{min-height:128px}}

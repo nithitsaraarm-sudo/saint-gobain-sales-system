@@ -281,3 +281,32 @@ Runtime/manual tests are blocked in this local environment because:
 - Physical/real iPhone Safari, Android Chrome, and installed PWA sessions are not available through repository-only tools.
 
 These blocked tests must be executed during UAT and production smoke phases before a final production Go decision.
+## Announcement/News setting addendum — 2026-07-30
+
+The following static checks were executed against the provided frontend files. Runtime/API/device tests remain blocked because the Apps Script backend, deployed API, Google Sheet, credentials, and device sessions were not included.
+
+| Test ID | Module | Priority | Test type | Applicable roles | Steps | Expected result | Actual result | Status |
+|---|---|---|---|---|---|---|---|---|
+| ANN-STATIC-001 | SETTINGS | P1 | Static check | SUPER_ADMIN | Inspect settings markup. | Dedicated textarea has id `setAnnouncementText`, rows 4, maxlength 500, required placeholder, helper text, and accessible counter. | All required markers found. | Static Check Passed |
+| ANN-STATIC-002 | HOME | P1 | Static check | All authenticated roles | Inspect Home renderer. | Home News reads only `DB.settings.announcementText`, uses `textContent`, and shows the required empty state. | Announcement no longer reads `welcomeText`; required empty state found. | Static Check Passed |
+| ANN-STATIC-003 | SETTINGS | P1 | Static check | SUPER_ADMIN | Inspect save handler. | Payload includes trimmed `announcementText`; empty value allowed; duplicate submissions prevented; failed save does not clear fields; button state restored. | Required payload, trim, validation, guard, and finally-state logic found. | Static Check Passed |
+| ANN-STATIC-004 | SECURITY | P0 | Static check | All | Inspect rendering and CSS. | HTML/script-like input is displayed as plain text; line breaks wrap safely. | Renderer assigns `textContent`; CSS uses `white-space: pre-line` and `overflow-wrap: anywhere`. | Static Check Passed |
+| ANN-STATIC-005 | CACHE | P1 | Static check | SUPER_ADMIN | Inspect successful save path. | Relevant bootstrap cache is invalidated and Home re-renders after save. | Existing `invalidateBootstrapApiCache()` / `sg_bootstrap_cache` fallback retained after successful save. | Static Check Passed |
+| ANN-INT-001 | API/SETTINGS | P0 | Runtime integration | SUPER_ADMIN | Load, edit, save, reload through deployed API and inspect Settings storage. | Value persists and old Settings data without the field normalizes to empty string. | Not executed; backend/deployment unavailable. | Blocked |
+| ANN-RBAC-001 | RBAC | P0 | Runtime integration | Non-SUPER_ADMIN roles | Attempt settings write through UI and direct API. | UI is hidden/blocked and server rejects write. | Not executed; backend/credentials unavailable. | Blocked |
+| ANN-MAN-001 | UI/PWA | P1 | Manual browser/PWA | SUPER_ADMIN | Test Thai, English, emoji, multiline, empty, 500 chars, timeout failure on desktop/iPhone/Android/PWA. | Layout remains responsive; text persists on failure; counter/button states are correct. | Not executed; browser/device sessions unavailable. | Blocked |
+
+
+
+## Announcement Backend Patch Test Cases
+
+1. Save an announcement with 1-500 characters: expected success and persisted `announcementText` key.
+2. Save 501 characters: expected validation error and no data overwrite.
+3. Save blank/whitespace text: expected success and empty-state display on Home.
+4. Save text containing line breaks: expected preserved text and safe multiline rendering.
+5. Save text beginning with `=`, `+`, `-`, or `@`: expected validation error to prevent spreadsheet formula injection.
+6. Save text containing HTML/script markers: expected validation error.
+7. Load bootstrap as a non-super-admin authorized user: expected `announcementText` included while unrelated restricted setting keys remain filtered.
+8. Submit `updateSettings` without an object payload: expected controlled validation/auth response, not an unhandled exception.
+9. Regression: `welcomeText` and time-based greetings remain independent and unchanged.
+10. Regression: Settings sheet headers and existing key-value rows remain backward compatible.
