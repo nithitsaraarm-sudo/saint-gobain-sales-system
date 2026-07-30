@@ -76,6 +76,7 @@ function getBootstrapData(payload) {
         appName: getDefaultSystemSettings().appName,
         systemName: getDefaultSystemSettings().systemName,
         welcomeText: 'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ',
+        announcementText: '',
         vatRate: 7
       },
       counts: {
@@ -247,6 +248,7 @@ function getDefaultSystemSettings() {
     appName: 'SALES SYSTEM',
     systemName: 'SALES SYSTEM',
     welcomeText: '',
+    announcementText: '',
     greetingMorning: '',
     greetingAfternoon: '',
     greetingEvening: '',
@@ -283,9 +285,29 @@ function getSystemSettings() {
   }
 }
 
+function validateAnnouncementText_(value) {
+  const text = String(value === null || value === undefined ? '' : value).trim();
+  if (text.length > 500) {
+    return validationError('announcementText must be 500 characters or less');
+  }
+  if (/^[=+\-@]/.test(text)) {
+    return validationError('announcementText must not begin with a spreadsheet formula character');
+  }
+  if (/[<>]/.test(text) || /<\/?[a-z][\s\S]*>/i.test(text) || /script/i.test(text)) {
+    return validationError('announcementText must not contain HTML or script');
+  }
+  return success(text);
+}
+
 function saveSystemSettings(payload, user) {
   try {
-    const allowedKeys = ['welcomeText', 'greetingMorning', 'greetingAfternoon', 'greetingEvening', 'greetingNight', 'vatRate'];
+    const data = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+    if (data.announcementText !== undefined) {
+      const announcementResult = validateAnnouncementText_(data.announcementText);
+      if (!announcementResult.ok) return announcementResult;
+      data.announcementText = announcementResult.data;
+    }
+    const allowedKeys = ['welcomeText', 'announcementText', 'greetingMorning', 'greetingAfternoon', 'greetingEvening', 'greetingNight', 'vatRate'];
     const sheet = ensureSheet(SETTINGS_SHEET, getHeadersForSheet(SETTINGS_SHEET));
     if (!sheet) return fail('Unable to access Settings sheet');
     ensureSettingsSheetColumns_(sheet);
@@ -298,8 +320,8 @@ function saveSystemSettings(payload, user) {
     });
     const now = new Date().toISOString();
     allowedKeys.forEach(function (key) {
-      if (payload[key] === undefined) return;
-      const value = key === 'vatRate' ? String(parseNumericValue(payload[key] || 7) || 7) : String(payload[key] || '').trim();
+      if (data[key] === undefined) return;
+      const value = key === 'vatRate' ? String(parseNumericValue(data[key] || 7) || 7) : String(data[key] || '').trim();
       upsertSystemSettingRow_(sheet, existingKeys, key, value, {
         type: key === 'vatRate' ? 'NUMBER' : 'STRING',
         category: key === 'vatRate' ? 'SYSTEM' : 'SYSTEM_GREETING',
@@ -429,7 +451,7 @@ function filterSettingsForUser_(settings, user) {
   filtered.systemName = String(source.systemName || source.SYSTEM_NAME || source.appName || getDefaultSystemSettings().systemName).trim() || getDefaultSystemSettings().systemName;
   filtered.appName = filtered.systemName;
   if (!hasRole(user, [USER_ROLES.SUPER_ADMIN])) {
-    const allowedKeys = ['companyName', 'systemName', 'appName', 'welcomeText', 'greetingMorning', 'greetingAfternoon', 'greetingEvening', 'greetingNight', 'vatRate', 'salesTarget', 'target', 'monthlyTarget'];
+    const allowedKeys = ['companyName', 'systemName', 'appName', 'welcomeText', 'announcementText', 'greetingMorning', 'greetingAfternoon', 'greetingEvening', 'greetingNight', 'vatRate', 'salesTarget', 'target', 'monthlyTarget'];
     Object.keys(filtered).forEach(function (key) {
       if (allowedKeys.indexOf(key) < 0) {
         delete filtered[key];

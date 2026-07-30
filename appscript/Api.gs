@@ -150,6 +150,8 @@ function api(action, payload) {
         return authorizeAction(savePromotion, [payload]);
       case 'updateSettings':
         if (!permissions.canManageSettings) return forbidden('Insufficient permission');
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) payload = {};
+        payload.currentUser = user;
         return authorizeAction(updateSettings, [payload]);
       case 'getSystemIdentitySettings':
         if (!hasRole(user, [USER_ROLES.SUPER_ADMIN])) return getSuperAdminOnlySystemIdentityError_();

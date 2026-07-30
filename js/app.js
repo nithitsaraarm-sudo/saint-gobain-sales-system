@@ -1,5 +1,7 @@
 const SYSTEM_IDENTITY_FALLBACK={companyName:'SAINT-GOBAIN',systemName:'SALES SYSTEM',appName:'SALES SYSTEM'};
 const PUBLIC_SETTINGS_CACHE_KEY='sg_public_settings_cache';
+const ANNOUNCEMENT_TEXT_MAX_LENGTH=500;
+const ANNOUNCEMENT_EMPTY_STATE='ยังไม่มีข่าวสารหรือประกาศจากระบบ';
 window.appState=window.appState||{};
 window.appState.publicSettings=normalizeSystemIdentitySettings(window.appState.publicSettings||SYSTEM_IDENTITY_FALLBACK);
 let DB=normalizeDb(), USER=null, CART=[], selectedCustomerId='';
@@ -29,6 +31,43 @@ const SIDEBAR_MODE_STORAGE_KEY='sidebarMode';
 const SIDEBAR_MINI_STORAGE_KEY='sg_sidebar_mini';
 const SIDEBAR_MODE_EXPANDED='expanded';
 const SIDEBAR_MODE_MINI='mini';
+const APP_DEFAULT_PAGE='home';
+const NAVIGATION_LABELS=Object.freeze({
+  home:'หน้าหลัก',
+  dashboard:'Dashboard',
+  newQuotation:'ออกใบเสนอราคา',
+  customers:'ร้านค้า',
+  products:'สินค้า',
+  promotions:'โปรโมชั่น',
+  quotationHistory:'ประวัติใบเสนอราคา',
+  users:'ผู้ใช้งาน',
+  reports:'รายงาน',
+  settings:'ตั้งค่า'
+});
+const NAVIGATION_ITEMS=Object.freeze([
+  Object.freeze({id:'home',route:'home',labelKey:'home',iconSrc:'assets/icons/sidebar/home.png'}),
+  Object.freeze({id:'dashboard',route:'dashboard',labelKey:'dashboard',iconSrc:'assets/icons/sidebar/dashboard.png'}),
+  Object.freeze({id:'newQuotation',route:'quote',labelKey:'newQuotation',iconSrc:'assets/icons/sidebar/create-quotation.png'}),
+  Object.freeze({id:'customers',route:'customers',labelKey:'customers',iconSrc:'assets/icons/sidebar/customer.png'}),
+  Object.freeze({id:'products',route:'products',labelKey:'products',iconSrc:'assets/icons/sidebar/product.png'}),
+  Object.freeze({id:'promotions',route:'promos',labelKey:'promotions',iconSrc:'assets/icons/sidebar/promotion.png'}),
+  Object.freeze({id:'quotationHistory',route:'quotes',labelKey:'quotationHistory',iconSrc:'assets/icons/sidebar/quotation-history.png'}),
+  Object.freeze({id:'users',route:'users',labelKey:'users',iconSrc:'assets/icons/sidebar/users.png'}),
+  Object.freeze({id:'reports',route:'report',labelKey:'reports',iconSrc:'assets/icons/sidebar/reports.png'}),
+  Object.freeze({id:'settings',route:'settings',labelKey:'settings',iconSrc:'assets/icons/sidebar/settings.png'})
+]);
+const NAVIGATION_PAGE_LABEL_KEYS=Object.freeze({
+  home:'home',
+  dashboard:'dashboard',
+  quote:'newQuotation',
+  customers:'customers',
+  products:'products',
+  promos:'promotions',
+  quotes:'quotationHistory',
+  users:'users',
+  report:'reports',
+  settings:'settings'
+});
 const PINNED_PRODUCTS_COLLAPSED_KEY='sg_pinned_products_collapsed';
 const FAVORITE_PRODUCTS_COLLAPSED_KEY='sg_favorite_products_collapsed';
 const PRODUCT_PROMOTIONS_CACHE_KEY='sg_product_promotions_cache';
@@ -36,6 +75,100 @@ const PRODUCT_PROMO_CACHE_SCHEMA_KEY='sg_product_promo_cache_schema';
 const PRODUCT_PROMO_CACHE_SCHEMA_VERSION='4';
 const $=id=>document.getElementById(id); const money=n=>Number(n||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
 let sidebarDrawerFocusReturn=null, sidebarDrawerHistoryPushed=false, sidebarDrawerClosingFromHistory=false;
+let appRouteSyncing=false, appRouteBound=false;
+let navigationConfigValidated=false;
+
+function getNavigationLabel(labelKey,fallback){
+  const key=String(labelKey||'').trim();
+  return NAVIGATION_LABELS[key]||String(fallback||key||'').trim();
+}
+
+function getNavigationLabelForPage(page,fallback){
+  const target=normalizeAppPageRoute(page);
+  return getNavigationLabel(NAVIGATION_PAGE_LABEL_KEYS[target],fallback||target);
+}
+
+function getNavigationRoute(item){
+  const data=item&&typeof item==='object'?item:{};
+  return normalizeAppPageRoute(data.route||data.page||data.id||'');
+}
+
+function getNavigationButtonRoute(button){
+  const data=button&&button.dataset?button.dataset:{};
+  return normalizeAppPageRoute(data.route||data.page||'');
+}
+
+function getNavigationItemForPage(page){
+  const target=normalizeAppPageRoute(page);
+  return NAVIGATION_ITEMS.find(item=>getNavigationRoute(item)===target)||null;
+}
+
+function validateNavigationConfiguration(){
+  if(navigationConfigValidated)return;
+  navigationConfigValidated=true;
+  const routes=new Set();
+  NAVIGATION_ITEMS.forEach(item=>{
+    const route=getNavigationRoute(item);
+    if(!route){
+      console.warn('[NAV] Missing route in navigation item:',item);
+      return;
+    }
+    if(routes.has(route)){
+      console.warn('[NAV] Duplicate sidebar route:',route,item);
+    }
+    routes.add(route);
+    if(typeof document!=='undefined'&&!document.getElementById('page-'+route)){
+      console.warn('[NAV] Sidebar route has no matching page:',route,item);
+    }
+  });
+}
+
+function renderSidebarNavigation(){
+  const nav=document.getElementById('mainNavigation')||document.querySelector('.nav');
+  if(!nav)return;
+  validateNavigationConfiguration();
+  const activePage=getActivePageName()||APP_DEFAULT_PAGE;
+  nav.innerHTML=NAVIGATION_ITEMS.map(item=>{
+    const id=String(item.id||item.labelKey||item.route||'').trim();
+    const page=getNavigationRoute(item);
+    const label=getNavigationLabel(item.labelKey,page);
+    const active=page===normalizeAppPageRoute(activePage)?' class="active"':'';
+    return `<button type="button"${active} data-nav-id="${htmlAttr(id)}" data-route="${htmlAttr(page)}" data-page="${htmlAttr(page)}" title="${htmlAttr(label)}" aria-label="${htmlAttr(label)}"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="${htmlAttr(item.iconSrc)}" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">${escapeHtml(label)}</span></button>`;
+  }).join('');
+}
+
+function bindSidebarNavigationEvents(){
+  const nav=document.getElementById('mainNavigation')||document.querySelector('.nav');
+  if(!nav||nav.dataset.navigationBound==='true')return;
+  nav.dataset.navigationBound='true';
+  nav.addEventListener('click',function(event){
+    const button=event.target&&event.target.closest?event.target.closest('button[data-route]'):null;
+    if(!button||!nav.contains(button))return;
+    event.preventDefault();
+    const route=getNavigationButtonRoute(button);
+    if(!route){
+      console.warn('[NAV] Missing route for sidebar item:',button);
+      return;
+    }
+    go(route,button);
+  });
+}
+
+function applyNavigationLabels(root){
+  const scope=root&&root.querySelectorAll?root:document;
+  scope.querySelectorAll('[data-nav-label]').forEach(element=>{
+    const label=getNavigationLabel(element.getAttribute('data-nav-label'),element.textContent);
+    if(label)element.textContent=label;
+  });
+  scope.querySelectorAll('[data-nav-title]').forEach(element=>{
+    const label=getNavigationLabel(element.getAttribute('data-nav-title'),element.getAttribute('title')||element.textContent);
+    if(label)element.title=label;
+  });
+  scope.querySelectorAll('[data-nav-aria-label]').forEach(element=>{
+    const label=getNavigationLabel(element.getAttribute('data-nav-aria-label'),element.getAttribute('aria-label')||element.textContent);
+    if(label)element.setAttribute('aria-label',label);
+  });
+}
 
 function notifyAppVersionUpdate(){
   if(typeof toast==='function'){
@@ -122,7 +255,7 @@ function resetAuthenticatedFrontendState(){
 
 function checkAppVersion(){
   try{
-    const newVersion=String(window.APP_VERSION||'0.5.41').trim();
+    const newVersion=String(window.APP_VERSION||'0.5.47').trim();
     console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
     const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
     if(oldVersion===newVersion){
@@ -334,6 +467,7 @@ function normalizeDb(data){
   }
   const identity=normalizeSystemIdentitySettings(source.publicSettings||existing.publicSettings||window.appState?.publicSettings||source.settings||existing.settings||SYSTEM_IDENTITY_FALLBACK);
   const settings=Object.assign({},existing.settings||{},source.settings&&typeof source.settings==='object'?source.settings:{},identity);
+  settings.announcementText=String(settings.announcementText??'');
   window.appState.publicSettings=identity;
   return {
     ...source,
@@ -881,6 +1015,8 @@ function enhanceSidebarNavItems(){
 }
 
 function setupSidebarToggle(){
+  renderSidebarNavigation();
+  bindSidebarNavigationEvents();
   enhanceSidebarNavItems();
   placeSidebarToggleButton();
   if(isMobileSidebar()){
@@ -924,6 +1060,7 @@ function showApp(){
   document.getElementById('appView').classList.remove('hidden');
   renderAll();
   setupSidebarToggle();
+  initializeAppRoute();
 }
 
 function hydrateBootstrapFromCache(){
@@ -987,8 +1124,118 @@ async function loadData(options){
   return bootstrapPromise;
 }
 function toggleMenu(open){placeSidebarToggleButton();if(isMobileSidebar()){const sidebar=document.getElementById('sidebar');const next=typeof open==='boolean'?open:!sidebar?.classList.contains('open');setSidebarDrawer(next);return;}if(open===false)return;setSidebarMini(!isSidebarMini())}
-function go(page,btn){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active')); document.getElementById('page-'+page).classList.add('active'); document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('active')); if(btn)btn.classList.add('active'); if(isMobileSidebar())toggleMenu(false); window.scrollTo({top:0,behavior:'smooth'}); const pageData=ensurePageData(page); if(page==='quotes')ensureQuotationHistoryLoaded(); return pageData;}
-function renderAll(){renderBrand();renderProfile();renderHome();renderPromos();renderSettings();}
+function normalizeAppPageRoute(page){
+  const raw=String(page||'').trim().replace(/^#/,'').replace(/^page-/,'').split(/[?&]/)[0];
+  const route=raw.toLowerCase();
+  if(!route)return APP_DEFAULT_PAGE;
+  if(route==='dashboard'||route==='dash'||route==='kpi')return 'dashboard';
+  if(route==='home'||route==='main'||route==='หน้าหลัก')return 'home';
+  return route;
+}
+function getRequestedPageFromLocation(){
+  const hash=String(window.location&&window.location.hash||'').trim();
+  if(hash){
+    try{
+      return normalizeAppPageRoute(decodeURIComponent(hash.replace(/^#/,'')));
+    }catch(error){
+      return normalizeAppPageRoute(hash.replace(/^#/,''));
+    }
+  }
+  try{
+    const params=new URLSearchParams(window.location.search||'');
+    const page=params.get('page')||params.get('route');
+    return page?normalizeAppPageRoute(page):'';
+  }catch(error){
+    return '';
+  }
+}
+function getNavButtonForPage(page){
+  const target=normalizeAppPageRoute(page);
+  return Array.from(document.querySelectorAll('.nav button[data-route],.nav button[data-page]')).find(button=>getNavigationButtonRoute(button)===target)||null;
+}
+function getActivePageName(){
+  const active=document.querySelector('.page.active');
+  return active&&active.id?normalizeAppPageRoute(active.id):'';
+}
+function setAppPageRoute(page,options){
+  const opts=options||{};
+  if(opts.skipRoute)return;
+  const target=normalizeAppPageRoute(page);
+  const nextHash='#'+encodeURIComponent(target);
+  if(window.location.hash===nextHash)return;
+  appRouteSyncing=true;
+  try{
+    if(window.history&&window.history.pushState){
+      const state=Object.assign({},window.history.state||{},{sgPage:target});
+      if(opts.replaceRoute)window.history.replaceState(state,'',nextHash);
+      else window.history.pushState(state,'',nextHash);
+    }else{
+      window.location.hash=nextHash;
+    }
+  }catch(error){
+    try{window.location.hash=nextHash}catch(hashError){}
+  }
+  window.setTimeout(()=>{appRouteSyncing=false;},0);
+}
+function syncAppRouteFromLocation(){
+  if(appRouteSyncing){
+    appRouteSyncing=false;
+    return;
+  }
+  const requested=getRequestedPageFromLocation()||APP_DEFAULT_PAGE;
+  if(requested!==getActivePageName()){
+    go(requested,getNavButtonForPage(requested),{skipRoute:true});
+  }
+}
+function bindAppRouteEvents(){
+  if(appRouteBound)return;
+  appRouteBound=true;
+  window.addEventListener('popstate',syncAppRouteFromLocation);
+  window.addEventListener('hashchange',syncAppRouteFromLocation);
+}
+function initializeAppRoute(){
+  bindAppRouteEvents();
+  const requested=getRequestedPageFromLocation();
+  const target=requested||APP_DEFAULT_PAGE;
+  go(target,getNavButtonForPage(target),{replaceRoute:true});
+}
+function go(page,btn,options){
+  const target=normalizeAppPageRoute(page);
+  const pageEl=document.getElementById('page-'+target);
+  if(!pageEl){
+    console.warn('[NAV] Page not found:',target);
+    return {ok:false,message:'Page not found',page:target};
+  }
+
+  const routeOptions=Object.assign({},options||{});
+  const sidebar=document.getElementById('sidebar');
+  const mobileDrawerOpen=isMobileSidebar()&&!!sidebar?.classList.contains('open');
+
+  /*
+   * The mobile drawer adds a temporary history entry when opened.
+   * Do not call toggleMenu(false) after pushing the destination route,
+   * because setSidebarDrawer(false) would call history.back() and undo
+   * the navigation. Close the drawer state first and replace its temporary
+   * history entry with the destination route.
+   */
+  if(mobileDrawerOpen){
+    setSidebarDrawer(false,{fromHistory:true,restoreFocus:false});
+    routeOptions.replaceRoute=true;
+  }
+
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  pageEl.classList.add('active');
+  document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('active'));
+  const passedButton=btn&&getNavigationButtonRoute(btn)===target?btn:null;
+  const navButton=passedButton||getNavButtonForPage(target);
+  if(navButton)navButton.classList.add('active');
+  setAppPageRoute(target,routeOptions);
+  window.scrollTo({top:0,behavior:'smooth'});
+  const pageData=ensurePageData(target);
+  if(target==='quotes')ensureQuotationHistoryLoaded();
+  return pageData;
+}
+function renderAll(){renderBrand();renderProfile();renderHome();renderDashboard();renderPromos();renderSettings();applyNavigationLabels();}
 function renderBrand(){applySystemIdentityToUI(getSystemIdentitySettingsForUi());}
 function greeting(){const personal=String(USER?.greetingText||'').trim(); if(personal)return personal; let h=new Date().getHours(),s=DB.settings||{}; if(h<12)return s.greetingMorning||'สวัสดีตอนเช้า'; if(h<17)return s.greetingAfternoon||'สวัสดีตอนบ่าย'; if(h<21)return s.greetingEvening||'สวัสดีตอนเย็น'; return s.greetingNight||'สวัสดีตอนดึก';}
 function getRawProfileImageUrl(user){const data=user&&typeof user==='object'?user:{};return String(data.profileImageUrl||data.profilePhotoUrl||data.avatarUrl||data.photoUrl||data.profileImage||'').trim()}
@@ -2966,7 +3213,7 @@ function isCancelledQuote(quote){
   return normalizeDashboardStatus(quote.status)==='CANCELLED';
 }
 function ensureDashboardLayout(){
-  const page=$('page-home');
+  const page=$('page-dashboard');
   if(!page)return null;
   let root=$('dashboardContent');
   if(!root){
@@ -3051,7 +3298,12 @@ function buildDashboardMetrics(){
     }
   });
   const noRecentCustomers=(Array.isArray(DB.customers)?DB.customers:[]).filter(c=>!recentQuoteCustomerIds[String(c.customerId||c.customerCode||'').trim()]).slice(0,5);
-  return {quotes,lines,target,actual,forecast,achievement,gap,bu,newCustomers,draft,saved,cancelled,topCustomers,topProducts,openQuoteCustomers,noRecentCustomers};
+  const dashboardCustomers=(Array.isArray(DB.customers)?DB.customers:[]).map(normalizeCustomer);
+  const totalCustomers=dashboardCustomers.length||parseClientNumber(DB.counts?.customers);
+  const activeCustomers=dashboardCustomers.filter(customer=>customer.active!==false).length;
+  const inactiveCustomers=dashboardCustomers.filter(customer=>customer.active===false).length;
+  const customerKpi={total:totalCustomers,active:activeCustomers,inactive:inactiveCustomers,newCustomers};
+  return {quotes,lines,target,actual,forecast,achievement,gap,bu,newCustomers,draft,saved,cancelled,topCustomers,topProducts,openQuoteCustomers,noRecentCustomers,customerKpi};
 }
 function renderDashboardList(items, renderer, emptyText){
   const list=Array.isArray(items)?items:[];
@@ -3141,6 +3393,150 @@ function renderHome(){
     ensureQuotationHistoryLoaded();
   }
 }
+
+function renderDashboardKpiCard(icon,title,value,caption){
+  return `<div class="stat dashboard-kpi dashboard-kpi-card"><div class="ico">${escapeHtml(icon)}</div><h3>${dashboardText(title)}</h3><b>${dashboardText(value,'0')}</b><small>${dashboardText(caption)}</small></div>`;
+}
+function renderDashboardSection(title,subtitle,trackHtml,options){
+  const data=options||{};
+  const action=data.actionLabel&&data.actionPage?`<button type="button" class="tiny dashboard-section__action" onclick="go('${htmlAttr(data.actionPage)}')" aria-label="${htmlAttr(data.actionAria||data.actionLabel)}">${escapeHtml(data.actionLabel)}</button>`:'';
+  const trackClass=data.trackClass?` ${htmlAttr(data.trackClass)}`:'';
+  return `<section class="dashboard-section" aria-labelledby="${htmlAttr(data.id)}-title">
+    <div class="dashboard-section__header">
+      <div class="dashboard-section__heading">
+        <h2 id="${htmlAttr(data.id)}-title">${dashboardText(title)}</h2>
+        ${subtitle?`<p>${dashboardText(subtitle)}</p>`:''}
+      </div>
+      ${action}
+    </div>
+    <div class="dashboard-section__track${trackClass}" tabindex="0" aria-label="${htmlAttr(title)}">${trackHtml}</div>
+  </section>`;
+}
+function renderDashboardMetricCards(items){
+  return (Array.isArray(items)?items:[]).map(item=>renderDashboardKpiCard(item.icon,item.title,item.value,item.caption)).join('');
+}
+function renderDashboardTopList(items,renderer,emptyText){
+  const list=Array.isArray(items)?items:[];
+  if(!list.length)return `<div class="dashboard-list-card dashboard-empty">${dashboardText(emptyText,'-')}</div>`;
+  return list.map(renderer).join('');
+}
+function getHomeQuickActionDefinitions(){
+  return [
+    {page:'quote',icon:'📝',labelKey:'newQuotation',description:'สร้างใบเสนอราคาใหม่'},
+    {page:'customers',icon:'🏪',labelKey:'customers',description:'ค้นหาและดูข้อมูลร้านค้า'},
+    {page:'products',icon:'📦',labelKey:'products',description:'ค้นหาสินค้าและราคา'},
+    {page:'promos',icon:'🏷️',labelKey:'promotions',description:'ดูโปรโมชั่นที่ใช้งาน'},
+    {page:'quotes',icon:'📁',labelKey:'quotationHistory',description:'ค้นหาและเปิดใบเสนอราคาเดิม'},
+    {page:'dashboard',icon:'📊',labelKey:'dashboard',description:'ดู KPI และภาพรวมธุรกิจ'}
+  ];
+}
+function renderHomeCommandCenter(){
+  const name=(currentDisplayName()||USER?.username||'-').split(' ')[0];
+  const fullName=currentDisplayName()||USER?.username||'-';
+  const userMeta=[currentRole()||'',getUserArea(USER)||''].filter(Boolean).join(' · ')||'-';
+  const setText=(id,value)=>{const el=$(id);if(el)el.textContent=value;};
+  setText('homeGreetingText',`${greeting()}, ${name} 👋`);
+  setText('homeWelcomeText',DB.settings?.welcomeText||'เลือกงานที่ต้องการเริ่มจากทางลัดด้านล่าง');
+  setText('homeUserName',fullName);
+  setText('homeUserMeta',userMeta);
+  setText('homeAppVersion',String(window.APP_VERSION||window.CACHE_VERSION||'-'));
+  const avatar=$('homeProfileAvatar');
+  if(avatar)renderProfileImageElement(avatar,currentProfileImage(),USER);
+  const announcement=String(DB.settings?.announcementText??'').trim();
+  setText('homeAnnouncementText',announcement||ANNOUNCEMENT_EMPTY_STATE);
+  const quickRoot=$('homeQuickActions');
+  if(quickRoot){
+    const actions=getHomeQuickActionDefinitions().filter(action=>canAccessPage(action.page));
+    quickRoot.innerHTML=actions.length?actions.map(action=>{const label=getNavigationLabel(action.labelKey,action.page);return `<button type="button" class="home-action-card" onclick="go('${htmlAttr(action.page)}')" aria-label="${htmlAttr(label)}"><span class="home-action-icon" aria-hidden="true">${escapeHtml(action.icon)}</span><span><b>${escapeHtml(label)}</b><small>${escapeHtml(action.description)}</small></span></button>`;}).join(''):'<p class="home-empty-state">ยังไม่มีทางลัดที่สิทธิ์ปัจจุบันเข้าใช้งานได้</p>';
+  }
+  const quoteButton=$('homePrimaryQuoteButton');
+  if(quoteButton){
+    const allowed=canAccessPage('quote');
+    quoteButton.hidden=!allowed;
+    quoteButton.disabled=!allowed;
+    quoteButton.setAttribute('aria-disabled',String(!allowed));
+  }
+  const summary=$('homeShortcutSummary');
+  if(summary){
+    const customerCount=DB.customers.length||parseClientNumber(DB.counts?.customers);
+    const productCount=DB.products.length||parseClientNumber(DB.counts?.products);
+    const quoteCount=(Array.isArray(DB.quotes)?DB.quotes:[]).length;
+    summary.innerHTML=[
+      `<span><b>${dashboardText(customerCount||0)}</b><small>ร้านค้า</small></span>`,
+      `<span><b>${dashboardText(productCount||0)}</b><small>สินค้า</small></span>`,
+      `<span><b>${dashboardText(quoteCount||0)}</b><small>ใบเสนอราคา</small></span>`
+    ].join('');
+  }
+}
+function renderHomeDashboardRedesign(){
+  const name=(currentDisplayName()||'-').split(' ')[0];
+  const customerCount=DB.customers.length||parseClientNumber(DB.counts?.customers);
+  const productCount=DB.products.length||parseClientNumber(DB.counts?.products);
+  const greetingEl=$('dashboardGreetingText');
+  const welcomeEl=$('dashboardWelcomeText');
+  if(greetingEl)greetingEl.textContent=`${greeting()}, ${name} 👋`;
+  if(welcomeEl)welcomeEl.textContent=DB.settings?.welcomeText||'-';
+  const root=ensureDashboardLayout();
+  const metrics=buildDashboardMetrics();
+  const customerKpi=metrics.customerKpi||{};
+  if(root){
+    const salesCards=renderDashboardMetricCards([
+      {icon:'🎯',title:'Target',value:dashboardMoney(metrics.target),caption:'เป้าหมายยอดขาย'},
+      {icon:'💰',title:'Actual',value:dashboardMoney(metrics.actual),caption:'ยอดจริงจากใบเสนอราคา'},
+      {icon:'📈',title:'Forecast',value:dashboardMoney(metrics.forecast),caption:'ประมาณการจากข้อมูลปัจจุบัน'},
+      {icon:'✅',title:'Achievement',value:(metrics.achievement?metrics.achievement.toFixed(1):'0.0')+'%',caption:'Actual / Target'}
+    ]);
+    const businessCards=renderDashboardMetricCards([
+      {icon:'🔷',title:'Gyproc total',value:dashboardMoney(metrics.bu.Gyproc),caption:'มูลค่าสินค้า Gyproc'},
+      {icon:'🟨',title:'Weber total',value:dashboardMoney(metrics.bu.Weber),caption:'มูลค่าสินค้า Weber'},
+      {icon:'📄',title:'Quotation value',value:dashboardMoney(metrics.actual),caption:'มูลค่ารวมใบเสนอราคา'},
+      {icon:'👤',title:'New customer',value:customerKpi.newCustomers||0,caption:'ลูกค้าใหม่ 30 วันล่าสุด'}
+    ]);
+    const quotationCards=renderDashboardMetricCards([
+      {icon:'🧾',title:'Total quotation',value:metrics.quotes.length,caption:'ใบเสนอราคาทั้งหมด'},
+      {icon:'💵',title:'Total value',value:dashboardMoney(metrics.actual),caption:'ไม่รวมรายการยกเลิก'},
+      {icon:'✏️',title:'Draft',value:metrics.draft.length,caption:'สถานะ DRAFT'},
+      {icon:'✅',title:'Saved',value:metrics.saved.length,caption:'สถานะ SAVED'},
+      {icon:'⛔',title:'Cancelled',value:metrics.cancelled.length,caption:'สถานะ CANCELLED'}
+    ]);
+    const customerCards=renderDashboardMetricCards([
+      {icon:'🏪',title:'Total customer',value:customerKpi.total||customerCount||0,caption:'ร้านค้าทั้งหมด'},
+      {icon:'🟢',title:'Active customer',value:customerKpi.active||0,caption:'ร้านค้าที่เปิดใช้งาน'},
+      {icon:'✨',title:'New customer',value:customerKpi.newCustomers||0,caption:'ลูกค้าใหม่ 30 วันล่าสุด'},
+      {icon:'⚪',title:'Inactive customer',value:customerKpi.inactive||0,caption:'ร้านค้าที่ปิดใช้งาน'}
+    ]);
+    const topProducts=renderDashboardTopList(metrics.topProducts,item=>`<article class="dashboard-list-card"><h3>${dashboardText(item.name)}</h3><b>${dashboardMoney(item.value)}</b><small>จำนวน ${dashboardText(item.qty||0)}</small></article>`,'ยังไม่มีสินค้าอันดับต้น');
+    const topCustomers=renderDashboardTopList(metrics.topCustomers,item=>`<article class="dashboard-list-card"><h3>${dashboardText(item.name)}</h3><b>${dashboardMoney(item.value)}</b><small>${dashboardText(item.count||0)} ใบเสนอราคา</small></article>`,'ยังไม่มีลูกค้าอันดับต้น');
+    root.innerHTML=[
+      renderDashboardSection('Sales KPI','เป้าหมาย ยอดจริง ประมาณการ และ Achievement',salesCards,{id:'dashboard-sales-kpi',trackClass:'dashboard-kpi-grid dashboard-section__track--kpi'}),
+      renderDashboardSection('Business KPI','สรุปตามแบรนด์และยอดรวมธุรกิจ',businessCards,{id:'dashboard-business-kpi',trackClass:'dashboard-section__track--compact'}),
+      renderDashboardSection('Quotation KPI','ใช้สถานะจริงที่มีในระบบปัจจุบัน',quotationCards,{id:'dashboard-quotation-kpi',trackClass:'dashboard-section__track--compact'}),
+      renderDashboardSection('Customer KPI','สรุปจากข้อมูลร้านค้าที่โหลดอยู่',customerCards,{id:'dashboard-customer-kpi',trackClass:'dashboard-section__track--compact'}),
+      renderDashboardSection('Top Product','สินค้าที่มีมูลค่าสูงสุดจากรายการใบเสนอราคา',topProducts,{id:'dashboard-top-product',trackClass:'dashboard-section__track--top',actionLabel:'ดูทั้งหมด',actionPage:'products',actionAria:'ดูสินค้าทั้งหมด'}),
+      renderDashboardSection('Top Customer','ลูกค้าที่มีมูลค่าใบเสนอราคาสูงสุด',topCustomers,{id:'dashboard-top-customer',trackClass:'dashboard-section__track--top',actionLabel:'ดูทั้งหมด',actionPage:'customers',actionAria:'ดูลูกค้าทั้งหมด'})
+    ].join('');
+  }
+  const setText=(id,value)=>{const el=$(id); if(el)el.textContent=value;};
+  setText('statQuotes',metrics.quotes.length);
+  setText('statSales',Number(metrics.actual||0).toLocaleString('th-TH'));
+  setText('statCustomers',customerCount);
+  setText('statPending',metrics.draft.length);
+  setText('rProducts',productCount);
+  setText('rCustomers',customerCount);
+  const promotionSummary=PROMOTION_DASHBOARD.summary||buildPromotionDashboardSummary(getPromotionDashboardGroups());
+  setText('rPromos',promotionSummary.totalPromotions||0);
+  setText('rQuotes',metrics.quotes.length);
+  if(canViewPromotionsUi()&&!promotionDashboardLoaded&&!promotionDashboardPromise){
+    loadPromotionDashboard({background:true});
+  }
+  if(!quoteHistoryLoaded&&!quoteHistoryPromise&&(!Array.isArray(DB.quotes)||!DB.quotes.length)){
+    ensureQuotationHistoryLoaded();
+  }
+}
+function renderDashboard(){
+  renderHomeDashboardRedesign();
+}
+renderHome=renderHomeCommandCenter;
 function getQuoteSearchFields(){return ['quoteNo','quoteId','customerName','customerId','status','quoteType','businessUnit'];}
 function formatDateTime(value){
   if(!value)return '-';
@@ -3376,10 +3772,10 @@ async function saveProfile(){
 async function saveSettings(){return saveSystemGreetingSettings();}
 function renderHomeProfileSafe(){
   const name=(currentDisplayName()||'-').split(' ')[0];
-  const greetingEl=$('greetingText');
-  const welcomeEl=$('welcomeText');
+  const greetingEl=$('homeGreetingText');
+  const welcomeEl=$('homeWelcomeText');
   if(greetingEl)greetingEl.textContent=`${greeting()}, ${name} 👋`;
-  if(welcomeEl)welcomeEl.textContent=DB.settings?.welcomeText||'-';
+  if(welcomeEl)welcomeEl.textContent=DB.settings?.welcomeText||'เลือกงานที่ต้องการเริ่มจากทางลัดด้านล่าง';
 }
 
 const originalRenderHomeForSettings=renderHome;
@@ -3405,6 +3801,8 @@ renderSettings=function(){
   set('setCompany',identity.companyName);
   set('setAppName',identity.systemName);
   set('setWelcome',s.welcomeText);
+  set('setAnnouncementText',s.announcementText);
+  updateAnnouncementCharacterCounter();
   set('setMorning',s.greetingMorning);
   set('setAfternoon',s.greetingAfternoon);
   set('setEvening',s.greetingEvening);
@@ -3596,16 +3994,37 @@ saveProfile=async function(){
   }
 };
 
+
+function updateAnnouncementCharacterCounter(){
+  const input=$('setAnnouncementText');
+  const counter=$('setAnnouncementTextCounter');
+  if(!input||!counter)return;
+  const length=String(input.value||'').length;
+  counter.textContent=`${length}/${ANNOUNCEMENT_TEXT_MAX_LENGTH}`;
+  counter.setAttribute('aria-label',`ใช้ไป ${length} จาก ${ANNOUNCEMENT_TEXT_MAX_LENGTH} ตัวอักษร`);
+}
+
+function normalizeAnnouncementTextInput(value){
+  return String(value??'').trim();
+}
+
 async function saveSystemGreetingSettings(){
   const btn=$('saveSettingsBtn');
+  if(btn&&btn.disabled)return {ok:false,code:'DUPLICATE_SUBMISSION',message:'กำลังบันทึกข้อมูล'};
   try{
-    if(btn){btn.disabled=true;btn.textContent='กำลังบันทึก...';}
+    if(btn){btn.disabled=true;btn.setAttribute('aria-busy','true');btn.textContent='กำลังบันทึก...';}
+    const announcementText=normalizeAnnouncementTextInput($('setAnnouncementText')?.value||'');
+    if(announcementText.length>ANNOUNCEMENT_TEXT_MAX_LENGTH){
+      toast(`ข้อความข่าวสารต้องไม่เกิน ${ANNOUNCEMENT_TEXT_MAX_LENGTH} ตัวอักษร`);
+      return {ok:false,code:'VALIDATION_ERROR',message:'Announcement text is too long'};
+    }
     let p={
-      welcomeText: $('setWelcome')?.value||'',
-      greetingMorning: $('setMorning')?.value||'',
-      greetingAfternoon: $('setAfternoon')?.value||'',
-      greetingEvening: $('setEvening')?.value||'',
-      greetingNight: $('setNight')?.value||''
+      welcomeText: String($('setWelcome')?.value||'').trim(),
+      announcementText: announcementText,
+      greetingMorning: String($('setMorning')?.value||'').trim(),
+      greetingAfternoon: String($('setAfternoon')?.value||'').trim(),
+      greetingEvening: String($('setEvening')?.value||'').trim(),
+      greetingNight: String($('setNight')?.value||'').trim()
     };
     let r=await gas('updateSettings',p);
     toast(r.message||'Settings saved');
@@ -3621,7 +4040,7 @@ async function saveSystemGreetingSettings(){
     console.error(error);
     toast(error&&error.message?error.message:'Settings save failed');
   }finally{
-    if(btn){btn.disabled=false;btn.textContent='บันทึกคำทักทายจากระบบ';}
+    if(btn){btn.disabled=false;btn.removeAttribute('aria-busy');btn.textContent='บันทึกคำทักทายจากระบบ';}
   }
 }
 
@@ -4662,8 +5081,9 @@ function canViewProductsUi(){return permissionFlag('canViewProducts',['SUPER_ADM
 function canViewPromotionsUi(){return permissionFlag('canViewPromotions',['SUPER_ADMIN','ADMIN','SALES'].indexOf(currentRole())>=0)}
 function canViewReportsUi(){return permissionFlag('canViewReports',['SUPER_ADMIN','ADMIN','MANAGER','VIEWER'].indexOf(currentRole())>=0)}
 function canAccessPage(page){
-  const target=String(page||'').trim();
+  const target=normalizeAppPageRoute(page);
   if(target==='home'||target==='customers'||target==='settings')return true;
+  if(target==='dashboard')return permissionFlag('canViewDashboard',['SUPER_ADMIN','ADMIN','MANAGER','SALES','VIEWER'].indexOf(currentRole())>=0);
   if(target==='quote')return canCreateQuotationsUi();
   if(target==='products')return canViewProductsUi();
   if(target==='promos')return canViewPromotionsUi();
@@ -4673,7 +5093,7 @@ function canAccessPage(page){
   return false;
 }
 function applyRolePermissions(){
-  document.querySelectorAll('.nav button[data-page]').forEach(btn=>{const page=btn.getAttribute('data-page');btn.classList.toggle('hidden',!canAccessPage(page));});
+  document.querySelectorAll('.nav button[data-route],.nav button[data-page]').forEach(btn=>{const page=getNavigationButtonRoute(btn);btn.classList.toggle('hidden',!canAccessPage(page));});
   document.querySelectorAll('[data-permission]').forEach(btn=>{const permission=btn.getAttribute('data-permission');const allowed=permissionFlag(permission,false);btn.classList.toggle('hidden',!allowed);btn.hidden=!allowed;});
   document.querySelectorAll('.main-action:not([data-permission])').forEach(btn=>{btn.classList.toggle('hidden',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0);});
   const quoteActions=document.querySelector('#page-quote .actions');
@@ -4697,7 +5117,7 @@ showApp=function(){baseShowAppForAuth();applyRolePermissions();};
 const baseRenderAllForAuth=renderAll;
 renderAll=function(){baseRenderAllForAuth();renderUsers();applyRolePermissions();};
 const baseGoForAuth=go;
-go=function(page,btn){if(!canAccessPage(page)){toast('ไม่มีสิทธิ์เข้าใช้งานหน้านี้');return;}const result=baseGoForAuth(page,btn);applyRolePermissions();return result;};
+go=function(page,btn,options){const target=normalizeAppPageRoute(page);if(!canAccessPage(target)){toast('ไม่มีสิทธิ์เข้าใช้งานหน้านี้');return {ok:false,code:'FORBIDDEN',page:target};}const result=baseGoForAuth(target,btn,options);applyRolePermissions();return result;};
 const baseEnsurePageDataForAuth=ensurePageData;
 ensurePageData=function(page){if(page==='users'){return loadUsers();}if(page==='customers'){return baseEnsurePageDataForAuth(page).then(response=>{scheduleFavoriteCustomersLoad();return response;});}if(page==='products'){return Promise.all([baseEnsurePageDataForAuth(page),loadProductPreferences()]).then(responses=>{renderProducts();return {ok:true,data:responses};});}if(page==='quote'){return Promise.all([baseEnsurePageDataForAuth(page),loadProductPreferences()]).then(async responses=>{if(typeof window.initializePendingQuotationContext==='function'){const pending=await window.initializePendingQuotationContext();if(pending&&pending.ok===false)return pending;}if(typeof window.initializeQuotationDraftRecovery==='function'){const recovery=await window.initializeQuotationDraftRecovery();if(recovery&&recovery.ok===false)return recovery;}return {ok:true,data:responses};});}return baseEnsurePageDataForAuth(page);};
 async function loadUsers(){
@@ -4781,7 +5201,9 @@ saveUserForm=async function(userId){
 const baseRenderHistoryForAuth=renderHistory;
 renderHistory=function(){baseRenderHistoryForAuth();if(currentRole()==='VIEWER'){document.querySelectorAll('#quoteHistory button').forEach(btn=>{if(!/เปิดดู|Open/i.test(btn.textContent||''))btn.classList.add('hidden');});}};
 const baseRenderHomeForAuth=renderHome;
-renderHome=function(){baseRenderHomeForAuth();const role=currentRole();const title=document.querySelector('#dashboardContent .dashboard-kpi-grid');if(title&&role==='VIEWER'){document.querySelectorAll('#dashboardContent button').forEach(btn=>btn.classList.add('hidden'));}};
+renderHome=function(){baseRenderHomeForAuth();};
+const baseRenderDashboardForAuth=renderDashboard;
+renderDashboard=function(){baseRenderDashboardForAuth();const role=currentRole();const title=document.querySelector('#dashboardContent .dashboard-kpi-grid');if(title&&role==='VIEWER'){document.querySelectorAll('#dashboardContent button').forEach(btn=>btn.classList.add('hidden'));}};
 function getQuoteProductPreferenceId(product){return String(product&& (product.productId||product.sku||product.productCode||product.id||product.itemCode) || '').trim()}
 function normalizeQuoteProductPreferenceId(value){return String(value||'').trim().toLowerCase()}
 function getFavoriteProductIdSet(){return new Set(FAVORITE_PRODUCTS.map(product=>normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(product))).filter(Boolean))}
@@ -4901,6 +5323,7 @@ async function persistPinnedProductOrder(){const grid=$('pinnedProductGrid');if(
 function bindPinnedProductDragAndDrop(){const grid=$('pinnedProductGrid');if(!grid||grid.dataset.bound)return;grid.dataset.bound='true';let dragged=null;grid.addEventListener('dragstart',event=>{dragged=event.target.closest('.pinned-product-card');if(!dragged)return;dragged.classList.add('is-dragging');event.dataTransfer.effectAllowed='move'});grid.addEventListener('dragover',event=>{event.preventDefault();const target=event.target.closest('.pinned-product-card');if(dragged&&target&&target!==dragged)grid.insertBefore(dragged,target)});grid.addEventListener('dragend',()=>{if(dragged)dragged.classList.remove('is-dragging');dragged=null;persistPinnedProductOrder()});let timer=null,touchCard=null;grid.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'||event.target.closest('button,a,[data-no-drag]'))return;touchCard=event.target.closest('.pinned-product-card');if(touchCard)timer=setTimeout(()=>{touchCard.classList.add('is-dragging');try{touchCard.setPointerCapture(event.pointerId)}catch(error){}},350)});grid.addEventListener('pointermove',event=>{if(!touchCard||!touchCard.classList.contains('is-dragging'))return;event.preventDefault();const target=document.elementFromPoint(event.clientX,event.clientY)?.closest('.pinned-product-card');if(target&&target!==touchCard)grid.insertBefore(touchCard,target)});const finish=()=>{clearTimeout(timer);if(touchCard&&touchCard.classList.contains('is-dragging')){touchCard.classList.remove('is-dragging');persistPinnedProductOrder()}touchCard=null};grid.addEventListener('pointerup',finish);grid.addEventListener('pointercancel',finish)}
 const baseFilterQuoteProductsByBusinessUnitForPreferences=filterQuoteProductsByBusinessUnit;
 filterQuoteProductsByBusinessUnit=function(query,businessUnit){return baseFilterQuoteProductsByBusinessUnitForPreferences(query,businessUnit).map(decorateQuotePreferenceProduct).sort((a,b)=>productPreferenceRank(a)-productPreferenceRank(b)||rankQuoteProductBusinessUnit(a,businessUnit)-rankQuoteProductBusinessUnit(b,businessUnit)||rankQuoteProduct(a,query)-rankQuoteProduct(b,query)||String(a.productName||'').localeCompare(String(b.productName||''),'th'))};
-window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.openCustomerDetailsModal=openCustomerDetailsModal; window.openCustomerEditModal=openCustomerEditModal; window.toggleFavoriteCustomer=toggleFavoriteCustomer; window.handleCustomerAction=handleCustomerAction; window.bindCustomerCardActions=bindCustomerCardActions; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.handleProductCardCalculatorClick=handleProductCardCalculatorClick; window.isProductCardInteractiveClick=isProductCardInteractiveClick; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.createAddProductButton=createAddProductButton; window.addProductCardToQuote=addProductCardToQuote; window.handleProductAction=handleProductAction; window.bindProductCardActions=bindProductCardActions; window.openProductPromotionDetail=openProductPromotionDetail; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.loadPromotionDashboard=loadPromotionDashboard; window.refreshPromotionDashboard=refreshPromotionDashboard; window.openPromotionDetail=openPromotionDetail; window.renderPromotionProductPanel=renderPromotionProductPanel; window.closePromotionProductPanel=closePromotionProductPanel; window.goToPromotionProduct=goToPromotionProduct; window.buildProductPromotionDashboardFromProducts=buildPromotionDashboardFromProducts; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.resetAuthenticatedFrontendState=resetAuthenticatedFrontendState; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.canCreateQuotationsUi=canCreateQuotationsUi; window.canEditQuotationsUi=canEditQuotationsUi; window.canViewQuotationsUi=canViewQuotationsUi; window.canExportQuotationsUi=canExportQuotationsUi; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
+window.NAVIGATION_LABELS=NAVIGATION_LABELS; window.NAVIGATION_ITEMS=NAVIGATION_ITEMS; window.getNavigationLabel=getNavigationLabel; window.getNavigationLabelForPage=getNavigationLabelForPage; window.getNavigationRoute=getNavigationRoute; window.getNavigationButtonRoute=getNavigationButtonRoute; window.renderSidebarNavigation=renderSidebarNavigation; window.bindSidebarNavigationEvents=bindSidebarNavigationEvents; window.applyNavigationLabels=applyNavigationLabels;
+window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderDashboard=renderDashboard; window.renderCustomers=renderCustomers; window.openCustomerDetailsModal=openCustomerDetailsModal; window.openCustomerEditModal=openCustomerEditModal; window.toggleFavoriteCustomer=toggleFavoriteCustomer; window.handleCustomerAction=handleCustomerAction; window.bindCustomerCardActions=bindCustomerCardActions; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.handleProductCardCalculatorClick=handleProductCardCalculatorClick; window.isProductCardInteractiveClick=isProductCardInteractiveClick; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.createAddProductButton=createAddProductButton; window.addProductCardToQuote=addProductCardToQuote; window.handleProductAction=handleProductAction; window.bindProductCardActions=bindProductCardActions; window.openProductPromotionDetail=openProductPromotionDetail; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.loadPromotionDashboard=loadPromotionDashboard; window.refreshPromotionDashboard=refreshPromotionDashboard; window.openPromotionDetail=openPromotionDetail; window.renderPromotionProductPanel=renderPromotionProductPanel; window.closePromotionProductPanel=closePromotionProductPanel; window.goToPromotionProduct=goToPromotionProduct; window.buildProductPromotionDashboardFromProducts=buildPromotionDashboardFromProducts; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.resetAuthenticatedFrontendState=resetAuthenticatedFrontendState; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.canCreateQuotationsUi=canCreateQuotationsUi; window.canEditQuotationsUi=canEditQuotationsUi; window.canViewQuotationsUi=canViewQuotationsUi; window.canExportQuotationsUi=canExportQuotationsUi; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
 window.createProductIdentityKey=createProductIdentityKey; window.dedupeExactProducts=dedupeExactProducts; window.dedupeExactProductsWithReport=dedupeExactProductsWithReport; window.cloneProductRecordForSelection=cloneProductRecordForSelection; window.getStableProductRecordKey=getStableProductRecordKey; window.registerProductRecordSelection=registerProductRecordSelection; window.resolveProductRecordSelection=resolveProductRecordSelection; window.renderProductThumbnailHtml=renderProductThumbnailHtml; window.getProductImageSource=getProductImageSource;
-window.normalizeSystemIdentitySettings=normalizeSystemIdentitySettings; window.applySystemIdentityToUI=applySystemIdentityToUI; window.renderLoginBranding=renderLoginBranding; window.renderSidebarBranding=renderSidebarBranding; window.refreshPublicSystemSettings=refreshPublicSystemSettings; window.setPublicSystemSettings=setPublicSystemSettings; window.loadSystemIdentitySettingsForSettings=loadSystemIdentitySettingsForSettings; window.saveSystemIdentitySettings=saveSystemIdentitySettings; window.savePersonalGreetingSettings=savePersonalGreetingSettings; window.saveSystemGreetingSettings=saveSystemGreetingSettings; window.canManageSystemIdentitySettings=canManageSystemIdentitySettings; window.applySettingsPermissionUi=applySettingsPermissionUi;
+window.updateAnnouncementCharacterCounter=updateAnnouncementCharacterCounter; window.normalizeSystemIdentitySettings=normalizeSystemIdentitySettings; window.applySystemIdentityToUI=applySystemIdentityToUI; window.renderLoginBranding=renderLoginBranding; window.renderSidebarBranding=renderSidebarBranding; window.refreshPublicSystemSettings=refreshPublicSystemSettings; window.setPublicSystemSettings=setPublicSystemSettings; window.loadSystemIdentitySettingsForSettings=loadSystemIdentitySettingsForSettings; window.saveSystemIdentitySettings=saveSystemIdentitySettings; window.savePersonalGreetingSettings=savePersonalGreetingSettings; window.saveSystemGreetingSettings=saveSystemGreetingSettings; window.canManageSystemIdentitySettings=canManageSystemIdentitySettings; window.applySettingsPermissionUi=applySettingsPermissionUi;

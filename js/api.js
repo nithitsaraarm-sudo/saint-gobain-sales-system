@@ -1,4 +1,4 @@
-window.APP_VERSION = window.APP_VERSION || '0.5.41';
+window.APP_VERSION = window.APP_VERSION || '0.5.47';
 const APP_ENV = String(window.APP_ENV || 'production').trim().toLowerCase();
 const API_MOCK_MODE = APP_ENV === 'development';
 const GAS_WEB_APP_URL = String(window.GAS_WEB_APP_URL || '').trim();
@@ -325,7 +325,7 @@ function getCacheScope(key) {
   const area = String(user.area || user.branch || '').trim();
   const token = String(localStorage.getItem('sg_token') || localStorage.getItem('sessionToken') || '').trim();
   return [
-    String(window.APP_VERSION || '0.5.41').trim(),
+    String(window.APP_VERSION || '0.5.47').trim(),
     userId || 'anonymous',
     role || 'role-unknown',
     area || 'area-unknown',

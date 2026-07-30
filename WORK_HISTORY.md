@@ -1,5 +1,254 @@
 # Saint-Gobain Sales System - Work History
 
+## 2026-07-30 — Announcement/News frontend setting
+
+Scope completed in the provided file set:
+
+- Added the dedicated `setAnnouncementText` textarea to the existing SUPER_ADMIN System Greeting / News settings section.
+- Added `maxlength=500`, multiline input, helper text, accessible live character counter, and mobile-safe textarea styling.
+- Loaded `DB.settings.announcementText` into the form with backward-compatible empty-string normalization.
+- Added trimmed `announcementText` to the existing `updateSettings` payload.
+- Preserved entered form values when save fails and retained the existing loading/error/success flow.
+- Added a duplicate-submission guard and `aria-busy` state to the existing save button.
+- Changed the Home News card to render only `announcementText` by `textContent`; it no longer reuses `welcomeText`.
+- Added the empty state `ยังไม่มีข่าวสารหรือประกาศจากระบบ`.
+- Added safe multiline rendering with `white-space: pre-line` and `overflow-wrap: anywhere`.
+- Preserved the existing welcome/hero behavior controlled by `welcomeText`.
+
+Files changed:
+
+- `index.html`
+- `js/app.js`
+- `css/main.css`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Validation completed:
+
+- Static syntax/structure checks passed for the modified frontend files.
+- Static checks confirmed the Home announcement path no longer reads `welcomeText`.
+- Static checks confirmed the textarea, 500-character limit, helper text, counter, plain-text rendering, empty state, trimming, duplicate-submit guard, and bootstrap cache invalidation are present.
+
+Not completed because the provided file set did not include Apps Script/backend files:
+
+- Server allowlist/schema/default validation.
+- Google Sheet Settings storage migration/support.
+- Live SUPER_ADMIN authorization verification.
+- Live API, browser, iPhone Safari, Android, and installed PWA execution.
+
+Rollback command for the provided frontend/documentation scope:
+
+```powershell
+git checkout -- index.html js/app.js css/main.css TEST_CASES.md WORK_HISTORY.md
+```
+
+
+## 2026-07-30 — Sidebar route-key navigation hardening
+
+Scope:
+
+- Audited and hardened sidebar navigation after the navigation label/constants changes.
+- Ensured sidebar routing uses unique route keys, not display labels, array index, or label keys.
+- Preserved existing route names, page ids, RBAC, area permission, backend APIs, Apps Script code, Google Sheet schema, quotation logic, and PWA behavior.
+
+Audit result:
+
+- Sidebar navigation is rendered from `NAVIGATION_ITEMS` in `js/app.js`.
+- Mobile drawer reuses the same sidebar DOM and does not have a separate renderer.
+- Breadcrumb renderer was not found in the repository.
+- The previous navigation metadata used one overloaded `page` field as the route/page id.
+- The sidebar renderer embedded inline `onclick="go(...)"` directly from that overloaded field.
+- Active menu state trusted a passed button in `go()` without verifying that the button route matched the requested target.
+- No index-based navigation was found, but the route contract was not explicit enough to prevent wrong-target regressions.
+
+Implementation:
+
+- Updated `NAVIGATION_ITEMS` to use explicit `id` and `route` fields.
+- Rendered sidebar buttons with:
+  - `data-nav-id`
+  - `data-route`
+  - backward-compatible `data-page`
+- Removed inline sidebar navigation `onclick` from generated nav buttons.
+- Added delegated sidebar click handling through `bindSidebarNavigationEvents()`.
+- Navigation clicks now read only the immutable `data-route`.
+- Hardened `getNavButtonForPage()` and `applyRolePermissions()` to use `getNavigationButtonRoute()`.
+- Hardened `go()` so a passed button is used for active state only when its route matches the target route.
+- Added non-blocking `validateNavigationConfiguration()` checks for duplicate routes and missing page DOM targets.
+- Bumped runtime/cache version to `0.5.46`.
+- Updated `TEST_CASES.md` with `REG-STATIC-006`.
+
+Files changed:
+
+- `index.html`
+- `js/app.js`
+- `js/api.js`
+- `js/config.js`
+- `service-worker.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Expected route map:
+
+- `หน้าหลัก` → `home` → `#page-home`
+- `Dashboard` → `dashboard` → `#page-dashboard`
+- `ออกใบเสนอราคา` → `quote` → `#page-quote`
+- `ร้านค้า` → `customers` → `#page-customers`
+- `สินค้า` → `products` → `#page-products`
+- `โปรโมชั่น` → `promos` → `#page-promos`
+- `ประวัติใบเสนอราคา` → `quotes` → `#page-quotes`
+- `ผู้ใช้งาน` → `users` → `#page-users`
+- `รายงาน` → `report` → `#page-report`
+- `ตั้งค่า` → `settings` → `#page-settings`
+
+Validation notes:
+
+- Static scan confirmed every `NAVIGATION_ITEMS` entry has explicit `id` and `route`.
+- Static scan confirmed generated sidebar buttons use `data-route`.
+- Static scan confirmed `bindSidebarNavigationEvents()`, `getNavigationButtonRoute()`, and route-safe active logic are present.
+- Static scan confirmed runtime files use `0.5.46`; no stale `0.5.45` strings remain in checked runtime files.
+- `git diff --check` passed with only line-ending warnings.
+- Runtime browser/device/PWA validation is still required for desktop clicks, mobile drawer clicks, browser Back/Forward, refresh, and installed PWA.
+- Rollback command for this phase:
+
+```powershell
+git checkout -- index.html js/app.js js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
+```
+
+## 2026-07-30 — Centralized navigation labels constants
+
+Scope:
+
+- Created a single shared navigation label source of truth for main application navigation.
+- Centralized approved labels:
+  - `home`: `หน้าหลัก`
+  - `dashboard`: `Dashboard`
+  - `newQuotation`: `ออกใบเสนอราคา`
+  - `customers`: `ร้านค้า`
+  - `products`: `สินค้า`
+  - `promotions`: `โปรโมชั่น`
+  - `quotationHistory`: `ประวัติใบเสนอราคา`
+  - `users`: `ผู้ใช้งาน`
+  - `reports`: `รายงาน`
+  - `settings`: `ตั้งค่า`
+- Preserved existing route keys, RBAC, area permission, backend APIs, Apps Script code, Google Sheet schema, quotation logic, and PWA behavior.
+
+Audit result:
+
+- Sidebar navigation labels were duplicated in `index.html` across visible text, `title`, and `aria-label`.
+- Home quick actions duplicated the same navigation text in `js/app.js`.
+- Main module page headings duplicated navigation labels in `index.html`.
+- Mobile navigation reuses the same sidebar DOM, so one sidebar renderer covers both desktop and mobile drawer.
+
+Implementation:
+
+- Added `NAVIGATION_LABELS`, `NAVIGATION_ITEMS`, and route-to-label mapping in `js/app.js`.
+- Added helpers:
+  - `getNavigationLabel()`
+  - `getNavigationLabelForPage()`
+  - `renderSidebarNavigation()`
+  - `applyNavigationLabels()`
+- Replaced hardcoded sidebar button markup with `#mainNavigation`, rendered from `NAVIGATION_ITEMS`.
+- Replaced module page headings with `data-nav-label` bindings.
+- Updated Home primary quotation action and Home quick actions to use navigation label keys.
+- Exported navigation constants/helpers on `window` for frontend reuse/debugging.
+- Bumped runtime/cache version to `0.5.45`.
+- Updated `TEST_CASES.md` with `REG-STATIC-005`.
+
+Files changed:
+
+- `index.html`
+- `js/app.js`
+- `js/api.js`
+- `js/config.js`
+- `service-worker.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Validation notes:
+
+- Static scan confirmed `NAVIGATION_LABELS`, `NAVIGATION_ITEMS`, `renderSidebarNavigation()`, and `applyNavigationLabels()` are present.
+- Static scan confirmed `#mainNavigation` is now the sidebar container and hardcoded sidebar label markup was removed.
+- Static scan confirmed page headings use `data-nav-label` bindings.
+- Static scan confirmed runtime files use `0.5.45`; no stale `0.5.44` strings remain in checked runtime files.
+- `git diff --check` passed with only line-ending warnings.
+- Runtime browser/device/PWA validation is still required on Desktop Chrome/Edge, Android Chrome, iPhone Safari, and installed PWA.
+- Rollback command for this phase:
+
+```powershell
+git checkout -- index.html js/app.js js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
+```
+
+## 2026-07-30 — New Home command center and Dashboard route split
+
+Scope:
+
+- Created a new Home page as a work-starting command center.
+- Moved the existing KPI Dashboard UI to its own `dashboard` route.
+- Preserved existing Dashboard metric calculations, quotation/customer/product data sources, and business logic.
+- Preserved backend APIs, Apps Script code, Google Sheet schema, RBAC policy, area permissions, authentication, quotation logic, and pricing logic.
+
+Audit result:
+
+- Previous default page was `#page-home`, and `#page-home` rendered the KPI Dashboard.
+- The Dashboard renderer was `renderHomeDashboardRedesign()` in `js/app.js`, using `buildDashboardMetrics()`.
+- Sidebar/mobile drawer navigation is static markup in `index.html`; mobile reuses the same sidebar DOM.
+- The primary navigation function was `go(page, btn)` with no page hash/pushState route support.
+- Existing browser history usage was limited to the mobile sidebar drawer.
+- No breadcrumb renderer was found.
+- `document.title` is only set from company/system identity settings.
+- PWA `start_url` remains `./index.html`; service worker serves navigation fallback to cached `index.html`.
+
+Implementation:
+
+- Added `หน้าหลัก` navigation item for the new Home page.
+- Added `Dashboard` navigation item for the existing KPI Dashboard.
+- Created `#page-home` command center sections:
+  - personalized greeting
+  - current user/profile chip
+  - Gyproc and Weber branding
+  - primary “ออกใบเสนอราคาใหม่” action
+  - permission-aware quick actions
+  - system version / announcement / existing record summary
+- Created `#page-dashboard` for the existing KPI Dashboard shell.
+- Updated `ensureDashboardLayout()` to target `#page-dashboard`.
+- Kept Dashboard calculations on the existing `buildDashboardMetrics()` / `renderHomeDashboardRedesign()` path.
+- Added `renderDashboard()` as the Dashboard renderer while `renderHome()` now renders the command center.
+- Added minimal hash route support:
+  - default route: `home`
+  - Dashboard route: `dashboard`
+  - existing module routes remain unchanged
+  - route helpers support refresh/back-forward through `#home`, `#dashboard`, etc.
+- Quick actions call existing routes only and are filtered with `canAccessPage()`.
+- Added scoped Home CSS only; no global button/card rules were changed.
+- Bumped runtime/cache version to `0.5.44`.
+
+Files changed:
+
+- `index.html`
+- `js/app.js`
+- `css/main.css`
+- `js/api.js`
+- `js/config.js`
+- `service-worker.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Validation notes:
+
+- Static scan confirmed `#page-home` contains the new command center and `#page-dashboard` contains the Dashboard shell.
+- Static scan confirmed `data-page="home"` / `go('home')`, `data-page="dashboard"` / `go('dashboard')`, and `data-page="users"` / `go('users')` are present.
+- Static scan confirmed `ensureDashboardLayout()` targets `page-dashboard`.
+- Static scan confirmed Dashboard still uses `buildDashboardMetrics()` and `renderHomeDashboardRedesign()`.
+- Static scan confirmed runtime files use `0.5.44`; no stale `0.5.43` strings remain in checked runtime files.
+- `git diff --check` passed with only line-ending warnings.
+- `node --check js/app.js` could not run because Node.js is not available in this environment.
+- Runtime browser/device/PWA validation is still required on Desktop Chrome/Edge, Android Chrome, iPhone Safari, and installed PWA.
+- Rollback command for this phase:
+
+```powershell
+git checkout -- index.html js/app.js css/main.css js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
+```
+
 ## 2026-07-29 - Quotation local draft expiration
 
 ### Branch
@@ -373,6 +622,64 @@ Validation notes:
 git checkout -- js/app.js css/main.css index.html js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
 ```
 
+## 2026-07-30 — Navigation label clarity update
+
+Scope:
+
+- Updated visible application navigation labels only.
+- Current Dashboard route and functionality remain on the existing `home` route.
+- No new Home page was created in this phase.
+- No backend, API, database schema, RBAC policy, area permission, authentication, Dashboard calculation, or route-name changes were made.
+
+Audit result:
+
+- Sidebar/mobile drawer navigation is static markup in `index.html` under `.nav`.
+- Mobile navigation reuses the same sidebar DOM; `enhanceSidebarNavItems()` reads `.nav-label` and sets `title` / `aria-label`.
+- Navigation handler is `go(page, btn)` in `js/app.js`; it maps route names to `#page-${page}`.
+- Current Dashboard page is `#page-home`; route name remains `home` for backward compatibility.
+- Users page header is static markup in `index.html`.
+- No breadcrumb renderer or page-title renderer was found in the app code.
+- `Users` occurrences in `appscript/*` and API/config files are internal sheet/API/function names and were intentionally left unchanged.
+
+Implementation:
+
+- Renamed sidebar label, tooltip, and accessible name:
+  - `หน้าหลัก` → `Dashboard`
+- Renamed Users navigation label, tooltip, accessible name, and page header:
+  - `Users` → `ผู้ใช้งาน`
+- Kept unchanged labels:
+  - `ออกใบเสนอราคา`
+  - `ร้านค้า`
+  - `สินค้า`
+  - `โปรโมชั่น`
+  - `ประวัติใบเสนอราคา`
+  - `รายงาน`
+  - `ตั้งค่า`
+- Bumped app/service-worker version to `0.5.43` so browser/PWA cache picks up the label updates.
+
+Files changed:
+
+- `index.html`
+- `js/app.js`
+- `js/api.js`
+- `js/config.js`
+- `service-worker.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Validation notes:
+
+- Static scan confirmed sidebar `data-page="home"` now shows `Dashboard` while keeping `go('home')`.
+- Static scan confirmed sidebar `data-page="users"` and `#page-users h1` now show `ผู้ใช้งาน` while keeping `go('users')`.
+- Static scan confirmed checked runtime files use version `0.5.43`.
+- `git diff --check` passed with only line-ending warnings.
+- Runtime browser/device/PWA validation is still required on Desktop Chrome/Edge, Android Chrome, iPhone Safari, and PWA.
+- Rollback command for this phase:
+
+```powershell
+git checkout -- index.html js/app.js js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
+```
+
 ## 2026-07-29 — Product Card action buttons audit/fix
 
 Scope:
@@ -523,3 +830,75 @@ Validation notes:
 ```powershell
 git checkout -- index.html css/main.css js/app.js js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
 ```
+
+## 2026-07-30 — Mobile Dashboard grouped KPI redesign
+
+Scope:
+
+- Implemented the approved mobile Dashboard redesign with grouped KPI sections.
+- Preserved existing Dashboard data sources and calculations from `DB.quotes`, `DB.quoteLines`, `DB.products`, `DB.customers`, and `DB.settings`.
+- No Dashboard API, Apps Script backend, Google Sheet schema, RBAC policy, area permission, authentication, navigation route, pricing, discount, VAT, or quotation formula changes were made.
+
+Audit result:
+
+- Actual Dashboard output is rendered by `js/app.js` through `renderHome()` into a dynamic `#dashboardContent` container.
+- `index.html` still contains legacy Dashboard markup, but `ensureDashboardLayout()` hides the legacy `.grid4`, `.cols`, and best-products card after inserting `#dashboardContent`.
+- Existing Dashboard CSS was concentrated in `.dashboard-*` selectors in `css/main.css`.
+- Dashboard metrics are frontend-derived from loaded in-memory data; there is no dedicated Dashboard API endpoint to change.
+- Existing available KPI fields included sales target, actual quotation value, forecast, achievement, BU totals, new customer count, quote status buckets, top customers, and top products.
+- Quotation statuses currently exposed by the app are `DRAFT`, `SAVED`, and `CANCELLED`; no new Pending/Approved status was invented.
+
+Implementation:
+
+- Added customer KPI metrics from real customer records: total, active, inactive, and new customers.
+- Added `renderHomeDashboardRedesign()` and small Dashboard rendering helpers for reusable KPI cards, section wrappers, and top-list cards.
+- Replaced the visible Dashboard layout with six grouped sections:
+  - Sales KPI
+  - Business KPI
+  - Quotation KPI
+  - Customer KPI
+  - Top Product
+  - Top Customer
+- Kept "ดูทั้งหมด" actions only where existing routes already exist: Products and Customers.
+- Added scoped Dashboard responsive CSS:
+  - Desktop: responsive grid, no unnecessary horizontal scroll.
+  - Mobile: horizontal tracks with two KPI cards per view for KPI sections.
+  - Top Product/Top Customer: wider horizontal cards on mobile.
+  - Section headings remain outside scroll containers.
+  - Scroll tracks are keyboard-focusable with visible focus rings.
+- Bumped app/service-worker version to `0.5.42` so browser/PWA cache picks up the Dashboard CSS/JS changes.
+
+Files changed:
+
+- `js/app.js`
+- `css/main.css`
+- `index.html`
+- `js/api.js`
+- `js/config.js`
+- `service-worker.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Validation notes:
+
+- Static scan confirmed all six Dashboard sections are rendered by `renderHomeDashboardRedesign()`.
+- Static scan confirmed mobile Dashboard track selectors and customer KPI fields are present.
+- Static scan confirmed runtime cache/version strings were updated to `0.5.42` and no `0.5.41` runtime strings remain in checked files.
+- `git diff --check` passed with only line-ending warnings.
+- `node --check js/app.js` could not be executed because Node.js is not installed in this environment.
+- Runtime browser/device/PWA validation is still required on Desktop Chrome/Edge, Android Chrome, iPhone Safari, and PWA.
+- Rollback command for this phase:
+
+```powershell
+git checkout -- js/app.js css/main.css index.html js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
+```
+
+
+## Announcement Settings Backend Patch
+
+- Added `announcementText` to backend default settings and bootstrap defaults.
+- Added `announcementText` to the Settings save allowlist.
+- Added server-side validation: trim, maximum 500 characters, HTML/script rejection, and spreadsheet-formula prefix rejection.
+- Included `announcementText` in role-filtered bootstrap settings so Home can render it for authorized users.
+- Kept the existing key-value Settings sheet structure; no destructive database migration is required.
+- Normalized the `updateSettings` API payload and attached the authenticated user context.

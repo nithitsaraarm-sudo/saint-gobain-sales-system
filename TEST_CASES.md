@@ -10,8 +10,8 @@ This catalogue remains the production test source of truth for V1. During the fi
 
 Current execution status:
 
-- Total catalogue: 81 tests
-- Static checks passed: 18
+- Total catalogue: 86 tests
+- Static checks passed: 23
 - Runtime integration tests blocked/not run: 33
 - Manual browser/PWA tests blocked/not run: 19
 - Production smoke tests blocked/not run: 11
@@ -109,17 +109,17 @@ Create or verify these records in a UAT spreadsheet before runtime execution:
 
 | Suite | Total | Static Check Passed | Not Run | Blocked | Failed | Notes |
 |---|---:|---:|---:|---:|---:|---|
-| Automated/static checks | 18 | 18 | 0 | 0 | 0 | Static checks were executed locally in repository context. |
+| Automated/static checks | 23 | 23 | 0 | 0 | 0 | Static checks were executed locally in repository context. |
 | Runtime integration tests | 33 | 0 | 0 | 33 | 0 | Blocked until live Apps Script, Google Sheets UAT data, and credentials are available. |
 | Manual browser/PWA tests | 19 | 0 | 0 | 19 | 0 | Blocked until browsers/devices/PWA install session are available. |
 | Production post-deployment smoke tests | 11 | 0 | 0 | 11 | 0 | Blocked until production deployment exists. |
-| Total | 81 | 18 | 0 | 63 | 0 | No runtime/manual pass is claimed in this document. |
+| Total | 86 | 23 | 0 | 63 | 0 | No runtime/manual pass is claimed in this document. |
 
 ## 7. Test case counts by module and priority
 
 | Module | P0 | P1 | P2 | Total |
 |---|---:|---:|---:|---:|
-| A11Y | 1 | 5 | 0 | 6 |
+| A11Y | 1 | 6 | 0 | 7 |
 | API | 4 | 2 | 0 | 6 |
 | AUTH | 2 | 2 | 0 | 4 |
 | CUST | 3 | 6 | 1 | 10 |
@@ -131,11 +131,11 @@ Create or verify these records in a UAT spreadsheet before runtime execution:
 | PWA | 2 | 1 | 0 | 3 |
 | QUOTE | 12 | 4 | 0 | 16 |
 | RBAC | 6 | 1 | 0 | 7 |
-| REG | 1 | 2 | 2 | 5 |
+| REG | 1 | 6 | 2 | 9 |
 | USER | 2 | 1 | 0 | 3 |
-| Total | 38 | 37 | 6 | 81 |
+| Total | 38 | 42 | 6 | 86 |
 
-Note: The canonical executable test catalogue below contains 81 rows.
+Note: The canonical executable test catalogue below contains 86 rows.
 
 ## 8. Automated/static checks
 
@@ -157,8 +157,13 @@ Note: The canonical executable test catalogue below contains 81 rows.
 | A11Y-STATIC-001 | A11Y | P1 | Automated/static check | All | Repository available | `index.html`, `js/app.js`, `js/quotation.js` | 1. Search generated/static buttons without type. | All static/generated buttons declare `type="button"` where appropriate. | Search returned zero buttons without type. | Static Check Passed | Local repository / PowerShell / ripgrep PCRE2 | `buttons_without_type=0` | Phase 9 | Candidate for CI static check. |
 | A11Y-STATIC-002 | A11Y | P1 | Automated/static check | All | Repository available | `index.html` | 1. Inspect dialog and toast semantics. | Main modals have dialog semantics and toast has polite live region. | 5 dialog roles, 5 aria-modal attributes, one toast live region found. | Static Check Passed | Local repository / PowerShell | Marker-count check | Phase 9 | Runtime screen reader check still required. |
 | A11Y-STATIC-003 | A11Y | P1 | Automated/static check | All | Repository available | `index.html`, `css/main.css` | 1. Inspect scrollable section selectors. 2. Confirm horizontal sections use scoped overflow-x/touch scroll rules. 3. Confirm large Product, Customer, Quote History, Cart, User, and Promotion Product lists remain vertical. | Dashboard KPI/widgets, dashboard recent/best lists, customer favorites, promotion summary/cards, and quotation favorite/pinned product lists use horizontal scrolling; large datasets remain vertical and scoped to avoid page horizontal overflow. | `.ds-horizontal-scroll`, `dashboard-kpi-grid`, `dashboard-widget-grid`, `dashboard-widget-list`, `dashboard-best-products`, `promotion-summary-grid`, `promotion-grid`, `favorite-grid`, and `quote-preference-list` found; vertical safeguards found for `#productGrid`, `#productPicker`, `#customerGrid`, `#quoteHistory`, `#cartList`, `#userList`, and `.promotion-product-list`. | Static Check Passed | Local repository / PowerShell / ripgrep | Search command: scroll standard selectors in `index.html` and `css/main.css`; `git diff --check`. | Design System scrolling standard | Runtime browser/device/PWA validation still required. |
+| A11Y-STATIC-004 | A11Y | P1 | Automated/static check | All | Repository available | `js/app.js`, `css/main.css` | 1. Inspect Dashboard renderer and responsive CSS. 2. Confirm approved sections are present. 3. Confirm mobile tracks show two KPI cards per view and desktop uses grid. 4. Confirm no new API fields or quotation/customer status names are invented. | Dashboard renders Sales KPI, Business KPI, Quotation KPI, Customer KPI, Top Product, and Top Customer sections; KPI sections use mobile horizontal tracks and desktop responsive grids; metrics use existing loaded data fields. | `renderHomeDashboardRedesign`, `renderDashboardSection`, `customerKpi`, `dashboard-section__track`, and six Dashboard section ids found; CSS has desktop grid defaults and mobile `flex: 0 0 calc((100% - 12px)/2)` KPI cards. | Static Check Passed | Local repository / PowerShell / ripgrep | Search commands: Dashboard redesign selectors in `js/app.js` and `css/main.css`; `git diff --check`; version scan for `0.5.42`. | Approved mobile Dashboard redesign | Runtime browser/device/PWA validation still required. |
 | PERF-STATIC-001 | PERF | P1 | Automated/static check | All | Repository available | `appscript/Database.gs`, `appscript/Quotation.gs`, `appscript/User.gs` | 1. Inspect row update/delete helpers. | Batch helpers are present for contiguous row writes/deletes. | Phase 6 helpers and adoption documented. | Static Check Passed | Local repository / PowerShell / ripgrep | `REMEDIATION_PROGRESS.md` Phase 6 notes | Apps Script performance risk | Live performance test still required. |
 | REG-STATIC-002 | REG | P2 | Automated/static check | All | Repository available | Documentation | 1. Inspect release docs. 2. Confirm test/readiness links. | `RELEASE_READINESS.md`, `TEST_CASES.md`, and checklist are present and linked. | `TEST_CASES.md` is present; release link added in this task. | Static Check Passed | Local repository | File existence and docs inspection | Release readiness requirement | Documentation-only. |
+| REG-STATIC-003 | REG | P1 | Automated/static check | All | Repository available | `index.html`, runtime version files | 1. Inspect sidebar labels, tooltips, and aria labels. 2. Inspect Users page header. 3. Confirm route names remain stable. 4. Confirm runtime cache version is current. | Home navigation displays `หน้าหลัก`; Dashboard navigation displays `Dashboard`; Users navigation and page header display `ผู้ใช้งาน`; existing internal names remain unchanged. | `#mainNavigation` is rendered from navigation metadata; page headings use `data-nav-label`; runtime files use `0.5.46`. | Static Check Passed | Local repository / PowerShell / ripgrep | Search commands: `mainNavigation`, `data-nav-label`, `NAVIGATION_LABELS`, and version scan. | Navigation label clarity update and Home/Dashboard split | Runtime desktop/mobile/PWA navigation validation still required. |
+| REG-STATIC-004 | REG | P1 | Automated/static check | All | Repository available | `index.html`, `js/app.js`, `css/main.css`, `service-worker.js` | 1. Inspect Home and Dashboard DOM. 2. Inspect Home quick-action renderer. 3. Inspect Dashboard renderer target. 4. Inspect hash route helpers and permission guard. 5. Inspect PWA cache version/navigation fallback. | Default `home` route is a command center; Dashboard KPI page has its own `dashboard` route; Dashboard calculations stay on existing `buildDashboardMetrics()` / `renderHomeDashboardRedesign()` path; Home shortcuts use existing routes and permissions; PWA cache version is updated. | `#page-home` contains `home-command-center`; `#page-dashboard` contains the existing KPI shell; `ensureDashboardLayout()` targets `page-dashboard`; `renderDashboard()` wraps existing Dashboard renderer; `normalizeAppPageRoute()`, `initializeAppRoute()`, and `canAccessPage('dashboard')` found; runtime files use `0.5.46`. | Static Check Passed | Local repository / PowerShell / ripgrep | Search commands: `page-dashboard`, `homeQuickActions`, `renderDashboard`, `normalizeAppPageRoute`, `canViewDashboard`, `0.5.46`; `git diff --check`. | New Home page / Dashboard route requirement | Browser refresh/back-forward/mobile/PWA runtime validation still required. |
+| REG-STATIC-005 | REG | P1 | Automated/static check | All | Repository available | `index.html`, `js/app.js`, runtime version files | 1. Inspect `NAVIGATION_LABELS`. 2. Inspect `NAVIGATION_ITEMS`. 3. Inspect sidebar renderer. 4. Inspect page heading and Home quick-action bindings. 5. Search static sidebar markup for duplicated approved labels. | Navigation labels are centralized in one shared constants object; sidebar labels, tooltips, aria labels, Home quick actions, and module page headings use the shared source of truth; route keys remain unchanged. | `NAVIGATION_LABELS` contains all approved labels; `renderSidebarNavigation()` renders `#mainNavigation`; Home quick actions use `labelKey`; `data-nav-label` / `data-nav-aria-label` bindings found; hardcoded sidebar button label duplication was removed. | Static Check Passed | Local repository / PowerShell / ripgrep | Search commands: `NAVIGATION_LABELS`, `NAVIGATION_ITEMS`, `renderSidebarNavigation`, `data-nav-label`, `data-nav-aria-label`; `git diff --check`. | Centralized Navigation Labels Constants requirement | Runtime sidebar/mobile drawer/PWA validation still required. |
+| REG-STATIC-006 | REG | P1 | Automated/static check | All | Repository available | `js/app.js`, `index.html`, runtime version files | 1. Inspect `NAVIGATION_ITEMS` route/id mappings. 2. Inspect sidebar click handling. 3. Inspect active menu lookup. 4. Inspect route permission filtering. 5. Search for inline sidebar `go(...)` routing. | Sidebar navigation uses immutable route keys, not labels or array index; each approved menu route maps to its matching `#page-*`; active state and permission hiding use route keys; mobile drawer uses the same route-safe sidebar DOM. | `NAVIGATION_ITEMS` contains explicit `id` and `route`; sidebar buttons render `data-route` plus backward-compatible `data-page`; `bindSidebarNavigationEvents()` delegates clicks from `data-route`; `getNavButtonForPage()` and `applyRolePermissions()` use `getNavigationButtonRoute()`; `go()` rejects a passed button whose route does not match the target; runtime files use `0.5.46`. | Static Check Passed | Local repository / PowerShell / ripgrep | Search commands: `id:'newQuotation',route:'quote'`, `data-route`, `bindSidebarNavigationEvents`, `getNavigationButtonRoute`, `passedButton`, `0.5.46`; `git diff --check`. | Sidebar wrong-target navigation regression | Runtime click/back/forward/refresh/mobile/PWA validation still required. |
 
 ## 9. Runtime integration tests
 
@@ -276,3 +281,32 @@ Runtime/manual tests are blocked in this local environment because:
 - Physical/real iPhone Safari, Android Chrome, and installed PWA sessions are not available through repository-only tools.
 
 These blocked tests must be executed during UAT and production smoke phases before a final production Go decision.
+## Announcement/News setting addendum — 2026-07-30
+
+The following static checks were executed against the provided frontend files. Runtime/API/device tests remain blocked because the Apps Script backend, deployed API, Google Sheet, credentials, and device sessions were not included.
+
+| Test ID | Module | Priority | Test type | Applicable roles | Steps | Expected result | Actual result | Status |
+|---|---|---|---|---|---|---|---|---|
+| ANN-STATIC-001 | SETTINGS | P1 | Static check | SUPER_ADMIN | Inspect settings markup. | Dedicated textarea has id `setAnnouncementText`, rows 4, maxlength 500, required placeholder, helper text, and accessible counter. | All required markers found. | Static Check Passed |
+| ANN-STATIC-002 | HOME | P1 | Static check | All authenticated roles | Inspect Home renderer. | Home News reads only `DB.settings.announcementText`, uses `textContent`, and shows the required empty state. | Announcement no longer reads `welcomeText`; required empty state found. | Static Check Passed |
+| ANN-STATIC-003 | SETTINGS | P1 | Static check | SUPER_ADMIN | Inspect save handler. | Payload includes trimmed `announcementText`; empty value allowed; duplicate submissions prevented; failed save does not clear fields; button state restored. | Required payload, trim, validation, guard, and finally-state logic found. | Static Check Passed |
+| ANN-STATIC-004 | SECURITY | P0 | Static check | All | Inspect rendering and CSS. | HTML/script-like input is displayed as plain text; line breaks wrap safely. | Renderer assigns `textContent`; CSS uses `white-space: pre-line` and `overflow-wrap: anywhere`. | Static Check Passed |
+| ANN-STATIC-005 | CACHE | P1 | Static check | SUPER_ADMIN | Inspect successful save path. | Relevant bootstrap cache is invalidated and Home re-renders after save. | Existing `invalidateBootstrapApiCache()` / `sg_bootstrap_cache` fallback retained after successful save. | Static Check Passed |
+| ANN-INT-001 | API/SETTINGS | P0 | Runtime integration | SUPER_ADMIN | Load, edit, save, reload through deployed API and inspect Settings storage. | Value persists and old Settings data without the field normalizes to empty string. | Not executed; backend/deployment unavailable. | Blocked |
+| ANN-RBAC-001 | RBAC | P0 | Runtime integration | Non-SUPER_ADMIN roles | Attempt settings write through UI and direct API. | UI is hidden/blocked and server rejects write. | Not executed; backend/credentials unavailable. | Blocked |
+| ANN-MAN-001 | UI/PWA | P1 | Manual browser/PWA | SUPER_ADMIN | Test Thai, English, emoji, multiline, empty, 500 chars, timeout failure on desktop/iPhone/Android/PWA. | Layout remains responsive; text persists on failure; counter/button states are correct. | Not executed; browser/device sessions unavailable. | Blocked |
+
+
+
+## Announcement Backend Patch Test Cases
+
+1. Save an announcement with 1-500 characters: expected success and persisted `announcementText` key.
+2. Save 501 characters: expected validation error and no data overwrite.
+3. Save blank/whitespace text: expected success and empty-state display on Home.
+4. Save text containing line breaks: expected preserved text and safe multiline rendering.
+5. Save text beginning with `=`, `+`, `-`, or `@`: expected validation error to prevent spreadsheet formula injection.
+6. Save text containing HTML/script markers: expected validation error.
+7. Load bootstrap as a non-super-admin authorized user: expected `announcementText` included while unrelated restricted setting keys remain filtered.
+8. Submit `updateSettings` without an object payload: expected controlled validation/auth response, not an unhandled exception.
+9. Regression: `welcomeText` and time-based greetings remain independent and unchanged.
+10. Regression: Settings sheet headers and existing key-value rows remain backward compatible.
