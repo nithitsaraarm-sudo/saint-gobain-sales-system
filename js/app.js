@@ -29,6 +29,7 @@ const SIDEBAR_MODE_STORAGE_KEY='sidebarMode';
 const SIDEBAR_MINI_STORAGE_KEY='sg_sidebar_mini';
 const SIDEBAR_MODE_EXPANDED='expanded';
 const SIDEBAR_MODE_MINI='mini';
+const APP_DEFAULT_PAGE='home';
 const PINNED_PRODUCTS_COLLAPSED_KEY='sg_pinned_products_collapsed';
 const FAVORITE_PRODUCTS_COLLAPSED_KEY='sg_favorite_products_collapsed';
 const PRODUCT_PROMOTIONS_CACHE_KEY='sg_product_promotions_cache';
@@ -36,6 +37,7 @@ const PRODUCT_PROMO_CACHE_SCHEMA_KEY='sg_product_promo_cache_schema';
 const PRODUCT_PROMO_CACHE_SCHEMA_VERSION='4';
 const $=id=>document.getElementById(id); const money=n=>Number(n||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
 let sidebarDrawerFocusReturn=null, sidebarDrawerHistoryPushed=false, sidebarDrawerClosingFromHistory=false;
+let appRouteSyncing=false, appRouteBound=false;
 
 function notifyAppVersionUpdate(){
   if(typeof toast==='function'){
@@ -122,7 +124,7 @@ function resetAuthenticatedFrontendState(){
 
 function checkAppVersion(){
   try{
-    const newVersion=String(window.APP_VERSION||'0.5.43').trim();
+    const newVersion=String(window.APP_VERSION||'0.5.44').trim();
     console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
     const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
     if(oldVersion===newVersion){
@@ -924,6 +926,7 @@ function showApp(){
   document.getElementById('appView').classList.remove('hidden');
   renderAll();
   setupSidebarToggle();
+  initializeAppRoute();
 }
 
 function hydrateBootstrapFromCache(){
@@ -987,8 +990,101 @@ async function loadData(options){
   return bootstrapPromise;
 }
 function toggleMenu(open){placeSidebarToggleButton();if(isMobileSidebar()){const sidebar=document.getElementById('sidebar');const next=typeof open==='boolean'?open:!sidebar?.classList.contains('open');setSidebarDrawer(next);return;}if(open===false)return;setSidebarMini(!isSidebarMini())}
-function go(page,btn){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active')); document.getElementById('page-'+page).classList.add('active'); document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('active')); if(btn)btn.classList.add('active'); if(isMobileSidebar())toggleMenu(false); window.scrollTo({top:0,behavior:'smooth'}); const pageData=ensurePageData(page); if(page==='quotes')ensureQuotationHistoryLoaded(); return pageData;}
-function renderAll(){renderBrand();renderProfile();renderHome();renderPromos();renderSettings();}
+function normalizeAppPageRoute(page){
+  const raw=String(page||'').trim().replace(/^#/,'').replace(/^page-/,'').split(/[?&]/)[0];
+  const route=raw.toLowerCase();
+  if(!route)return APP_DEFAULT_PAGE;
+  if(route==='dashboard'||route==='dash'||route==='kpi')return 'dashboard';
+  if(route==='home'||route==='main'||route==='หน้าหลัก')return 'home';
+  return route;
+}
+function getRequestedPageFromLocation(){
+  const hash=String(window.location&&window.location.hash||'').trim();
+  if(hash){
+    try{
+      return normalizeAppPageRoute(decodeURIComponent(hash.replace(/^#/,'')));
+    }catch(error){
+      return normalizeAppPageRoute(hash.replace(/^#/,''));
+    }
+  }
+  try{
+    const params=new URLSearchParams(window.location.search||'');
+    const page=params.get('page')||params.get('route');
+    return page?normalizeAppPageRoute(page):'';
+  }catch(error){
+    return '';
+  }
+}
+function getNavButtonForPage(page){
+  const target=normalizeAppPageRoute(page);
+  return Array.from(document.querySelectorAll('.nav button[data-page]')).find(button=>normalizeAppPageRoute(button.getAttribute('data-page'))===target)||null;
+}
+function getActivePageName(){
+  const active=document.querySelector('.page.active');
+  return active&&active.id?normalizeAppPageRoute(active.id):'';
+}
+function setAppPageRoute(page,options){
+  const opts=options||{};
+  if(opts.skipRoute)return;
+  const target=normalizeAppPageRoute(page);
+  const nextHash='#'+encodeURIComponent(target);
+  if(window.location.hash===nextHash)return;
+  appRouteSyncing=true;
+  try{
+    if(window.history&&window.history.pushState){
+      const state=Object.assign({},window.history.state||{},{sgPage:target});
+      if(opts.replaceRoute)window.history.replaceState(state,'',nextHash);
+      else window.history.pushState(state,'',nextHash);
+    }else{
+      window.location.hash=nextHash;
+    }
+  }catch(error){
+    try{window.location.hash=nextHash}catch(hashError){}
+  }
+  window.setTimeout(()=>{appRouteSyncing=false;},0);
+}
+function syncAppRouteFromLocation(){
+  if(appRouteSyncing){
+    appRouteSyncing=false;
+    return;
+  }
+  const requested=getRequestedPageFromLocation()||APP_DEFAULT_PAGE;
+  if(requested!==getActivePageName()){
+    go(requested,getNavButtonForPage(requested),{skipRoute:true});
+  }
+}
+function bindAppRouteEvents(){
+  if(appRouteBound)return;
+  appRouteBound=true;
+  window.addEventListener('popstate',syncAppRouteFromLocation);
+  window.addEventListener('hashchange',syncAppRouteFromLocation);
+}
+function initializeAppRoute(){
+  bindAppRouteEvents();
+  const requested=getRequestedPageFromLocation();
+  const target=requested||APP_DEFAULT_PAGE;
+  go(target,getNavButtonForPage(target),{replaceRoute:true});
+}
+function go(page,btn,options){
+  const target=normalizeAppPageRoute(page);
+  const pageEl=document.getElementById('page-'+target);
+  if(!pageEl){
+    console.warn('[NAV] Page not found:',target);
+    return {ok:false,message:'Page not found',page:target};
+  }
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  pageEl.classList.add('active');
+  document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('active'));
+  const navButton=btn||getNavButtonForPage(target);
+  if(navButton)navButton.classList.add('active');
+  setAppPageRoute(target,options);
+  if(isMobileSidebar())toggleMenu(false);
+  window.scrollTo({top:0,behavior:'smooth'});
+  const pageData=ensurePageData(target);
+  if(target==='quotes')ensureQuotationHistoryLoaded();
+  return pageData;
+}
+function renderAll(){renderBrand();renderProfile();renderHome();renderDashboard();renderPromos();renderSettings();}
 function renderBrand(){applySystemIdentityToUI(getSystemIdentitySettingsForUi());}
 function greeting(){const personal=String(USER?.greetingText||'').trim(); if(personal)return personal; let h=new Date().getHours(),s=DB.settings||{}; if(h<12)return s.greetingMorning||'สวัสดีตอนเช้า'; if(h<17)return s.greetingAfternoon||'สวัสดีตอนบ่าย'; if(h<21)return s.greetingEvening||'สวัสดีตอนเย็น'; return s.greetingNight||'สวัสดีตอนดึก';}
 function getRawProfileImageUrl(user){const data=user&&typeof user==='object'?user:{};return String(data.profileImageUrl||data.profilePhotoUrl||data.avatarUrl||data.photoUrl||data.profileImage||'').trim()}
@@ -2966,7 +3062,7 @@ function isCancelledQuote(quote){
   return normalizeDashboardStatus(quote.status)==='CANCELLED';
 }
 function ensureDashboardLayout(){
-  const page=$('page-home');
+  const page=$('page-dashboard');
   if(!page)return null;
   let root=$('dashboardContent');
   if(!root){
@@ -3173,12 +3269,60 @@ function renderDashboardTopList(items,renderer,emptyText){
   if(!list.length)return `<div class="dashboard-list-card dashboard-empty">${dashboardText(emptyText,'-')}</div>`;
   return list.map(renderer).join('');
 }
+function getHomeQuickActionDefinitions(){
+  return [
+    {page:'quote',icon:'📝',label:'ออกใบเสนอราคา',description:'สร้างใบเสนอราคาใหม่'},
+    {page:'customers',icon:'🏪',label:'ร้านค้า',description:'ค้นหาและดูข้อมูลร้านค้า'},
+    {page:'products',icon:'📦',label:'สินค้า',description:'ค้นหาสินค้าและราคา'},
+    {page:'promos',icon:'🏷️',label:'โปรโมชั่น',description:'ดูโปรโมชั่นที่ใช้งาน'},
+    {page:'quotes',icon:'📁',label:'ประวัติใบเสนอราคา',description:'ค้นหาและเปิดใบเสนอราคาเดิม'},
+    {page:'dashboard',icon:'📊',label:'Dashboard',description:'ดู KPI และภาพรวมธุรกิจ'}
+  ];
+}
+function renderHomeCommandCenter(){
+  const name=(currentDisplayName()||USER?.username||'-').split(' ')[0];
+  const fullName=currentDisplayName()||USER?.username||'-';
+  const userMeta=[currentRole()||'',getUserArea(USER)||''].filter(Boolean).join(' · ')||'-';
+  const setText=(id,value)=>{const el=$(id);if(el)el.textContent=value;};
+  setText('homeGreetingText',`${greeting()}, ${name} 👋`);
+  setText('homeWelcomeText',DB.settings?.welcomeText||'เลือกงานที่ต้องการเริ่มจากทางลัดด้านล่าง');
+  setText('homeUserName',fullName);
+  setText('homeUserMeta',userMeta);
+  setText('homeAppVersion',String(window.APP_VERSION||window.CACHE_VERSION||'-'));
+  const avatar=$('homeProfileAvatar');
+  if(avatar)renderProfileImageElement(avatar,currentProfileImage(),USER);
+  const announcement=String(DB.settings?.welcomeText||'').trim();
+  setText('homeAnnouncementText',announcement||'ยังไม่มีข่าวสารระบบเพิ่มเติมในขณะนี้');
+  const quickRoot=$('homeQuickActions');
+  if(quickRoot){
+    const actions=getHomeQuickActionDefinitions().filter(action=>canAccessPage(action.page));
+    quickRoot.innerHTML=actions.length?actions.map(action=>`<button type="button" class="home-action-card" onclick="go('${htmlAttr(action.page)}')" aria-label="${htmlAttr(action.label)}"><span class="home-action-icon" aria-hidden="true">${escapeHtml(action.icon)}</span><span><b>${escapeHtml(action.label)}</b><small>${escapeHtml(action.description)}</small></span></button>`).join(''):'<p class="home-empty-state">ยังไม่มีทางลัดที่สิทธิ์ปัจจุบันเข้าใช้งานได้</p>';
+  }
+  const quoteButton=$('homePrimaryQuoteButton');
+  if(quoteButton){
+    const allowed=canAccessPage('quote');
+    quoteButton.hidden=!allowed;
+    quoteButton.disabled=!allowed;
+    quoteButton.setAttribute('aria-disabled',String(!allowed));
+  }
+  const summary=$('homeShortcutSummary');
+  if(summary){
+    const customerCount=DB.customers.length||parseClientNumber(DB.counts?.customers);
+    const productCount=DB.products.length||parseClientNumber(DB.counts?.products);
+    const quoteCount=(Array.isArray(DB.quotes)?DB.quotes:[]).length;
+    summary.innerHTML=[
+      `<span><b>${dashboardText(customerCount||0)}</b><small>ร้านค้า</small></span>`,
+      `<span><b>${dashboardText(productCount||0)}</b><small>สินค้า</small></span>`,
+      `<span><b>${dashboardText(quoteCount||0)}</b><small>ใบเสนอราคา</small></span>`
+    ].join('');
+  }
+}
 function renderHomeDashboardRedesign(){
   const name=(currentDisplayName()||'-').split(' ')[0];
   const customerCount=DB.customers.length||parseClientNumber(DB.counts?.customers);
   const productCount=DB.products.length||parseClientNumber(DB.counts?.products);
-  const greetingEl=$('greetingText');
-  const welcomeEl=$('welcomeText');
+  const greetingEl=$('dashboardGreetingText');
+  const welcomeEl=$('dashboardWelcomeText');
   if(greetingEl)greetingEl.textContent=`${greeting()}, ${name} 👋`;
   if(welcomeEl)welcomeEl.textContent=DB.settings?.welcomeText||'-';
   const root=ensureDashboardLayout();
@@ -3238,7 +3382,10 @@ function renderHomeDashboardRedesign(){
     ensureQuotationHistoryLoaded();
   }
 }
-renderHome=renderHomeDashboardRedesign;
+function renderDashboard(){
+  renderHomeDashboardRedesign();
+}
+renderHome=renderHomeCommandCenter;
 function getQuoteSearchFields(){return ['quoteNo','quoteId','customerName','customerId','status','quoteType','businessUnit'];}
 function formatDateTime(value){
   if(!value)return '-';
@@ -3474,10 +3621,10 @@ async function saveProfile(){
 async function saveSettings(){return saveSystemGreetingSettings();}
 function renderHomeProfileSafe(){
   const name=(currentDisplayName()||'-').split(' ')[0];
-  const greetingEl=$('greetingText');
-  const welcomeEl=$('welcomeText');
+  const greetingEl=$('homeGreetingText');
+  const welcomeEl=$('homeWelcomeText');
   if(greetingEl)greetingEl.textContent=`${greeting()}, ${name} 👋`;
-  if(welcomeEl)welcomeEl.textContent=DB.settings?.welcomeText||'-';
+  if(welcomeEl)welcomeEl.textContent=DB.settings?.welcomeText||'เลือกงานที่ต้องการเริ่มจากทางลัดด้านล่าง';
 }
 
 const originalRenderHomeForSettings=renderHome;
@@ -4760,8 +4907,9 @@ function canViewProductsUi(){return permissionFlag('canViewProducts',['SUPER_ADM
 function canViewPromotionsUi(){return permissionFlag('canViewPromotions',['SUPER_ADMIN','ADMIN','SALES'].indexOf(currentRole())>=0)}
 function canViewReportsUi(){return permissionFlag('canViewReports',['SUPER_ADMIN','ADMIN','MANAGER','VIEWER'].indexOf(currentRole())>=0)}
 function canAccessPage(page){
-  const target=String(page||'').trim();
+  const target=normalizeAppPageRoute(page);
   if(target==='home'||target==='customers'||target==='settings')return true;
+  if(target==='dashboard')return permissionFlag('canViewDashboard',['SUPER_ADMIN','ADMIN','MANAGER','SALES','VIEWER'].indexOf(currentRole())>=0);
   if(target==='quote')return canCreateQuotationsUi();
   if(target==='products')return canViewProductsUi();
   if(target==='promos')return canViewPromotionsUi();
@@ -4795,7 +4943,7 @@ showApp=function(){baseShowAppForAuth();applyRolePermissions();};
 const baseRenderAllForAuth=renderAll;
 renderAll=function(){baseRenderAllForAuth();renderUsers();applyRolePermissions();};
 const baseGoForAuth=go;
-go=function(page,btn){if(!canAccessPage(page)){toast('ไม่มีสิทธิ์เข้าใช้งานหน้านี้');return;}const result=baseGoForAuth(page,btn);applyRolePermissions();return result;};
+go=function(page,btn,options){const target=normalizeAppPageRoute(page);if(!canAccessPage(target)){toast('ไม่มีสิทธิ์เข้าใช้งานหน้านี้');return {ok:false,code:'FORBIDDEN',page:target};}const result=baseGoForAuth(target,btn,options);applyRolePermissions();return result;};
 const baseEnsurePageDataForAuth=ensurePageData;
 ensurePageData=function(page){if(page==='users'){return loadUsers();}if(page==='customers'){return baseEnsurePageDataForAuth(page).then(response=>{scheduleFavoriteCustomersLoad();return response;});}if(page==='products'){return Promise.all([baseEnsurePageDataForAuth(page),loadProductPreferences()]).then(responses=>{renderProducts();return {ok:true,data:responses};});}if(page==='quote'){return Promise.all([baseEnsurePageDataForAuth(page),loadProductPreferences()]).then(async responses=>{if(typeof window.initializePendingQuotationContext==='function'){const pending=await window.initializePendingQuotationContext();if(pending&&pending.ok===false)return pending;}if(typeof window.initializeQuotationDraftRecovery==='function'){const recovery=await window.initializeQuotationDraftRecovery();if(recovery&&recovery.ok===false)return recovery;}return {ok:true,data:responses};});}return baseEnsurePageDataForAuth(page);};
 async function loadUsers(){
@@ -4879,7 +5027,9 @@ saveUserForm=async function(userId){
 const baseRenderHistoryForAuth=renderHistory;
 renderHistory=function(){baseRenderHistoryForAuth();if(currentRole()==='VIEWER'){document.querySelectorAll('#quoteHistory button').forEach(btn=>{if(!/เปิดดู|Open/i.test(btn.textContent||''))btn.classList.add('hidden');});}};
 const baseRenderHomeForAuth=renderHome;
-renderHome=function(){baseRenderHomeForAuth();const role=currentRole();const title=document.querySelector('#dashboardContent .dashboard-kpi-grid');if(title&&role==='VIEWER'){document.querySelectorAll('#dashboardContent button').forEach(btn=>btn.classList.add('hidden'));}};
+renderHome=function(){baseRenderHomeForAuth();};
+const baseRenderDashboardForAuth=renderDashboard;
+renderDashboard=function(){baseRenderDashboardForAuth();const role=currentRole();const title=document.querySelector('#dashboardContent .dashboard-kpi-grid');if(title&&role==='VIEWER'){document.querySelectorAll('#dashboardContent button').forEach(btn=>btn.classList.add('hidden'));}};
 function getQuoteProductPreferenceId(product){return String(product&& (product.productId||product.sku||product.productCode||product.id||product.itemCode) || '').trim()}
 function normalizeQuoteProductPreferenceId(value){return String(value||'').trim().toLowerCase()}
 function getFavoriteProductIdSet(){return new Set(FAVORITE_PRODUCTS.map(product=>normalizeQuoteProductPreferenceId(getQuoteProductPreferenceId(product))).filter(Boolean))}
@@ -4999,6 +5149,6 @@ async function persistPinnedProductOrder(){const grid=$('pinnedProductGrid');if(
 function bindPinnedProductDragAndDrop(){const grid=$('pinnedProductGrid');if(!grid||grid.dataset.bound)return;grid.dataset.bound='true';let dragged=null;grid.addEventListener('dragstart',event=>{dragged=event.target.closest('.pinned-product-card');if(!dragged)return;dragged.classList.add('is-dragging');event.dataTransfer.effectAllowed='move'});grid.addEventListener('dragover',event=>{event.preventDefault();const target=event.target.closest('.pinned-product-card');if(dragged&&target&&target!==dragged)grid.insertBefore(dragged,target)});grid.addEventListener('dragend',()=>{if(dragged)dragged.classList.remove('is-dragging');dragged=null;persistPinnedProductOrder()});let timer=null,touchCard=null;grid.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'||event.target.closest('button,a,[data-no-drag]'))return;touchCard=event.target.closest('.pinned-product-card');if(touchCard)timer=setTimeout(()=>{touchCard.classList.add('is-dragging');try{touchCard.setPointerCapture(event.pointerId)}catch(error){}},350)});grid.addEventListener('pointermove',event=>{if(!touchCard||!touchCard.classList.contains('is-dragging'))return;event.preventDefault();const target=document.elementFromPoint(event.clientX,event.clientY)?.closest('.pinned-product-card');if(target&&target!==touchCard)grid.insertBefore(touchCard,target)});const finish=()=>{clearTimeout(timer);if(touchCard&&touchCard.classList.contains('is-dragging')){touchCard.classList.remove('is-dragging');persistPinnedProductOrder()}touchCard=null};grid.addEventListener('pointerup',finish);grid.addEventListener('pointercancel',finish)}
 const baseFilterQuoteProductsByBusinessUnitForPreferences=filterQuoteProductsByBusinessUnit;
 filterQuoteProductsByBusinessUnit=function(query,businessUnit){return baseFilterQuoteProductsByBusinessUnitForPreferences(query,businessUnit).map(decorateQuotePreferenceProduct).sort((a,b)=>productPreferenceRank(a)-productPreferenceRank(b)||rankQuoteProductBusinessUnit(a,businessUnit)-rankQuoteProductBusinessUnit(b,businessUnit)||rankQuoteProduct(a,query)-rankQuoteProduct(b,query)||String(a.productName||'').localeCompare(String(b.productName||''),'th'))};
-window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderCustomers=renderCustomers; window.openCustomerDetailsModal=openCustomerDetailsModal; window.openCustomerEditModal=openCustomerEditModal; window.toggleFavoriteCustomer=toggleFavoriteCustomer; window.handleCustomerAction=handleCustomerAction; window.bindCustomerCardActions=bindCustomerCardActions; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.handleProductCardCalculatorClick=handleProductCardCalculatorClick; window.isProductCardInteractiveClick=isProductCardInteractiveClick; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.createAddProductButton=createAddProductButton; window.addProductCardToQuote=addProductCardToQuote; window.handleProductAction=handleProductAction; window.bindProductCardActions=bindProductCardActions; window.openProductPromotionDetail=openProductPromotionDetail; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.loadPromotionDashboard=loadPromotionDashboard; window.refreshPromotionDashboard=refreshPromotionDashboard; window.openPromotionDetail=openPromotionDetail; window.renderPromotionProductPanel=renderPromotionProductPanel; window.closePromotionProductPanel=closePromotionProductPanel; window.goToPromotionProduct=goToPromotionProduct; window.buildProductPromotionDashboardFromProducts=buildPromotionDashboardFromProducts; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.resetAuthenticatedFrontendState=resetAuthenticatedFrontendState; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.canCreateQuotationsUi=canCreateQuotationsUi; window.canEditQuotationsUi=canEditQuotationsUi; window.canViewQuotationsUi=canViewQuotationsUi; window.canExportQuotationsUi=canExportQuotationsUi; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
+window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderDashboard=renderDashboard; window.renderCustomers=renderCustomers; window.openCustomerDetailsModal=openCustomerDetailsModal; window.openCustomerEditModal=openCustomerEditModal; window.toggleFavoriteCustomer=toggleFavoriteCustomer; window.handleCustomerAction=handleCustomerAction; window.bindCustomerCardActions=bindCustomerCardActions; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.handleProductCardCalculatorClick=handleProductCardCalculatorClick; window.isProductCardInteractiveClick=isProductCardInteractiveClick; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.createAddProductButton=createAddProductButton; window.addProductCardToQuote=addProductCardToQuote; window.handleProductAction=handleProductAction; window.bindProductCardActions=bindProductCardActions; window.openProductPromotionDetail=openProductPromotionDetail; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.loadPromotionDashboard=loadPromotionDashboard; window.refreshPromotionDashboard=refreshPromotionDashboard; window.openPromotionDetail=openPromotionDetail; window.renderPromotionProductPanel=renderPromotionProductPanel; window.closePromotionProductPanel=closePromotionProductPanel; window.goToPromotionProduct=goToPromotionProduct; window.buildProductPromotionDashboardFromProducts=buildPromotionDashboardFromProducts; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.resetAuthenticatedFrontendState=resetAuthenticatedFrontendState; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.canCreateQuotationsUi=canCreateQuotationsUi; window.canEditQuotationsUi=canEditQuotationsUi; window.canViewQuotationsUi=canViewQuotationsUi; window.canExportQuotationsUi=canExportQuotationsUi; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
 window.createProductIdentityKey=createProductIdentityKey; window.dedupeExactProducts=dedupeExactProducts; window.dedupeExactProductsWithReport=dedupeExactProductsWithReport; window.cloneProductRecordForSelection=cloneProductRecordForSelection; window.getStableProductRecordKey=getStableProductRecordKey; window.registerProductRecordSelection=registerProductRecordSelection; window.resolveProductRecordSelection=resolveProductRecordSelection; window.renderProductThumbnailHtml=renderProductThumbnailHtml; window.getProductImageSource=getProductImageSource;
 window.normalizeSystemIdentitySettings=normalizeSystemIdentitySettings; window.applySystemIdentityToUI=applySystemIdentityToUI; window.renderLoginBranding=renderLoginBranding; window.renderSidebarBranding=renderSidebarBranding; window.refreshPublicSystemSettings=refreshPublicSystemSettings; window.setPublicSystemSettings=setPublicSystemSettings; window.loadSystemIdentitySettingsForSettings=loadSystemIdentitySettingsForSettings; window.saveSystemIdentitySettings=saveSystemIdentitySettings; window.savePersonalGreetingSettings=savePersonalGreetingSettings; window.saveSystemGreetingSettings=saveSystemGreetingSettings; window.canManageSystemIdentitySettings=canManageSystemIdentitySettings; window.applySettingsPermissionUi=applySettingsPermissionUi;

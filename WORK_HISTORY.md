@@ -1,5 +1,76 @@
 # Saint-Gobain Sales System - Work History
 
+## 2026-07-30 — New Home command center and Dashboard route split
+
+Scope:
+
+- Created a new Home page as a work-starting command center.
+- Moved the existing KPI Dashboard UI to its own `dashboard` route.
+- Preserved existing Dashboard metric calculations, quotation/customer/product data sources, and business logic.
+- Preserved backend APIs, Apps Script code, Google Sheet schema, RBAC policy, area permissions, authentication, quotation logic, and pricing logic.
+
+Audit result:
+
+- Previous default page was `#page-home`, and `#page-home` rendered the KPI Dashboard.
+- The Dashboard renderer was `renderHomeDashboardRedesign()` in `js/app.js`, using `buildDashboardMetrics()`.
+- Sidebar/mobile drawer navigation is static markup in `index.html`; mobile reuses the same sidebar DOM.
+- The primary navigation function was `go(page, btn)` with no page hash/pushState route support.
+- Existing browser history usage was limited to the mobile sidebar drawer.
+- No breadcrumb renderer was found.
+- `document.title` is only set from company/system identity settings.
+- PWA `start_url` remains `./index.html`; service worker serves navigation fallback to cached `index.html`.
+
+Implementation:
+
+- Added `หน้าหลัก` navigation item for the new Home page.
+- Added `Dashboard` navigation item for the existing KPI Dashboard.
+- Created `#page-home` command center sections:
+  - personalized greeting
+  - current user/profile chip
+  - Gyproc and Weber branding
+  - primary “ออกใบเสนอราคาใหม่” action
+  - permission-aware quick actions
+  - system version / announcement / existing record summary
+- Created `#page-dashboard` for the existing KPI Dashboard shell.
+- Updated `ensureDashboardLayout()` to target `#page-dashboard`.
+- Kept Dashboard calculations on the existing `buildDashboardMetrics()` / `renderHomeDashboardRedesign()` path.
+- Added `renderDashboard()` as the Dashboard renderer while `renderHome()` now renders the command center.
+- Added minimal hash route support:
+  - default route: `home`
+  - Dashboard route: `dashboard`
+  - existing module routes remain unchanged
+  - route helpers support refresh/back-forward through `#home`, `#dashboard`, etc.
+- Quick actions call existing routes only and are filtered with `canAccessPage()`.
+- Added scoped Home CSS only; no global button/card rules were changed.
+- Bumped runtime/cache version to `0.5.44`.
+
+Files changed:
+
+- `index.html`
+- `js/app.js`
+- `css/main.css`
+- `js/api.js`
+- `js/config.js`
+- `service-worker.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Validation notes:
+
+- Static scan confirmed `#page-home` contains the new command center and `#page-dashboard` contains the Dashboard shell.
+- Static scan confirmed `data-page="home"` / `go('home')`, `data-page="dashboard"` / `go('dashboard')`, and `data-page="users"` / `go('users')` are present.
+- Static scan confirmed `ensureDashboardLayout()` targets `page-dashboard`.
+- Static scan confirmed Dashboard still uses `buildDashboardMetrics()` and `renderHomeDashboardRedesign()`.
+- Static scan confirmed runtime files use `0.5.44`; no stale `0.5.43` strings remain in checked runtime files.
+- `git diff --check` passed with only line-ending warnings.
+- `node --check js/app.js` could not run because Node.js is not available in this environment.
+- Runtime browser/device/PWA validation is still required on Desktop Chrome/Edge, Android Chrome, iPhone Safari, and installed PWA.
+- Rollback command for this phase:
+
+```powershell
+git checkout -- index.html js/app.js css/main.css js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
+```
+
 ## 2026-07-29 - Quotation local draft expiration
 
 ### Branch
