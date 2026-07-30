@@ -471,3 +471,55 @@ Validation notes:
 ```powershell
 git checkout -- js/app.js index.html js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
 ```
+
+## 2026-07-30 — Design System scroll standards
+
+Scope:
+
+- Implemented the UI-only scrolling standard for existing scrollable sections.
+- No backend, API, Google Sheet schema, RBAC policy, area permission, pricing, discount, VAT, or quotation formula changes were made.
+
+Audit result:
+
+- Dashboard KPI cards in `index.html` used `.grid4`, which wrapped as a grid instead of behaving as a horizontal KPI rail.
+- Dashboard widgets and dashboard recent/best lists used `.cols`, `.list`, and `.best`, which were grid/vertical layouts.
+- Promotion summary and promotion cards used grid layouts and collapsed to one column on mobile instead of horizontal card rails.
+- Customer favorites already had horizontal overflow, but lacked the full Design System touch/smooth/no-y scroll standard.
+- Quotation pinned/favorite product lists used `.quote-preference-list` as a vertical grid.
+- Product Catalog, Product Search, Customer List, Quotation History, Quotation Cart Items, Promotion Product List, Reports, and User Management were already vertical/list/grid datasets and should remain vertical.
+
+Implementation:
+
+- Added scoped `ds-horizontal-scroll` utility styles with `display:flex`, `overflow-x:auto`, `overflow-y:hidden`, smooth scrolling, iOS touch scrolling, snap alignment, and `overscroll-behavior-x:contain`.
+- Applied horizontal scroll classes only to real horizontal sections:
+  - Dashboard KPI cards
+  - Dashboard widget cards
+  - Dashboard recent customers / active promotions rows
+  - Dashboard best products
+  - Promotion summary cards
+  - Promotion cards
+- Standardized existing customer favorite rails and quotation pinned/favorite product lists to the same touch-scroll behavior.
+- Added vertical safeguards for large dataset lists: Products, Quotation Product Search Results, Customers, Quote History, Quotation Cart, User List, and Promotion Product List.
+- Bumped app/service-worker version to `0.5.41` so browser/PWA cache picks up the CSS/layout changes.
+
+Files changed:
+
+- `index.html`
+- `css/main.css`
+- `js/app.js`
+- `js/api.js`
+- `js/config.js`
+- `service-worker.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Validation notes:
+
+- Static scan confirmed the new horizontal selectors and vertical safeguards are present.
+- `git diff --check` passed with only line-ending warnings.
+- Runtime browser/device/PWA validation is still required on Desktop Chrome/Edge, Android Chrome, iPhone Safari, and PWA.
+- Rollback command for this phase:
+
+```powershell
+git checkout -- index.html css/main.css js/app.js js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
+```
