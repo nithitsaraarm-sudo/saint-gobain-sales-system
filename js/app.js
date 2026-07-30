@@ -43,16 +43,16 @@ const NAVIGATION_LABELS=Object.freeze({
   settings:'ตั้งค่า'
 });
 const NAVIGATION_ITEMS=Object.freeze([
-  Object.freeze({page:'home',labelKey:'home',iconSrc:'assets/icons/sidebar/home.png'}),
-  Object.freeze({page:'dashboard',labelKey:'dashboard',iconSrc:'assets/icons/sidebar/dashboard.png'}),
-  Object.freeze({page:'quote',labelKey:'newQuotation',iconSrc:'assets/icons/sidebar/create-quotation.png'}),
-  Object.freeze({page:'customers',labelKey:'customers',iconSrc:'assets/icons/sidebar/customer.png'}),
-  Object.freeze({page:'products',labelKey:'products',iconSrc:'assets/icons/sidebar/product.png'}),
-  Object.freeze({page:'promos',labelKey:'promotions',iconSrc:'assets/icons/sidebar/promotion.png'}),
-  Object.freeze({page:'quotes',labelKey:'quotationHistory',iconSrc:'assets/icons/sidebar/quotation-history.png'}),
-  Object.freeze({page:'users',labelKey:'users',iconSrc:'assets/icons/sidebar/users.png'}),
-  Object.freeze({page:'report',labelKey:'reports',iconSrc:'assets/icons/sidebar/reports.png'}),
-  Object.freeze({page:'settings',labelKey:'settings',iconSrc:'assets/icons/sidebar/settings.png'})
+  Object.freeze({id:'home',route:'home',labelKey:'home',iconSrc:'assets/icons/sidebar/home.png'}),
+  Object.freeze({id:'dashboard',route:'dashboard',labelKey:'dashboard',iconSrc:'assets/icons/sidebar/dashboard.png'}),
+  Object.freeze({id:'newQuotation',route:'quote',labelKey:'newQuotation',iconSrc:'assets/icons/sidebar/create-quotation.png'}),
+  Object.freeze({id:'customers',route:'customers',labelKey:'customers',iconSrc:'assets/icons/sidebar/customer.png'}),
+  Object.freeze({id:'products',route:'products',labelKey:'products',iconSrc:'assets/icons/sidebar/product.png'}),
+  Object.freeze({id:'promotions',route:'promos',labelKey:'promotions',iconSrc:'assets/icons/sidebar/promotion.png'}),
+  Object.freeze({id:'quotationHistory',route:'quotes',labelKey:'quotationHistory',iconSrc:'assets/icons/sidebar/quotation-history.png'}),
+  Object.freeze({id:'users',route:'users',labelKey:'users',iconSrc:'assets/icons/sidebar/users.png'}),
+  Object.freeze({id:'reports',route:'report',labelKey:'reports',iconSrc:'assets/icons/sidebar/reports.png'}),
+  Object.freeze({id:'settings',route:'settings',labelKey:'settings',iconSrc:'assets/icons/sidebar/settings.png'})
 ]);
 const NAVIGATION_PAGE_LABEL_KEYS=Object.freeze({
   home:'home',
@@ -74,6 +74,7 @@ const PRODUCT_PROMO_CACHE_SCHEMA_VERSION='4';
 const $=id=>document.getElementById(id); const money=n=>Number(n||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
 let sidebarDrawerFocusReturn=null, sidebarDrawerHistoryPushed=false, sidebarDrawerClosingFromHistory=false;
 let appRouteSyncing=false, appRouteBound=false;
+let navigationConfigValidated=false;
 
 function getNavigationLabel(labelKey,fallback){
   const key=String(labelKey||'').trim();
@@ -85,21 +86,70 @@ function getNavigationLabelForPage(page,fallback){
   return getNavigationLabel(NAVIGATION_PAGE_LABEL_KEYS[target],fallback||target);
 }
 
+function getNavigationRoute(item){
+  const data=item&&typeof item==='object'?item:{};
+  return normalizeAppPageRoute(data.route||data.page||data.id||'');
+}
+
+function getNavigationButtonRoute(button){
+  const data=button&&button.dataset?button.dataset:{};
+  return normalizeAppPageRoute(data.route||data.page||'');
+}
+
 function getNavigationItemForPage(page){
   const target=normalizeAppPageRoute(page);
-  return NAVIGATION_ITEMS.find(item=>normalizeAppPageRoute(item.page)===target)||null;
+  return NAVIGATION_ITEMS.find(item=>getNavigationRoute(item)===target)||null;
+}
+
+function validateNavigationConfiguration(){
+  if(navigationConfigValidated)return;
+  navigationConfigValidated=true;
+  const routes=new Set();
+  NAVIGATION_ITEMS.forEach(item=>{
+    const route=getNavigationRoute(item);
+    if(!route){
+      console.warn('[NAV] Missing route in navigation item:',item);
+      return;
+    }
+    if(routes.has(route)){
+      console.warn('[NAV] Duplicate sidebar route:',route,item);
+    }
+    routes.add(route);
+    if(typeof document!=='undefined'&&!document.getElementById('page-'+route)){
+      console.warn('[NAV] Sidebar route has no matching page:',route,item);
+    }
+  });
 }
 
 function renderSidebarNavigation(){
   const nav=document.getElementById('mainNavigation')||document.querySelector('.nav');
   if(!nav)return;
+  validateNavigationConfiguration();
   const activePage=getActivePageName()||APP_DEFAULT_PAGE;
   nav.innerHTML=NAVIGATION_ITEMS.map(item=>{
-    const page=normalizeAppPageRoute(item.page);
+    const id=String(item.id||item.labelKey||item.route||'').trim();
+    const page=getNavigationRoute(item);
     const label=getNavigationLabel(item.labelKey,page);
     const active=page===normalizeAppPageRoute(activePage)?' class="active"':'';
-    return `<button type="button"${active} data-page="${htmlAttr(page)}" onclick="go('${htmlAttr(page)}',this)" title="${htmlAttr(label)}" aria-label="${htmlAttr(label)}"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="${htmlAttr(item.iconSrc)}" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">${escapeHtml(label)}</span></button>`;
+    return `<button type="button"${active} data-nav-id="${htmlAttr(id)}" data-route="${htmlAttr(page)}" data-page="${htmlAttr(page)}" title="${htmlAttr(label)}" aria-label="${htmlAttr(label)}"><span class="nav-icon" aria-hidden="true"><img class="sidebar-menu-icon" src="${htmlAttr(item.iconSrc)}" alt="" loading="eager" decoding="async" onerror="this.style.visibility='hidden'"></span><span class="nav-label">${escapeHtml(label)}</span></button>`;
   }).join('');
+}
+
+function bindSidebarNavigationEvents(){
+  const nav=document.getElementById('mainNavigation')||document.querySelector('.nav');
+  if(!nav||nav.dataset.navigationBound==='true')return;
+  nav.dataset.navigationBound='true';
+  nav.addEventListener('click',function(event){
+    const button=event.target&&event.target.closest?event.target.closest('button[data-route]'):null;
+    if(!button||!nav.contains(button))return;
+    event.preventDefault();
+    const route=getNavigationButtonRoute(button);
+    if(!route){
+      console.warn('[NAV] Missing route for sidebar item:',button);
+      return;
+    }
+    go(route,button);
+  });
 }
 
 function applyNavigationLabels(root){
@@ -203,7 +253,7 @@ function resetAuthenticatedFrontendState(){
 
 function checkAppVersion(){
   try{
-    const newVersion=String(window.APP_VERSION||'0.5.45').trim();
+    const newVersion=String(window.APP_VERSION||'0.5.46').trim();
     console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
     const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
     if(oldVersion===newVersion){
@@ -963,6 +1013,7 @@ function enhanceSidebarNavItems(){
 
 function setupSidebarToggle(){
   renderSidebarNavigation();
+  bindSidebarNavigationEvents();
   enhanceSidebarNavItems();
   placeSidebarToggleButton();
   if(isMobileSidebar()){
@@ -1097,7 +1148,7 @@ function getRequestedPageFromLocation(){
 }
 function getNavButtonForPage(page){
   const target=normalizeAppPageRoute(page);
-  return Array.from(document.querySelectorAll('.nav button[data-page]')).find(button=>normalizeAppPageRoute(button.getAttribute('data-page'))===target)||null;
+  return Array.from(document.querySelectorAll('.nav button[data-route],.nav button[data-page]')).find(button=>getNavigationButtonRoute(button)===target)||null;
 }
 function getActivePageName(){
   const active=document.querySelector('.page.active');
@@ -1155,7 +1206,8 @@ function go(page,btn,options){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   pageEl.classList.add('active');
   document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('active'));
-  const navButton=btn||getNavButtonForPage(target);
+  const passedButton=btn&&getNavigationButtonRoute(btn)===target?btn:null;
+  const navButton=passedButton||getNavButtonForPage(target);
   if(navButton)navButton.classList.add('active');
   setAppPageRoute(target,options);
   if(isMobileSidebar())toggleMenu(false);
@@ -4999,7 +5051,7 @@ function canAccessPage(page){
   return false;
 }
 function applyRolePermissions(){
-  document.querySelectorAll('.nav button[data-page]').forEach(btn=>{const page=btn.getAttribute('data-page');btn.classList.toggle('hidden',!canAccessPage(page));});
+  document.querySelectorAll('.nav button[data-route],.nav button[data-page]').forEach(btn=>{const page=getNavigationButtonRoute(btn);btn.classList.toggle('hidden',!canAccessPage(page));});
   document.querySelectorAll('[data-permission]').forEach(btn=>{const permission=btn.getAttribute('data-permission');const allowed=permissionFlag(permission,false);btn.classList.toggle('hidden',!allowed);btn.hidden=!allowed;});
   document.querySelectorAll('.main-action:not([data-permission])').forEach(btn=>{btn.classList.toggle('hidden',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0);});
   const quoteActions=document.querySelector('#page-quote .actions');
@@ -5229,7 +5281,7 @@ async function persistPinnedProductOrder(){const grid=$('pinnedProductGrid');if(
 function bindPinnedProductDragAndDrop(){const grid=$('pinnedProductGrid');if(!grid||grid.dataset.bound)return;grid.dataset.bound='true';let dragged=null;grid.addEventListener('dragstart',event=>{dragged=event.target.closest('.pinned-product-card');if(!dragged)return;dragged.classList.add('is-dragging');event.dataTransfer.effectAllowed='move'});grid.addEventListener('dragover',event=>{event.preventDefault();const target=event.target.closest('.pinned-product-card');if(dragged&&target&&target!==dragged)grid.insertBefore(dragged,target)});grid.addEventListener('dragend',()=>{if(dragged)dragged.classList.remove('is-dragging');dragged=null;persistPinnedProductOrder()});let timer=null,touchCard=null;grid.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'||event.target.closest('button,a,[data-no-drag]'))return;touchCard=event.target.closest('.pinned-product-card');if(touchCard)timer=setTimeout(()=>{touchCard.classList.add('is-dragging');try{touchCard.setPointerCapture(event.pointerId)}catch(error){}},350)});grid.addEventListener('pointermove',event=>{if(!touchCard||!touchCard.classList.contains('is-dragging'))return;event.preventDefault();const target=document.elementFromPoint(event.clientX,event.clientY)?.closest('.pinned-product-card');if(target&&target!==touchCard)grid.insertBefore(touchCard,target)});const finish=()=>{clearTimeout(timer);if(touchCard&&touchCard.classList.contains('is-dragging')){touchCard.classList.remove('is-dragging');persistPinnedProductOrder()}touchCard=null};grid.addEventListener('pointerup',finish);grid.addEventListener('pointercancel',finish)}
 const baseFilterQuoteProductsByBusinessUnitForPreferences=filterQuoteProductsByBusinessUnit;
 filterQuoteProductsByBusinessUnit=function(query,businessUnit){return baseFilterQuoteProductsByBusinessUnitForPreferences(query,businessUnit).map(decorateQuotePreferenceProduct).sort((a,b)=>productPreferenceRank(a)-productPreferenceRank(b)||rankQuoteProductBusinessUnit(a,businessUnit)-rankQuoteProductBusinessUnit(b,businessUnit)||rankQuoteProduct(a,query)-rankQuoteProduct(b,query)||String(a.productName||'').localeCompare(String(b.productName||''),'th'))};
-window.NAVIGATION_LABELS=NAVIGATION_LABELS; window.NAVIGATION_ITEMS=NAVIGATION_ITEMS; window.getNavigationLabel=getNavigationLabel; window.getNavigationLabelForPage=getNavigationLabelForPage; window.renderSidebarNavigation=renderSidebarNavigation; window.applyNavigationLabels=applyNavigationLabels;
+window.NAVIGATION_LABELS=NAVIGATION_LABELS; window.NAVIGATION_ITEMS=NAVIGATION_ITEMS; window.getNavigationLabel=getNavigationLabel; window.getNavigationLabelForPage=getNavigationLabelForPage; window.getNavigationRoute=getNavigationRoute; window.getNavigationButtonRoute=getNavigationButtonRoute; window.renderSidebarNavigation=renderSidebarNavigation; window.bindSidebarNavigationEvents=bindSidebarNavigationEvents; window.applyNavigationLabels=applyNavigationLabels;
 window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderDashboard=renderDashboard; window.renderCustomers=renderCustomers; window.openCustomerDetailsModal=openCustomerDetailsModal; window.openCustomerEditModal=openCustomerEditModal; window.toggleFavoriteCustomer=toggleFavoriteCustomer; window.handleCustomerAction=handleCustomerAction; window.bindCustomerCardActions=bindCustomerCardActions; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.handleProductCardCalculatorClick=handleProductCardCalculatorClick; window.isProductCardInteractiveClick=isProductCardInteractiveClick; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.createAddProductButton=createAddProductButton; window.addProductCardToQuote=addProductCardToQuote; window.handleProductAction=handleProductAction; window.bindProductCardActions=bindProductCardActions; window.openProductPromotionDetail=openProductPromotionDetail; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.loadPromotionDashboard=loadPromotionDashboard; window.refreshPromotionDashboard=refreshPromotionDashboard; window.openPromotionDetail=openPromotionDetail; window.renderPromotionProductPanel=renderPromotionProductPanel; window.closePromotionProductPanel=closePromotionProductPanel; window.goToPromotionProduct=goToPromotionProduct; window.buildProductPromotionDashboardFromProducts=buildPromotionDashboardFromProducts; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.resetAuthenticatedFrontendState=resetAuthenticatedFrontendState; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.canCreateQuotationsUi=canCreateQuotationsUi; window.canEditQuotationsUi=canEditQuotationsUi; window.canViewQuotationsUi=canViewQuotationsUi; window.canExportQuotationsUi=canExportQuotationsUi; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
 window.createProductIdentityKey=createProductIdentityKey; window.dedupeExactProducts=dedupeExactProducts; window.dedupeExactProductsWithReport=dedupeExactProductsWithReport; window.cloneProductRecordForSelection=cloneProductRecordForSelection; window.getStableProductRecordKey=getStableProductRecordKey; window.registerProductRecordSelection=registerProductRecordSelection; window.resolveProductRecordSelection=resolveProductRecordSelection; window.renderProductThumbnailHtml=renderProductThumbnailHtml; window.getProductImageSource=getProductImageSource;
 window.normalizeSystemIdentitySettings=normalizeSystemIdentitySettings; window.applySystemIdentityToUI=applySystemIdentityToUI; window.renderLoginBranding=renderLoginBranding; window.renderSidebarBranding=renderSidebarBranding; window.refreshPublicSystemSettings=refreshPublicSystemSettings; window.setPublicSystemSettings=setPublicSystemSettings; window.loadSystemIdentitySettingsForSettings=loadSystemIdentitySettingsForSettings; window.saveSystemIdentitySettings=saveSystemIdentitySettings; window.savePersonalGreetingSettings=savePersonalGreetingSettings; window.saveSystemGreetingSettings=saveSystemGreetingSettings; window.canManageSystemIdentitySettings=canManageSystemIdentitySettings; window.applySettingsPermissionUi=applySettingsPermissionUi;

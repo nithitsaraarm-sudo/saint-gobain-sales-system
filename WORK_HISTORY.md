@@ -1,5 +1,76 @@
 # Saint-Gobain Sales System - Work History
 
+## 2026-07-30 — Sidebar route-key navigation hardening
+
+Scope:
+
+- Audited and hardened sidebar navigation after the navigation label/constants changes.
+- Ensured sidebar routing uses unique route keys, not display labels, array index, or label keys.
+- Preserved existing route names, page ids, RBAC, area permission, backend APIs, Apps Script code, Google Sheet schema, quotation logic, and PWA behavior.
+
+Audit result:
+
+- Sidebar navigation is rendered from `NAVIGATION_ITEMS` in `js/app.js`.
+- Mobile drawer reuses the same sidebar DOM and does not have a separate renderer.
+- Breadcrumb renderer was not found in the repository.
+- The previous navigation metadata used one overloaded `page` field as the route/page id.
+- The sidebar renderer embedded inline `onclick="go(...)"` directly from that overloaded field.
+- Active menu state trusted a passed button in `go()` without verifying that the button route matched the requested target.
+- No index-based navigation was found, but the route contract was not explicit enough to prevent wrong-target regressions.
+
+Implementation:
+
+- Updated `NAVIGATION_ITEMS` to use explicit `id` and `route` fields.
+- Rendered sidebar buttons with:
+  - `data-nav-id`
+  - `data-route`
+  - backward-compatible `data-page`
+- Removed inline sidebar navigation `onclick` from generated nav buttons.
+- Added delegated sidebar click handling through `bindSidebarNavigationEvents()`.
+- Navigation clicks now read only the immutable `data-route`.
+- Hardened `getNavButtonForPage()` and `applyRolePermissions()` to use `getNavigationButtonRoute()`.
+- Hardened `go()` so a passed button is used for active state only when its route matches the target route.
+- Added non-blocking `validateNavigationConfiguration()` checks for duplicate routes and missing page DOM targets.
+- Bumped runtime/cache version to `0.5.46`.
+- Updated `TEST_CASES.md` with `REG-STATIC-006`.
+
+Files changed:
+
+- `index.html`
+- `js/app.js`
+- `js/api.js`
+- `js/config.js`
+- `service-worker.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Expected route map:
+
+- `หน้าหลัก` → `home` → `#page-home`
+- `Dashboard` → `dashboard` → `#page-dashboard`
+- `ออกใบเสนอราคา` → `quote` → `#page-quote`
+- `ร้านค้า` → `customers` → `#page-customers`
+- `สินค้า` → `products` → `#page-products`
+- `โปรโมชั่น` → `promos` → `#page-promos`
+- `ประวัติใบเสนอราคา` → `quotes` → `#page-quotes`
+- `ผู้ใช้งาน` → `users` → `#page-users`
+- `รายงาน` → `report` → `#page-report`
+- `ตั้งค่า` → `settings` → `#page-settings`
+
+Validation notes:
+
+- Static scan confirmed every `NAVIGATION_ITEMS` entry has explicit `id` and `route`.
+- Static scan confirmed generated sidebar buttons use `data-route`.
+- Static scan confirmed `bindSidebarNavigationEvents()`, `getNavigationButtonRoute()`, and route-safe active logic are present.
+- Static scan confirmed runtime files use `0.5.46`; no stale `0.5.45` strings remain in checked runtime files.
+- `git diff --check` passed with only line-ending warnings.
+- Runtime browser/device/PWA validation is still required for desktop clicks, mobile drawer clicks, browser Back/Forward, refresh, and installed PWA.
+- Rollback command for this phase:
+
+```powershell
+git checkout -- index.html js/app.js js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
+```
+
 ## 2026-07-30 — Centralized navigation labels constants
 
 Scope:
