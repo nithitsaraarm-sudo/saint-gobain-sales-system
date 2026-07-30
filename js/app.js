@@ -122,7 +122,7 @@ function resetAuthenticatedFrontendState(){
 
 function checkAppVersion(){
   try{
-    const newVersion=String(window.APP_VERSION||'0.5.41').trim();
+    const newVersion=String(window.APP_VERSION||'0.5.42').trim();
     console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
     const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
     if(oldVersion===newVersion){
@@ -3051,7 +3051,12 @@ function buildDashboardMetrics(){
     }
   });
   const noRecentCustomers=(Array.isArray(DB.customers)?DB.customers:[]).filter(c=>!recentQuoteCustomerIds[String(c.customerId||c.customerCode||'').trim()]).slice(0,5);
-  return {quotes,lines,target,actual,forecast,achievement,gap,bu,newCustomers,draft,saved,cancelled,topCustomers,topProducts,openQuoteCustomers,noRecentCustomers};
+  const dashboardCustomers=(Array.isArray(DB.customers)?DB.customers:[]).map(normalizeCustomer);
+  const totalCustomers=dashboardCustomers.length||parseClientNumber(DB.counts?.customers);
+  const activeCustomers=dashboardCustomers.filter(customer=>customer.active!==false).length;
+  const inactiveCustomers=dashboardCustomers.filter(customer=>customer.active===false).length;
+  const customerKpi={total:totalCustomers,active:activeCustomers,inactive:inactiveCustomers,newCustomers};
+  return {quotes,lines,target,actual,forecast,achievement,gap,bu,newCustomers,draft,saved,cancelled,topCustomers,topProducts,openQuoteCustomers,noRecentCustomers,customerKpi};
 }
 function renderDashboardList(items, renderer, emptyText){
   const list=Array.isArray(items)?items:[];
@@ -3141,6 +3146,99 @@ function renderHome(){
     ensureQuotationHistoryLoaded();
   }
 }
+
+function renderDashboardKpiCard(icon,title,value,caption){
+  return `<div class="stat dashboard-kpi dashboard-kpi-card"><div class="ico">${escapeHtml(icon)}</div><h3>${dashboardText(title)}</h3><b>${dashboardText(value,'0')}</b><small>${dashboardText(caption)}</small></div>`;
+}
+function renderDashboardSection(title,subtitle,trackHtml,options){
+  const data=options||{};
+  const action=data.actionLabel&&data.actionPage?`<button type="button" class="tiny dashboard-section__action" onclick="go('${htmlAttr(data.actionPage)}')" aria-label="${htmlAttr(data.actionAria||data.actionLabel)}">${escapeHtml(data.actionLabel)}</button>`:'';
+  const trackClass=data.trackClass?` ${htmlAttr(data.trackClass)}`:'';
+  return `<section class="dashboard-section" aria-labelledby="${htmlAttr(data.id)}-title">
+    <div class="dashboard-section__header">
+      <div class="dashboard-section__heading">
+        <h2 id="${htmlAttr(data.id)}-title">${dashboardText(title)}</h2>
+        ${subtitle?`<p>${dashboardText(subtitle)}</p>`:''}
+      </div>
+      ${action}
+    </div>
+    <div class="dashboard-section__track${trackClass}" tabindex="0" aria-label="${htmlAttr(title)}">${trackHtml}</div>
+  </section>`;
+}
+function renderDashboardMetricCards(items){
+  return (Array.isArray(items)?items:[]).map(item=>renderDashboardKpiCard(item.icon,item.title,item.value,item.caption)).join('');
+}
+function renderDashboardTopList(items,renderer,emptyText){
+  const list=Array.isArray(items)?items:[];
+  if(!list.length)return `<div class="dashboard-list-card dashboard-empty">${dashboardText(emptyText,'-')}</div>`;
+  return list.map(renderer).join('');
+}
+function renderHomeDashboardRedesign(){
+  const name=(currentDisplayName()||'-').split(' ')[0];
+  const customerCount=DB.customers.length||parseClientNumber(DB.counts?.customers);
+  const productCount=DB.products.length||parseClientNumber(DB.counts?.products);
+  const greetingEl=$('greetingText');
+  const welcomeEl=$('welcomeText');
+  if(greetingEl)greetingEl.textContent=`${greeting()}, ${name} 👋`;
+  if(welcomeEl)welcomeEl.textContent=DB.settings?.welcomeText||'-';
+  const root=ensureDashboardLayout();
+  const metrics=buildDashboardMetrics();
+  const customerKpi=metrics.customerKpi||{};
+  if(root){
+    const salesCards=renderDashboardMetricCards([
+      {icon:'🎯',title:'Target',value:dashboardMoney(metrics.target),caption:'เป้าหมายยอดขาย'},
+      {icon:'💰',title:'Actual',value:dashboardMoney(metrics.actual),caption:'ยอดจริงจากใบเสนอราคา'},
+      {icon:'📈',title:'Forecast',value:dashboardMoney(metrics.forecast),caption:'ประมาณการจากข้อมูลปัจจุบัน'},
+      {icon:'✅',title:'Achievement',value:(metrics.achievement?metrics.achievement.toFixed(1):'0.0')+'%',caption:'Actual / Target'}
+    ]);
+    const businessCards=renderDashboardMetricCards([
+      {icon:'🔷',title:'Gyproc total',value:dashboardMoney(metrics.bu.Gyproc),caption:'มูลค่าสินค้า Gyproc'},
+      {icon:'🟨',title:'Weber total',value:dashboardMoney(metrics.bu.Weber),caption:'มูลค่าสินค้า Weber'},
+      {icon:'📄',title:'Quotation value',value:dashboardMoney(metrics.actual),caption:'มูลค่ารวมใบเสนอราคา'},
+      {icon:'👤',title:'New customer',value:customerKpi.newCustomers||0,caption:'ลูกค้าใหม่ 30 วันล่าสุด'}
+    ]);
+    const quotationCards=renderDashboardMetricCards([
+      {icon:'🧾',title:'Total quotation',value:metrics.quotes.length,caption:'ใบเสนอราคาทั้งหมด'},
+      {icon:'💵',title:'Total value',value:dashboardMoney(metrics.actual),caption:'ไม่รวมรายการยกเลิก'},
+      {icon:'✏️',title:'Draft',value:metrics.draft.length,caption:'สถานะ DRAFT'},
+      {icon:'✅',title:'Saved',value:metrics.saved.length,caption:'สถานะ SAVED'},
+      {icon:'⛔',title:'Cancelled',value:metrics.cancelled.length,caption:'สถานะ CANCELLED'}
+    ]);
+    const customerCards=renderDashboardMetricCards([
+      {icon:'🏪',title:'Total customer',value:customerKpi.total||customerCount||0,caption:'ร้านค้าทั้งหมด'},
+      {icon:'🟢',title:'Active customer',value:customerKpi.active||0,caption:'ร้านค้าที่เปิดใช้งาน'},
+      {icon:'✨',title:'New customer',value:customerKpi.newCustomers||0,caption:'ลูกค้าใหม่ 30 วันล่าสุด'},
+      {icon:'⚪',title:'Inactive customer',value:customerKpi.inactive||0,caption:'ร้านค้าที่ปิดใช้งาน'}
+    ]);
+    const topProducts=renderDashboardTopList(metrics.topProducts,item=>`<article class="dashboard-list-card"><h3>${dashboardText(item.name)}</h3><b>${dashboardMoney(item.value)}</b><small>จำนวน ${dashboardText(item.qty||0)}</small></article>`,'ยังไม่มีสินค้าอันดับต้น');
+    const topCustomers=renderDashboardTopList(metrics.topCustomers,item=>`<article class="dashboard-list-card"><h3>${dashboardText(item.name)}</h3><b>${dashboardMoney(item.value)}</b><small>${dashboardText(item.count||0)} ใบเสนอราคา</small></article>`,'ยังไม่มีลูกค้าอันดับต้น');
+    root.innerHTML=[
+      renderDashboardSection('Sales KPI','เป้าหมาย ยอดจริง ประมาณการ และ Achievement',salesCards,{id:'dashboard-sales-kpi',trackClass:'dashboard-kpi-grid dashboard-section__track--kpi'}),
+      renderDashboardSection('Business KPI','สรุปตามแบรนด์และยอดรวมธุรกิจ',businessCards,{id:'dashboard-business-kpi',trackClass:'dashboard-section__track--compact'}),
+      renderDashboardSection('Quotation KPI','ใช้สถานะจริงที่มีในระบบปัจจุบัน',quotationCards,{id:'dashboard-quotation-kpi',trackClass:'dashboard-section__track--compact'}),
+      renderDashboardSection('Customer KPI','สรุปจากข้อมูลร้านค้าที่โหลดอยู่',customerCards,{id:'dashboard-customer-kpi',trackClass:'dashboard-section__track--compact'}),
+      renderDashboardSection('Top Product','สินค้าที่มีมูลค่าสูงสุดจากรายการใบเสนอราคา',topProducts,{id:'dashboard-top-product',trackClass:'dashboard-section__track--top',actionLabel:'ดูทั้งหมด',actionPage:'products',actionAria:'ดูสินค้าทั้งหมด'}),
+      renderDashboardSection('Top Customer','ลูกค้าที่มีมูลค่าใบเสนอราคาสูงสุด',topCustomers,{id:'dashboard-top-customer',trackClass:'dashboard-section__track--top',actionLabel:'ดูทั้งหมด',actionPage:'customers',actionAria:'ดูลูกค้าทั้งหมด'})
+    ].join('');
+  }
+  const setText=(id,value)=>{const el=$(id); if(el)el.textContent=value;};
+  setText('statQuotes',metrics.quotes.length);
+  setText('statSales',Number(metrics.actual||0).toLocaleString('th-TH'));
+  setText('statCustomers',customerCount);
+  setText('statPending',metrics.draft.length);
+  setText('rProducts',productCount);
+  setText('rCustomers',customerCount);
+  const promotionSummary=PROMOTION_DASHBOARD.summary||buildPromotionDashboardSummary(getPromotionDashboardGroups());
+  setText('rPromos',promotionSummary.totalPromotions||0);
+  setText('rQuotes',metrics.quotes.length);
+  if(canViewPromotionsUi()&&!promotionDashboardLoaded&&!promotionDashboardPromise){
+    loadPromotionDashboard({background:true});
+  }
+  if(!quoteHistoryLoaded&&!quoteHistoryPromise&&(!Array.isArray(DB.quotes)||!DB.quotes.length)){
+    ensureQuotationHistoryLoaded();
+  }
+}
+renderHome=renderHomeDashboardRedesign;
 function getQuoteSearchFields(){return ['quoteNo','quoteId','customerName','customerId','status','quoteType','businessUnit'];}
 function formatDateTime(value){
   if(!value)return '-';

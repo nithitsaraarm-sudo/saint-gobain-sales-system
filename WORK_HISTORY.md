@@ -523,3 +523,65 @@ Validation notes:
 ```powershell
 git checkout -- index.html css/main.css js/app.js js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
 ```
+
+## 2026-07-30 — Mobile Dashboard grouped KPI redesign
+
+Scope:
+
+- Implemented the approved mobile Dashboard redesign with grouped KPI sections.
+- Preserved existing Dashboard data sources and calculations from `DB.quotes`, `DB.quoteLines`, `DB.products`, `DB.customers`, and `DB.settings`.
+- No Dashboard API, Apps Script backend, Google Sheet schema, RBAC policy, area permission, authentication, navigation route, pricing, discount, VAT, or quotation formula changes were made.
+
+Audit result:
+
+- Actual Dashboard output is rendered by `js/app.js` through `renderHome()` into a dynamic `#dashboardContent` container.
+- `index.html` still contains legacy Dashboard markup, but `ensureDashboardLayout()` hides the legacy `.grid4`, `.cols`, and best-products card after inserting `#dashboardContent`.
+- Existing Dashboard CSS was concentrated in `.dashboard-*` selectors in `css/main.css`.
+- Dashboard metrics are frontend-derived from loaded in-memory data; there is no dedicated Dashboard API endpoint to change.
+- Existing available KPI fields included sales target, actual quotation value, forecast, achievement, BU totals, new customer count, quote status buckets, top customers, and top products.
+- Quotation statuses currently exposed by the app are `DRAFT`, `SAVED`, and `CANCELLED`; no new Pending/Approved status was invented.
+
+Implementation:
+
+- Added customer KPI metrics from real customer records: total, active, inactive, and new customers.
+- Added `renderHomeDashboardRedesign()` and small Dashboard rendering helpers for reusable KPI cards, section wrappers, and top-list cards.
+- Replaced the visible Dashboard layout with six grouped sections:
+  - Sales KPI
+  - Business KPI
+  - Quotation KPI
+  - Customer KPI
+  - Top Product
+  - Top Customer
+- Kept "ดูทั้งหมด" actions only where existing routes already exist: Products and Customers.
+- Added scoped Dashboard responsive CSS:
+  - Desktop: responsive grid, no unnecessary horizontal scroll.
+  - Mobile: horizontal tracks with two KPI cards per view for KPI sections.
+  - Top Product/Top Customer: wider horizontal cards on mobile.
+  - Section headings remain outside scroll containers.
+  - Scroll tracks are keyboard-focusable with visible focus rings.
+- Bumped app/service-worker version to `0.5.42` so browser/PWA cache picks up the Dashboard CSS/JS changes.
+
+Files changed:
+
+- `js/app.js`
+- `css/main.css`
+- `index.html`
+- `js/api.js`
+- `js/config.js`
+- `service-worker.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Validation notes:
+
+- Static scan confirmed all six Dashboard sections are rendered by `renderHomeDashboardRedesign()`.
+- Static scan confirmed mobile Dashboard track selectors and customer KPI fields are present.
+- Static scan confirmed runtime cache/version strings were updated to `0.5.42` and no `0.5.41` runtime strings remain in checked files.
+- `git diff --check` passed with only line-ending warnings.
+- `node --check js/app.js` could not be executed because Node.js is not installed in this environment.
+- Runtime browser/device/PWA validation is still required on Desktop Chrome/Edge, Android Chrome, iPhone Safari, and PWA.
+- Rollback command for this phase:
+
+```powershell
+git checkout -- js/app.js css/main.css index.html js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
+```
