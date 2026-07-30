@@ -1,5 +1,69 @@
 # Saint-Gobain Sales System - Work History
 
+## 2026-07-30 — Centralized navigation labels constants
+
+Scope:
+
+- Created a single shared navigation label source of truth for main application navigation.
+- Centralized approved labels:
+  - `home`: `หน้าหลัก`
+  - `dashboard`: `Dashboard`
+  - `newQuotation`: `ออกใบเสนอราคา`
+  - `customers`: `ร้านค้า`
+  - `products`: `สินค้า`
+  - `promotions`: `โปรโมชั่น`
+  - `quotationHistory`: `ประวัติใบเสนอราคา`
+  - `users`: `ผู้ใช้งาน`
+  - `reports`: `รายงาน`
+  - `settings`: `ตั้งค่า`
+- Preserved existing route keys, RBAC, area permission, backend APIs, Apps Script code, Google Sheet schema, quotation logic, and PWA behavior.
+
+Audit result:
+
+- Sidebar navigation labels were duplicated in `index.html` across visible text, `title`, and `aria-label`.
+- Home quick actions duplicated the same navigation text in `js/app.js`.
+- Main module page headings duplicated navigation labels in `index.html`.
+- Mobile navigation reuses the same sidebar DOM, so one sidebar renderer covers both desktop and mobile drawer.
+
+Implementation:
+
+- Added `NAVIGATION_LABELS`, `NAVIGATION_ITEMS`, and route-to-label mapping in `js/app.js`.
+- Added helpers:
+  - `getNavigationLabel()`
+  - `getNavigationLabelForPage()`
+  - `renderSidebarNavigation()`
+  - `applyNavigationLabels()`
+- Replaced hardcoded sidebar button markup with `#mainNavigation`, rendered from `NAVIGATION_ITEMS`.
+- Replaced module page headings with `data-nav-label` bindings.
+- Updated Home primary quotation action and Home quick actions to use navigation label keys.
+- Exported navigation constants/helpers on `window` for frontend reuse/debugging.
+- Bumped runtime/cache version to `0.5.45`.
+- Updated `TEST_CASES.md` with `REG-STATIC-005`.
+
+Files changed:
+
+- `index.html`
+- `js/app.js`
+- `js/api.js`
+- `js/config.js`
+- `service-worker.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Validation notes:
+
+- Static scan confirmed `NAVIGATION_LABELS`, `NAVIGATION_ITEMS`, `renderSidebarNavigation()`, and `applyNavigationLabels()` are present.
+- Static scan confirmed `#mainNavigation` is now the sidebar container and hardcoded sidebar label markup was removed.
+- Static scan confirmed page headings use `data-nav-label` bindings.
+- Static scan confirmed runtime files use `0.5.45`; no stale `0.5.44` strings remain in checked runtime files.
+- `git diff --check` passed with only line-ending warnings.
+- Runtime browser/device/PWA validation is still required on Desktop Chrome/Edge, Android Chrome, iPhone Safari, and installed PWA.
+- Rollback command for this phase:
+
+```powershell
+git checkout -- index.html js/app.js js/api.js js/config.js service-worker.js TEST_CASES.md WORK_HISTORY.md
+```
+
 ## 2026-07-30 — New Home command center and Dashboard route split
 
 Scope:

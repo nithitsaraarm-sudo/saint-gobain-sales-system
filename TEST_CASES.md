@@ -10,8 +10,8 @@ This catalogue remains the production test source of truth for V1. During the fi
 
 Current execution status:
 
-- Total catalogue: 84 tests
-- Static checks passed: 21
+- Total catalogue: 85 tests
+- Static checks passed: 22
 - Runtime integration tests blocked/not run: 33
 - Manual browser/PWA tests blocked/not run: 19
 - Production smoke tests blocked/not run: 11
@@ -109,11 +109,11 @@ Create or verify these records in a UAT spreadsheet before runtime execution:
 
 | Suite | Total | Static Check Passed | Not Run | Blocked | Failed | Notes |
 |---|---:|---:|---:|---:|---:|---|
-| Automated/static checks | 21 | 21 | 0 | 0 | 0 | Static checks were executed locally in repository context. |
+| Automated/static checks | 22 | 22 | 0 | 0 | 0 | Static checks were executed locally in repository context. |
 | Runtime integration tests | 33 | 0 | 0 | 33 | 0 | Blocked until live Apps Script, Google Sheets UAT data, and credentials are available. |
 | Manual browser/PWA tests | 19 | 0 | 0 | 19 | 0 | Blocked until browsers/devices/PWA install session are available. |
 | Production post-deployment smoke tests | 11 | 0 | 0 | 11 | 0 | Blocked until production deployment exists. |
-| Total | 84 | 21 | 0 | 63 | 0 | No runtime/manual pass is claimed in this document. |
+| Total | 85 | 22 | 0 | 63 | 0 | No runtime/manual pass is claimed in this document. |
 
 ## 7. Test case counts by module and priority
 
@@ -131,11 +131,11 @@ Create or verify these records in a UAT spreadsheet before runtime execution:
 | PWA | 2 | 1 | 0 | 3 |
 | QUOTE | 12 | 4 | 0 | 16 |
 | RBAC | 6 | 1 | 0 | 7 |
-| REG | 1 | 4 | 2 | 7 |
+| REG | 1 | 5 | 2 | 8 |
 | USER | 2 | 1 | 0 | 3 |
-| Total | 38 | 40 | 6 | 84 |
+| Total | 38 | 41 | 6 | 85 |
 
-Note: The canonical executable test catalogue below contains 84 rows.
+Note: The canonical executable test catalogue below contains 85 rows.
 
 ## 8. Automated/static checks
 
@@ -160,8 +160,9 @@ Note: The canonical executable test catalogue below contains 84 rows.
 | A11Y-STATIC-004 | A11Y | P1 | Automated/static check | All | Repository available | `js/app.js`, `css/main.css` | 1. Inspect Dashboard renderer and responsive CSS. 2. Confirm approved sections are present. 3. Confirm mobile tracks show two KPI cards per view and desktop uses grid. 4. Confirm no new API fields or quotation/customer status names are invented. | Dashboard renders Sales KPI, Business KPI, Quotation KPI, Customer KPI, Top Product, and Top Customer sections; KPI sections use mobile horizontal tracks and desktop responsive grids; metrics use existing loaded data fields. | `renderHomeDashboardRedesign`, `renderDashboardSection`, `customerKpi`, `dashboard-section__track`, and six Dashboard section ids found; CSS has desktop grid defaults and mobile `flex: 0 0 calc((100% - 12px)/2)` KPI cards. | Static Check Passed | Local repository / PowerShell / ripgrep | Search commands: Dashboard redesign selectors in `js/app.js` and `css/main.css`; `git diff --check`; version scan for `0.5.42`. | Approved mobile Dashboard redesign | Runtime browser/device/PWA validation still required. |
 | PERF-STATIC-001 | PERF | P1 | Automated/static check | All | Repository available | `appscript/Database.gs`, `appscript/Quotation.gs`, `appscript/User.gs` | 1. Inspect row update/delete helpers. | Batch helpers are present for contiguous row writes/deletes. | Phase 6 helpers and adoption documented. | Static Check Passed | Local repository / PowerShell / ripgrep | `REMEDIATION_PROGRESS.md` Phase 6 notes | Apps Script performance risk | Live performance test still required. |
 | REG-STATIC-002 | REG | P2 | Automated/static check | All | Repository available | Documentation | 1. Inspect release docs. 2. Confirm test/readiness links. | `RELEASE_READINESS.md`, `TEST_CASES.md`, and checklist are present and linked. | `TEST_CASES.md` is present; release link added in this task. | Static Check Passed | Local repository | File existence and docs inspection | Release readiness requirement | Documentation-only. |
-| REG-STATIC-003 | REG | P1 | Automated/static check | All | Repository available | `index.html`, runtime version files | 1. Inspect sidebar labels, tooltips, and aria labels. 2. Inspect Users page header. 3. Confirm route names remain stable. 4. Confirm runtime cache version is current. | Home navigation displays `หน้าหลัก`; Dashboard navigation displays `Dashboard`; Users navigation and page header display `ผู้ใช้งาน`; existing internal names remain unchanged. | `data-page="home"` calls `go('home')` and displays `หน้าหลัก`; `data-page="dashboard"` calls `go('dashboard')` and displays `Dashboard`; `data-page="users"` calls `go('users')` and displays `ผู้ใช้งาน`; runtime files use `0.5.44`. | Static Check Passed | Local repository / PowerShell / ripgrep | Search commands: `หน้าหลัก`, `Dashboard`, `ผู้ใช้งาน`, `data-page="home"`, `data-page="dashboard"`, and version scan. | Navigation label clarity update and Home/Dashboard split | Runtime desktop/mobile/PWA navigation validation still required. |
-| REG-STATIC-004 | REG | P1 | Automated/static check | All | Repository available | `index.html`, `js/app.js`, `css/main.css`, `service-worker.js` | 1. Inspect Home and Dashboard DOM. 2. Inspect Home quick-action renderer. 3. Inspect Dashboard renderer target. 4. Inspect hash route helpers and permission guard. 5. Inspect PWA cache version/navigation fallback. | Default `home` route is a command center; Dashboard KPI page has its own `dashboard` route; Dashboard calculations stay on existing `buildDashboardMetrics()` / `renderHomeDashboardRedesign()` path; Home shortcuts use existing routes and permissions; PWA cache version is updated. | `#page-home` contains `home-command-center`; `#page-dashboard` contains the existing KPI shell; `ensureDashboardLayout()` targets `page-dashboard`; `renderDashboard()` wraps existing Dashboard renderer; `normalizeAppPageRoute()`, `initializeAppRoute()`, and `canAccessPage('dashboard')` found; runtime files use `0.5.44`. | Static Check Passed | Local repository / PowerShell / ripgrep | Search commands: `page-dashboard`, `homeQuickActions`, `renderDashboard`, `normalizeAppPageRoute`, `canViewDashboard`, `0.5.44`; `git diff --check`. | New Home page / Dashboard route requirement | Browser refresh/back-forward/mobile/PWA runtime validation still required. |
+| REG-STATIC-003 | REG | P1 | Automated/static check | All | Repository available | `index.html`, runtime version files | 1. Inspect sidebar labels, tooltips, and aria labels. 2. Inspect Users page header. 3. Confirm route names remain stable. 4. Confirm runtime cache version is current. | Home navigation displays `หน้าหลัก`; Dashboard navigation displays `Dashboard`; Users navigation and page header display `ผู้ใช้งาน`; existing internal names remain unchanged. | `#mainNavigation` is rendered from navigation metadata; page headings use `data-nav-label`; runtime files use `0.5.45`. | Static Check Passed | Local repository / PowerShell / ripgrep | Search commands: `mainNavigation`, `data-nav-label`, `NAVIGATION_LABELS`, and version scan. | Navigation label clarity update and Home/Dashboard split | Runtime desktop/mobile/PWA navigation validation still required. |
+| REG-STATIC-004 | REG | P1 | Automated/static check | All | Repository available | `index.html`, `js/app.js`, `css/main.css`, `service-worker.js` | 1. Inspect Home and Dashboard DOM. 2. Inspect Home quick-action renderer. 3. Inspect Dashboard renderer target. 4. Inspect hash route helpers and permission guard. 5. Inspect PWA cache version/navigation fallback. | Default `home` route is a command center; Dashboard KPI page has its own `dashboard` route; Dashboard calculations stay on existing `buildDashboardMetrics()` / `renderHomeDashboardRedesign()` path; Home shortcuts use existing routes and permissions; PWA cache version is updated. | `#page-home` contains `home-command-center`; `#page-dashboard` contains the existing KPI shell; `ensureDashboardLayout()` targets `page-dashboard`; `renderDashboard()` wraps existing Dashboard renderer; `normalizeAppPageRoute()`, `initializeAppRoute()`, and `canAccessPage('dashboard')` found; runtime files use `0.5.45`. | Static Check Passed | Local repository / PowerShell / ripgrep | Search commands: `page-dashboard`, `homeQuickActions`, `renderDashboard`, `normalizeAppPageRoute`, `canViewDashboard`, `0.5.45`; `git diff --check`. | New Home page / Dashboard route requirement | Browser refresh/back-forward/mobile/PWA runtime validation still required. |
+| REG-STATIC-005 | REG | P1 | Automated/static check | All | Repository available | `index.html`, `js/app.js`, runtime version files | 1. Inspect `NAVIGATION_LABELS`. 2. Inspect `NAVIGATION_ITEMS`. 3. Inspect sidebar renderer. 4. Inspect page heading and Home quick-action bindings. 5. Search static sidebar markup for duplicated approved labels. | Navigation labels are centralized in one shared constants object; sidebar labels, tooltips, aria labels, Home quick actions, and module page headings use the shared source of truth; route keys remain unchanged. | `NAVIGATION_LABELS` contains all approved labels; `renderSidebarNavigation()` renders `#mainNavigation`; Home quick actions use `labelKey`; `data-nav-label` / `data-nav-aria-label` bindings found; hardcoded sidebar button label duplication was removed. | Static Check Passed | Local repository / PowerShell / ripgrep | Search commands: `NAVIGATION_LABELS`, `NAVIGATION_ITEMS`, `renderSidebarNavigation`, `data-nav-label`, `data-nav-aria-label`; `git diff --check`. | Centralized Navigation Labels Constants requirement | Runtime sidebar/mobile drawer/PWA validation still required. |
 
 ## 9. Runtime integration tests
 
