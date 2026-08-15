@@ -1,0 +1,10 @@
+PASS — central summary
+PASS — one loop
+PASS — active resolver
+PASS — date parser
+PASS — no updatedAt creation fallback
+PASS — dashboard loads customers
+PASS — customer load rerenders dashboard
+PASS — loading dash
+PASS — active inactive invariant
+PASS — legacy default active

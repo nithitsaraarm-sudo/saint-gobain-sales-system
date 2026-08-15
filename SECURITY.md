@@ -1,5 +1,37 @@
 # Security Guidelines
 
+## Authentication/session hardening addendum — 2026-08-13
+
+Static audit status after this hardening pass: **improved / runtime validation still required**.
+
+What was hardened in code:
+
+- Public `getPublicSystemSettings` JSONP requests no longer receive `sessionToken` or `currentUserId` from the frontend API client.
+- Apps Script `doGet()` now allows JSONP only for public API actions and rejects credential-bearing GET/query payloads.
+- Backend identity resolution continues to derive the canonical user from the validated server-side session; a supplied `currentUserId` mismatch now returns `Session user mismatch`.
+- Frontend API diagnostics redact password/session-token fields from debug logs, technical-issue logs, response previews, and pending-request keys.
+- Backend log helpers redact password/session-token fields before console/SystemLogs writes.
+- New sessions use two UUID values in the bearer token string; existing stored sessions remain backward-compatible until expiry/revocation.
+- Self password change now revokes other server-side sessions for the same user while preserving the current session.
+- Private frontend cache scope no longer stores the trailing session-token substring; it uses a per-session client scope id.
+
+Architecture notes:
+
+- Current auth remains a localStorage bearer-token model because an HttpOnly Secure SameSite cookie migration needs separate proof across Apps Script `/exec` redirects, `googleusercontent` runtime URLs, PWA standalone mode, and iPhone Safari behavior.
+- Passwords still exist transiently in the login form and HTTPS POST request body; that is expected browser behavior and not by itself a transport-security defect.
+- Password hashing remains the existing salted SHA-256 model for backward compatibility. A stronger password-derivation migration should be planned separately.
+
+Runtime evidence still required:
+
+- Old token fails after logout.
+- Tampered `currentUserId` cannot impersonate another user.
+- Expired token is rejected.
+- Disabled/locked users cannot continue with old tokens.
+- Password change revokes other sessions.
+- Logs and browser diagnostics do not expose password/session tokens.
+- Public settings remains accessible without auth.
+- Desktop, Android Chrome, iPhone Safari, and installed PWA login/session behavior.
+
 ## V1 pre-release security addendum — 2026-07-29
 
 Final static security review status: **conditional / not production-cleared**.

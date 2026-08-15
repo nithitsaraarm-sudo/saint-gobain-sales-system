@@ -4,6 +4,14 @@ Date: 2026-07-26
 Branch: `audit/full-remediation`
 Baseline audit commit: `0cb62334d62341a78ba6f3b1194ca42c985c1c47`
 
+## Final commit-readiness addendum — 2026-08-15
+
+Decision: **SOURCE READY TO COMMIT / NOT RUNTIME READY**.
+
+This local final audit confirmed the working tree source routes, security markers, Service Worker asset list, and whitespace checks before commit. Two Login/Forgot Password release blockers were fixed locally: Login now has loading/disabled duplicate-submit protection, and disabled `resetPassword` no longer requires an authenticated session before returning the intended disabled response.
+
+Runtime acceptance is still required after Apps Script deployment and static asset refresh. Do not mark this release ready for real-user UAT/Pilot until live API, Google Sheets, role-based browser, mobile Safari/Android, and installed-PWA smoke tests are executed and evidence is attached.
+
 ## V1 final pre-release addendum — 2026-07-29
 
 Decision: **NOT READY** for real-user UAT or Pilot Go-Live today.

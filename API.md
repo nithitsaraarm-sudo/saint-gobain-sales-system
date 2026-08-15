@@ -1,3 +1,18 @@
+# Sales Target Management API addendum — 2026-07-30
+
+Dedicated storage: `SalesTargets` Google Sheet. Authenticated actions use POST.
+
+- `getSalesTargets` — scoped list/filter
+- `getSalesTarget` — scoped detail
+- `getEffectiveSalesTarget` — deterministic user/area/BU precedence
+- `getSalesTargetFormOptions` — authorized Area and Sales options
+- `getSalesTargetManagementData` — consolidated management read returning targets, summary and form options in one request
+- `saveSalesTarget` — create with validation, ScriptLock and duplicate-active protection
+- `updateSalesTarget` — optimistic `version` check
+- `setSalesTargetStatus` — status transition through the same validation path
+
+Standard error codes: `FORBIDDEN`, `AREA_SCOPE_VIOLATION`, `TARGET_SCOPE_VIOLATION`, `VALIDATION_ERROR`, `CONFLICT`, `NOT_FOUND`. Each Sales Target response includes an `eventId`.
+
 # API Reference & Flow (สรุป)
 
 เอกสารนี้สรุป API contract ที่คาดว่าจะมีระหว่าง Frontend (PWA) กับ Google Apps Script (GAS) / Google Sheets
