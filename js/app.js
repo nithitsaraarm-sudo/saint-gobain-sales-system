@@ -24,6 +24,8 @@ let FAVORITE_PRODUCTS=[], PINNED_PRODUCTS=[], productPreferencesLoaded=false, pr
 const PRODUCT_FAVORITE_PENDING=new Set(), PRODUCT_ADD_PENDING=new Set(), PRODUCT_ACTION_PENDING=new Set();
 let PROMOTION_DASHBOARD={groups:[],summary:{totalPromotions:0,productsInPromotion:0,weberPromotions:0,gyprocPromotions:0,multiBrandPromotions:0},products:[]};
 let promotionDashboardLoaded=false, promotionDashboardPromise=null, promotionDashboardRefreshPromise=null, promotionDashboardError='', promotionDashboardTodayKey='', promotionLegacyTitleFallbackLogged=false;
+let SALES_TARGETS=[], EFFECTIVE_SALES_TARGET=null, SALES_TARGET_OPTIONS=null, salesTargetsLoaded=false, salesTargetsPromise=null, salesTargetSaving=false, salesTargetFocusReturn=null, salesTargetRequestSequence=0;
+let dashboardSecondaryLoadTimer=null;
 const openQuotationDetailPromises={};
 const LIST_RENDER_LIMIT=Number(window.DEFAULT_PAGE_SIZE||50), QUOTE_PICKER_LIMIT=30, SEARCH_DEBOUNCE_MS=300;
 const APP_VERSION_STORAGE_KEY='sg_app_version';
@@ -245,6 +247,11 @@ function resetAuthenticatedFrontendState(){
   promotionDashboardError='';
   promotionDashboardTodayKey='';
   promotionLegacyTitleFallbackLogged=false;
+  if(dashboardSecondaryLoadTimer!==null&&typeof window!=='undefined'){
+    window.clearTimeout(dashboardSecondaryLoadTimer);
+    dashboardSecondaryLoadTimer=null;
+  }
+  SALES_TARGETS=[]; EFFECTIVE_SALES_TARGET=null; SALES_TARGET_OPTIONS=null; salesTargetsLoaded=false; salesTargetsPromise=null; salesTargetSaving=false; salesTargetRequestSequence=0;
   Object.keys(openQuotationDetailPromises).forEach(key=>delete openQuotationDetailPromises[key]);
   revokeProfileImageObjectUrl();
   PROFILE_IMAGE_DATA='';
@@ -253,26 +260,74 @@ function resetAuthenticatedFrontendState(){
   PROFILE_IMAGE_SELECTION_SEQUENCE+=1;
 }
 
+function getAppInfo(){
+  const source=window.APP_INFO&&typeof window.APP_INFO==='object'?window.APP_INFO:{};
+  return Object.freeze({
+    version:String(source.version||'Unknown').trim()||'Unknown',
+    build:String(source.build||'Unknown').trim()||'Unknown',
+    release:String(source.release||'Unknown').trim()||'Unknown',
+    cacheVersion:String(source.cacheVersion||'Unknown').trim()||'Unknown'
+  });
+}
+
+function renderApplicationVersionInfo(){
+  const info=getAppInfo();
+  const setText=(id,value)=>{const element=$(id);if(element)element.textContent=value;};
+  setText('homeAppVersion',info.version);
+  setText('footerAppVersion',info.version);
+  setText('aboutAppVersion',info.version);
+  setText('aboutAppBuild',info.build);
+  setText('aboutAppRelease',info.release);
+  return info;
+}
+
+function openVersionDialog(){
+  renderApplicationVersionInfo();
+  const dialog=$('versionDialog');
+  if(!dialog)return;
+  dialog.classList.add('show');
+  dialog.setAttribute('aria-hidden','false');
+  document.body.classList.add('sg-dialog-open');
+  const closeButton=dialog.querySelector('[data-version-dialog-close]');
+  if(closeButton)closeButton.focus();
+}
+
+function closeVersionDialog(){
+  const dialog=$('versionDialog');
+  if(!dialog)return;
+  dialog.classList.remove('show');
+  dialog.setAttribute('aria-hidden','true');
+  document.body.classList.remove('sg-dialog-open');
+}
+
+function logApplicationVersionOnce(){
+  if(window.__SG_APP_INFO_LOGGED__)return;
+  window.__SG_APP_INFO_LOGGED__=true;
+  const info=getAppInfo();
+  console.info(`Saint-Gobain Sales System\nVersion ${info.version}\nBuild ${info.build}`);
+}
+
 function checkAppVersion(){
   try{
-    const newVersion=String(window.APP_VERSION||'0.5.47').trim();
-    console.log('[APP]',window.APP_NAME||'Saint-Gobain Sales System',newVersion);
-    const oldVersion=localStorage.getItem(APP_VERSION_STORAGE_KEY);
-    if(oldVersion===newVersion){
-      return false;
-    }
-    console.log('[APP VERSION]',oldVersion,'→',newVersion);
-    if(!oldVersion){
-      localStorage.setItem(APP_VERSION_STORAGE_KEY,newVersion);
+    const info=renderApplicationVersionInfo();
+    logApplicationVersionOnce();
+    if(info.version==='Unknown'||info.cacheVersion==='Unknown')return false;
+    const currentSignature=`${info.version}|${info.cacheVersion}`;
+    const oldSignature=localStorage.getItem(APP_VERSION_STORAGE_KEY);
+    if(oldSignature===currentSignature)return false;
+    console.info('[APP VERSION]',oldSignature,'→',currentSignature);
+    if(!oldSignature){
+      localStorage.setItem(APP_VERSION_STORAGE_KEY,currentSignature);
       return false;
     }
     clearAppCaches();
-    localStorage.setItem(APP_VERSION_STORAGE_KEY,newVersion);
+    localStorage.setItem(APP_VERSION_STORAGE_KEY,currentSignature);
     notifyAppVersionUpdate();
     window.setTimeout(()=>window.location.reload(),1000);
     return true;
   }catch(error){
     console.warn('[APP VERSION] update check failed',error);
+    renderApplicationVersionInfo();
     return false;
   }
 }
@@ -399,7 +454,7 @@ async function refreshPublicSystemSettings(options){
     applySystemIdentityToUI(getSystemIdentitySettingsForUi());
   }
   try{
-    const response=await callApi('getPublicSystemSettings',{force:true});
+    const response=await callApi('getPublicSystemSettings',opts.force?{force:true}:{});
     if(response&&response.ok&&response.data){
       return setPublicSystemSettings(response.data);
     }
@@ -441,7 +496,6 @@ window.addEventListener('load',()=>{
   if(checkAppVersion())return;
   ensureProductPromoCacheSchema();
   applySystemIdentityToUI(getSystemIdentitySettingsForUi());
-  refreshPublicSystemSettings({silent:true});
   setupQuoteSearchEnhancements();
   setupDebouncedSearchInputs();
   const u=localStorage.getItem('sg_user')||localStorage.getItem('currentUser');
@@ -453,7 +507,10 @@ window.addEventListener('load',()=>{
       loadData({silent:true});
     } catch (e) {
       localStorage.removeItem('currentUser');
+      refreshPublicSystemSettings({silent:true});
     }
+  }else{
+    refreshPublicSystemSettings({silent:true});
   }
 });
 
@@ -479,7 +536,8 @@ function normalizeDb(data){
     productPromotions:source.productPromotions&&typeof source.productPromotions==='object'?source.productPromotions:(existing.productPromotions&&typeof existing.productPromotions==='object'?existing.productPromotions:{groups:[],summary:{},products:[]}),
     promotions:Array.isArray(source.promotions)?source.promotions:[],
     quotes:Array.isArray(source.quotes)?source.quotes:[],
-    quoteLines:Array.isArray(source.quoteLines)?source.quoteLines:(Array.isArray(existing.quoteLines)?existing.quoteLines:[])
+    quoteLines:Array.isArray(source.quoteLines)?source.quoteLines:(Array.isArray(existing.quoteLines)?existing.quoteLines:[]),
+    effectiveSalesTarget:source.effectiveSalesTarget&&typeof source.effectiveSalesTarget==='object'?source.effectiveSalesTarget:(existing.effectiveSalesTarget||null)
   };
 }
 
@@ -843,6 +901,94 @@ function customerBrandBadgesHtml(customer){
   if(!badges.length)badges.push('<span class="pill">ต้องตรวจสอบแบรนด์</span>');
   return badges.join(' ');
 }
+function normalizeCustomerStatusValue(value){
+  if(value===true)return true;
+  if(value===false)return false;
+  const text=String(value??'').trim().toLowerCase();
+  if(!text)return null;
+  const activeValues=['active','enabled','enable','open','available','ใช้งาน','เปิดใช้งาน','ปกติ','yes','y','true','1'];
+  const inactiveValues=['inactive','disabled','disable','closed','unavailable','deleted','archived','ระงับ','ปิดใช้งาน','ยกเลิก','ไม่ใช้งาน','no','n','false','0'];
+  if(activeValues.includes(text))return true;
+  if(inactiveValues.includes(text))return false;
+  return null;
+}
+function resolveCustomerActiveState(customer){
+  const c=customer&&typeof customer==='object'?customer:{};
+  const deletedFlag=normalizeCustomerStatusValue(c.isDeleted);
+  if(deletedFlag===true)return false;
+  const candidates=[c.active,c.isActive,c.enabled,c.isEnabled,c.status,c.customerStatus];
+  for(let i=0;i<candidates.length;i++){
+    const resolved=normalizeCustomerStatusValue(candidates[i]);
+    if(resolved!==null)return resolved;
+  }
+  return true;
+}
+function parseCustomerDateForKpi(value){
+  if(value instanceof Date&&!Number.isNaN(value.getTime()))return value;
+  if(typeof value==='number'&&Number.isFinite(value)){
+    const numericDate=new Date(value);
+    return Number.isNaN(numericDate.getTime())?null:numericDate;
+  }
+  let text=String(value??'').trim();
+  if(!text)return null;
+  const thaiDigits={'๐':'0','๑':'1','๒':'2','๓':'3','๔':'4','๕':'5','๖':'6','๗':'7','๘':'8','๙':'9'};
+  text=text.replace(/[๐-๙]/g,char=>thaiDigits[char]||char);
+  const dateOnly=text.match(/^(\d{1,4})[\/\-.](\d{1,2})[\/\-.](\d{1,4})(?:[ T](.*))?$/);
+  if(dateOnly){
+    let first=Number(dateOnly[1]),month=Number(dateOnly[2]),third=Number(dateOnly[3]);
+    let year,day;
+    if(first>31){year=first;day=third;}else{day=first;year=third;}
+    if(year>2400)year-=543;
+    if(year<100)year+=year>=70?1900:2000;
+    const timePart=String(dateOnly[4]||'').trim();
+    const timeMatch=timePart.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    const hour=timeMatch?Number(timeMatch[1]):0;
+    const minute=timeMatch?Number(timeMatch[2]):0;
+    const second=timeMatch&&timeMatch[3]?Number(timeMatch[3]):0;
+    const parsed=new Date(year,month-1,day,hour,minute,second);
+    if(parsed.getFullYear()===year&&parsed.getMonth()===month-1&&parsed.getDate()===day)return parsed;
+  }
+  const nativeDate=new Date(text);
+  return Number.isNaN(nativeDate.getTime())?null:nativeDate;
+}
+function getCustomerCreatedDateForKpi(customer){
+  const c=customer&&typeof customer==='object'?customer:{};
+  const fields=['createdAt','createdDate','createdTime','createdOn','dateCreated','timestamp'];
+  for(let i=0;i<fields.length;i++){
+    const parsed=parseCustomerDateForKpi(c[fields[i]]);
+    if(parsed)return parsed;
+  }
+  return null;
+}
+function calculateCustomerSummary(customers,options){
+  const list=Array.isArray(customers)?customers:[];
+  const opts=options&&typeof options==='object'?options:{};
+  const now=opts.now instanceof Date?opts.now:new Date(opts.now||Date.now());
+  const recentDays=Number.isFinite(Number(opts.recentDays))?Number(opts.recentDays):30;
+  const recentMs=recentDays*24*60*60*1000;
+  const summary={totalCustomers:list.length,activeCustomers:0,inactiveCustomers:0,newCustomers:0,state:'ready',message:'',statusValues:new Set(),invalidCreatedDateCount:0};
+  list.forEach(rawCustomer=>{
+    const customer=normalizeCustomer(rawCustomer);
+    const active=resolveCustomerActiveState(customer);
+    if(active)summary.activeCustomers+=1;else summary.inactiveCustomers+=1;
+    const rawStatus=String(customer.status??customer.active??'').trim();
+    if(rawStatus)summary.statusValues.add(rawStatus);
+    const createdDate=getCustomerCreatedDateForKpi(customer);
+    if(createdDate){
+      const age=now.getTime()-createdDate.getTime();
+      if(age>=0&&age<=recentMs)summary.newCustomers+=1;
+    }else if(['createdAt','createdDate','createdTime','createdOn','dateCreated','timestamp'].some(field=>String(customer[field]??'').trim())){
+      summary.invalidCreatedDateCount+=1;
+    }
+  });
+  if(!list.length){
+    summary.state=opts.expectedTotal>0?'loading':'empty';
+    summary.message=opts.expectedTotal>0?'กำลังโหลดข้อมูลลูกค้า':'ยังไม่มีข้อมูลลูกค้า';
+  }
+  summary.statusValues=Array.from(summary.statusValues);
+  return summary;
+}
+
 function normalizeCustomer(customer){
   const c=customer&&typeof customer==='object'?customer:{};
   const code=String(c.customerId||c.customerCode||c.id||'').trim();
@@ -851,8 +997,7 @@ function normalizeCustomer(customer){
   const defaultWeberDiscount=String(c.defaultWeberDiscount||'').trim();
   const brandFlags=inferCustomerBrandFlagsForUi(c);
   const customerType=customerTypeFromBrandFlags(brandFlags.sellsWeber,brandFlags.sellsGyproc);
-  const activeFlag=parseCustomerBooleanForUi(c.active);
-  const statusFlag=parseCustomerBooleanForUi(status);
+  const resolvedActive=resolveCustomerActiveState(c);
   return {
     ...c,
     id:code,
@@ -876,7 +1021,7 @@ function normalizeCustomer(customer){
     province:String(c.province||'').trim(),
     district:String(c.district||c.amphoe||c.amphur||'').trim(),
     phone:String(c.phone||'-').trim()||'-',
-    active:activeFlag!==null?activeFlag:(statusFlag!==null?statusFlag:!status)
+    active:resolvedActive
   };
 }
 
@@ -1075,6 +1220,9 @@ function hydrateBootstrapFromCache(){
     return false;
   }
   DB=normalizeDb(cachedBootstrap);
+  if(cachedBootstrap.publicSettings&&typeof setPublicSystemSettings==='function'){
+    setPublicSystemSettings(cachedBootstrap.publicSettings,{skipCache:true});
+  }
   bootstrapLoaded=true;
   return true;
 }
@@ -1108,11 +1256,15 @@ async function loadData(options){
         return r;
       }
       DB = normalizeDb(r.data);
+      if(r.data&&r.data.publicSettings&&typeof setPublicSystemSettings==='function'){
+        setPublicSystemSettings(r.data.publicSettings);
+      }
       if(typeof setCache==='function'){
         setCache('sg_bootstrap_cache', r.data || {}, 15);
       }
       bootstrapLoaded=true;
       renderAll();
+      scheduleDashboardSecondaryDataLoad();
       return r;
     } catch (e) {
       toast('โหลดข้อมูลไม่สำเร็จ: ' + (e && e.message ? e.message : e));
@@ -1816,15 +1968,35 @@ function setProductsData(items){
 }
 function renderCustomerViews(){
   renderHome();
+  renderDashboard();
   renderCustomers();
   syncQuoteCustomerSearch();
   renderQuoteCustomerPicker(false);
 }
 function renderProductViews(){
   renderHome();
+  renderDashboard();
   renderProducts();
   renderPromos();
   renderQuoteProductPicker();
+}
+function isDashboardKpiDataReady(){
+  return bootstrapLoaded&&Array.isArray(DB.quotes)&&Array.isArray(DB.quoteLines);
+}
+function isDashboardPageActive(){
+  const page=$('page-dashboard');
+  return !!(page&&page.classList.contains('active'));
+}
+function scheduleDashboardSecondaryDataLoad(){
+  if(!isDashboardPageActive()||!isDashboardKpiDataReady())return;
+  if(dashboardSecondaryLoadTimer!==null)return;
+  dashboardSecondaryLoadTimer=window.setTimeout(function(){
+    dashboardSecondaryLoadTimer=null;
+    if(!USER||!isDashboardPageActive())return;
+    if(!customersLoaded&&!customersPromise){
+      loadCustomers({background:true});
+    }
+  },300);
 }
 async function loadCustomers(options){
   const force=!!(options&&options.force);
@@ -1949,6 +2121,11 @@ async function loadProducts(options){
   return productsPromise;
 }
 function ensurePageData(page){
+  if(page==='dashboard'){
+    renderDashboard();
+    scheduleDashboardSecondaryDataLoad();
+    return Promise.resolve({ok:true,data:DB,cached:bootstrapLoaded});
+  }
   if(page==='customers'){renderCustomers();return loadCustomers();}
   if(page==='products'){renderProducts();return loadProducts();}
   if(page==='promos'){renderPromos();return loadPromotionDashboard();}
@@ -3189,28 +3366,128 @@ function dashboardMoney(value){
 }
 function normalizeDashboardLine(line){
   const item=line&&typeof line==='object'?line:{};
-  const productId=String(item.productId||item.sku||item.id||'').trim();
+  const productId=String(item.productId||item.sku||item.productCode||item.id||'').trim();
   const qty=parseClientNumber(item.qty||item.quantity);
-  const lineTotal=parseClientNumber(item.lineTotal||item.grandTotal||item.total);
+  const quoteReference=String(item.quoteId||item.quoteNo||item.quotationId||item.quotationNo||'').trim();
   return {
     ...item,
-    quoteId:String(item.quoteId||'').trim(),
+    quoteId:quoteReference,
+    quoteNo:String(item.quoteNo||item.quoteId||item.quotationNo||item.quotationId||'').trim(),
     productId,
-    productName:String(item.productName||item.itemName||'').trim(),
+    productName:String(item.productName||item.itemName||item.description||'').trim(),
     qty,
-    lineTotal,
-    grandTotal:parseClientNumber(item.grandTotal||lineTotal)
+    lineTotal:getDashboardLineValue(item,qty)
   };
 }
-function findDashboardProduct(productId){
+function normalizeDashboardBusinessUnit(value){
+  const item=value&&typeof value==='object'?value:{};
+  const raw=value&&typeof value==='object'
+    ? item.productBusinessUnit||item.businessUnit||item.quoteType||item.bu||item.brand||''
+    : value;
+  return String(raw||'').trim().replace(/\s+/g,' ').toUpperCase();
+}
+function getDashboardBusinessUnitLabel(value){
+  const key=normalizeDashboardBusinessUnit(value);
+  if(!key)return '';
+  return key.toLowerCase().replace(/(^|[\s_-])\p{L}/gu,match=>match.toUpperCase());
+}
+function getDashboardLineValue(line,normalizedQty){
+  const item=line&&typeof line==='object'?line:{};
+  const directFields=['lineTotal','netTotal','netAmount','amount','total','grandTotal','quotationValue'];
+  for(let i=0;i<directFields.length;i++){
+    const raw=item[directFields[i]];
+    if(raw!==undefined&&raw!==null&&String(raw).trim()!=='')return parseClientNumber(raw);
+  }
+  const qty=normalizedQty!==undefined?parseClientNumber(normalizedQty):parseClientNumber(item.qty||item.quantity);
+  const unitFields=['netPrice','sellingPrice','quotationPrice','unitPrice','listPrice','price'];
+  for(let i=0;i<unitFields.length;i++){
+    const raw=item[unitFields[i]];
+    if(raw!==undefined&&raw!==null&&String(raw).trim()!=='')return parseClientNumber(raw)*qty;
+  }
+  return 0;
+}
+function buildDashboardProductIndex(products){
+  const index=new Map();
+  (Array.isArray(products)?products:[]).forEach(product=>{
+    const keys=[product&&product.productId,product&&product.sku,product&&product.productCode,product&&product.id]
+      .map(value=>String(value||'').trim().toLowerCase()).filter(Boolean);
+    keys.forEach(key=>{if(!index.has(key))index.set(key,product);});
+  });
+  return index;
+}
+function findDashboardProduct(productId,productIndex){
   const id=String(productId||'').trim().toLowerCase();
-  return (Array.isArray(DB.products)?DB.products:[]).find(p=>String(p.productId||p.sku||p.id||'').trim().toLowerCase()===id)||{};
+  if(!id)return {};
+  if(productIndex&&typeof productIndex.get==='function')return productIndex.get(id)||{};
+  return (Array.isArray(DB.products)?DB.products:[]).find(p=>String(p.productId||p.sku||p.productCode||p.id||'').trim().toLowerCase()===id)||{};
 }
 function normalizeDashboardStatus(status){
   return String(status||'').trim().toUpperCase();
 }
 function isCancelledQuote(quote){
   return normalizeDashboardStatus(quote.status)==='CANCELLED';
+}
+function calculateBusinessSummary(options){
+  const data=options&&typeof options==='object'?options:{};
+  const quotes=Array.isArray(data.quotes)?data.quotes:[];
+  const lines=Array.isArray(data.lines)?data.lines:[];
+  const products=Array.isArray(data.products)?data.products:[];
+  const customers=Array.isArray(data.customers)?data.customers:[];
+  const activeQuotes=quotes.filter(quote=>!isCancelledQuote(quote));
+  const activeQuoteIndex=new Map();
+  let quotationValue=0;
+  activeQuotes.forEach(quote=>{
+    quotationValue+=parseClientNumber(quote.grandTotal||quote.total);
+    [quote.quoteId,quote.quoteNo].map(value=>String(value||'').trim()).filter(Boolean).forEach(key=>activeQuoteIndex.set(key,quote));
+  });
+  const productIndex=buildDashboardProductIndex(products);
+  const unitTotals=new Map();
+  const detectedUnits=new Set();
+  products.forEach(product=>{
+    const unit=normalizeDashboardBusinessUnit(product);
+    if(unit)detectedUnits.add(unit);
+  });
+  const activeLines=[];
+  let unresolvedUnitCount=0;
+  let valuedLineCount=0;
+  lines.forEach(rawLine=>{
+    const line=normalizeDashboardLine(rawLine);
+    if(normalizeDashboardStatus(line.status)==='REMOVED')return;
+    const quoteReference=String(line.quoteId||line.quoteNo||'').trim();
+    const quote=quoteReference?activeQuoteIndex.get(quoteReference):null;
+    if(quoteReference&&!quote)return;
+    const product=findDashboardProduct(line.productId,productIndex);
+    const unit=normalizeDashboardBusinessUnit(line)||normalizeDashboardBusinessUnit(product)||normalizeDashboardBusinessUnit(quote);
+    const value=getDashboardLineValue(line,line.qty);
+    activeLines.push({...line,businessUnit:unit,lineTotal:value,product});
+    if(unit){
+      detectedUnits.add(unit);
+      unitTotals.set(unit,(unitTotals.get(unit)||0)+value);
+    }else{
+      unresolvedUnitCount+=1;
+    }
+    if(value!==0)valuedLineCount+=1;
+  });
+  const customerSummary=calculateCustomerSummary(customers,{recentDays:30,expectedTotal:parseClientNumber(DB.counts?.customers)});
+  const newCustomers=customerSummary.newCustomers;
+  let state='ready';
+  let message='';
+  if(!lines.length){
+    state='empty';
+    message='ยังไม่มีข้อมูลรายการสินค้าในใบเสนอราคา';
+  }else if(!detectedUnits.size||unresolvedUnitCount===activeLines.length){
+    state='error';
+    message='Unable to calculate KPI';
+  }else if(unresolvedUnitCount>0){
+    state='incomplete';
+    message='ข้อมูล Business Unit ของบางรายการไม่ครบ';
+  }
+  const units=Array.from(detectedUnits).sort((a,b)=>a.localeCompare(b,'en')).map(key=>({
+    key,
+    label:getDashboardBusinessUnitLabel(key)||key,
+    total:state==='ready'&&unitTotals.has(key)?unitTotals.get(key):null
+  }));
+  return {quotationValue,newCustomers,units,unitTotals,activeLines,state,message,unresolvedUnitCount,valuedLineCount};
 }
 function ensureDashboardLayout(){
   const page=$('page-dashboard');
@@ -3237,35 +3514,41 @@ function ensureDashboardLayout(){
   if(bestCard)bestCard.classList.add('dashboard-legacy-hidden');
   return root;
 }
+function parseSalesTargetDateOnly(value){
+  const match=String(value||'').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/); if(!match)return null;
+  const date=new Date(Number(match[1]),Number(match[2])-1,Number(match[3]),12,0,0); return Number.isNaN(date.getTime())?null:date;
+}
+function salesTargetDayDiffInclusive(start,end){return Math.floor((end.getTime()-start.getTime())/86400000)+1;}
+function calculateSalesKpi(input){
+  const data=input||{}, effective=data.effectiveTarget&&typeof data.effectiveTarget==='object'?data.effectiveTarget:null;
+  const hasTarget=effective&&Number.isFinite(Number(effective.totalTarget??effective.targetAmount))&&Number(effective.totalTarget??effective.targetAmount)>0;
+  const target=hasTarget?Number(effective.totalTarget??effective.targetAmount):null, actual=Math.max(0,Number(data.actual||0));
+  const start=parseSalesTargetDateOnly(data.periodStart||effective&&effective.periodStart), end=parseSalesTargetDateOnly(data.periodEnd||effective&&effective.periodEnd), today=data.today instanceof Date?new Date(data.today.getFullYear(),data.today.getMonth(),data.today.getDate(),12):new Date();
+  let elapsedDays=0,remainingDays=0,totalDays=0,forecast=actual;
+  if(start&&end&&end>=start){totalDays=salesTargetDayDiffInclusive(start,end);if(today<start){forecast=0;remainingDays=totalDays;}else if(today>end){forecast=actual;elapsedDays=totalDays;}else{elapsedDays=salesTargetDayDiffInclusive(start,today);remainingDays=Math.max(0,salesTargetDayDiffInclusive(today,end)-1);forecast=elapsedDays>0?actual/elapsedDays*totalDays:0;}}
+  const achievementPercent=hasTarget?actual/target*100:null, remaining=hasTarget?Math.max(target-actual,0):null, requiredDailyAverage=hasTarget&&remainingDays>0?remaining/remainingDays:(hasTarget?0:null);
+  let remainingMonths=0;if(start&&end&&today<=end){const from=today<start?start:today;remainingMonths=Math.max(1,(end.getFullYear()-from.getFullYear())*12+end.getMonth()-from.getMonth()+1);}
+  const requiredMonthlyAverage=hasTarget&&remainingMonths>0?remaining/remainingMonths:(hasTarget?0:null);
+  return {target,actual,forecast,achievementPercent,remaining,elapsedDays,remainingDays,requiredDailyAverage,requiredMonthlyAverage,targetSource:effective&&effective.sourceScope||'NONE',periodStart:effective&&effective.periodStart||'',periodEnd:effective&&effective.periodEnd||'',businessUnit:effective&&effective.businessUnit||'ALL',hasTarget};
+}
 function buildDashboardMetrics(){
   const quotes=(Array.isArray(DB.quotes)?DB.quotes:[]).map(normalizeQuoteRecord);
-  const lines=(Array.isArray(DB.quoteLines)?DB.quoteLines:[]).map(normalizeDashboardLine);
+  const products=Array.isArray(DB.products)?DB.products:[];
+  const customers=Array.isArray(DB.customers)?DB.customers:[];
+  const businessSummary=calculateBusinessSummary({quotes,lines:Array.isArray(DB.quoteLines)?DB.quoteLines:[],products,customers});
+  const lines=businessSummary.activeLines;
   const activeQuotes=quotes.filter(q=>!isCancelledQuote(q));
-  const actual=activeQuotes.reduce((sum,q)=>sum+parseClientNumber(q.grandTotal||q.total),0);
+  const actual=businessSummary.quotationValue;
   const saved=quotes.filter(q=>normalizeDashboardStatus(q.status)==='SAVED');
   const draft=quotes.filter(q=>normalizeDashboardStatus(q.status)==='DRAFT');
   const cancelled=quotes.filter(isCancelledQuote);
-  const target=parseClientNumber(DB.settings?.salesTarget||DB.settings?.target||DB.settings?.monthlyTarget);
-  const forecast=actual;
-  const achievement=target>0?(actual/target)*100:0;
-  const gap=target>0?Math.max(target-actual,0):0;
-  const quoteIds={};
-  activeQuotes.forEach(q=>{if(q.quoteId)quoteIds[q.quoteId]=true; if(q.quoteNo)quoteIds[q.quoteNo]=true;});
-  const activeLines=lines.filter(line=>(!line.quoteId||quoteIds[line.quoteId])&&normalizeDashboardStatus(line.status)!=='REMOVED');
-  const bu={Gyproc:0,Weber:0};
-  activeLines.forEach(line=>{
-    const product=findDashboardProduct(line.productId);
-    const brandText=String(product.brand||line.brand||line.discountGroup||'').toLowerCase();
-    const value=parseClientNumber(line.lineTotal||line.grandTotal);
-    if(brandText.indexOf('weber')>=0)bu.Weber+=value;
-    if(brandText.indexOf('gyproc')>=0)bu.Gyproc+=value;
-  });
-  const now=Date.now();
-  const recentMs=30*24*60*60*1000;
-  const newCustomers=(Array.isArray(DB.customers)?DB.customers:[]).filter(c=>{
-    const d=new Date(c.createdAt||c.updatedAt||'');
-    return !Number.isNaN(d.getTime())&&now-d.getTime()<=recentMs;
-  }).length;
+  const effectiveTarget=EFFECTIVE_SALES_TARGET||DB.effectiveSalesTarget||null;
+  const salesKpi=calculateSalesKpi({quotes:activeQuotes,actual:actual,effectiveTarget:effectiveTarget,periodStart:effectiveTarget&&effectiveTarget.periodStart,periodEnd:effectiveTarget&&effectiveTarget.periodEnd,today:new Date()});
+  const target=salesKpi.target;
+  const forecast=salesKpi.forecast;
+  const achievement=salesKpi.achievementPercent;
+  const gap=salesKpi.remaining;
+  const newCustomers=businessSummary.newCustomers;
   const topCustomerMap={};
   activeQuotes.forEach(q=>{
     const key=q.customerId||q.customerName||'-';
@@ -3275,12 +3558,12 @@ function buildDashboardMetrics(){
   });
   const topCustomers=Object.values(topCustomerMap).sort((a,b)=>b.value-a.value).slice(0,5);
   const topProductMap={};
-  activeLines.forEach(line=>{
+  lines.forEach(line=>{
     const key=line.productId||line.productName||'-';
-    const product=findDashboardProduct(line.productId);
+    const product=line.product||{};
     if(!topProductMap[key])topProductMap[key]={name:line.productName||product.productName||line.productId||'-',qty:0,value:0};
     topProductMap[key].qty+=parseClientNumber(line.qty);
-    topProductMap[key].value+=parseClientNumber(line.lineTotal||line.grandTotal);
+    topProductMap[key].value+=parseClientNumber(line.lineTotal);
   });
   const topProducts=Object.values(topProductMap).sort((a,b)=>b.value-a.value).slice(0,5);
   const openQuoteCustomers=Object.values(activeQuotes.filter(q=>normalizeDashboardStatus(q.status)!=='SAVED').reduce((acc,q)=>{
@@ -3290,20 +3573,27 @@ function buildDashboardMetrics(){
     acc[key].count+=1;
     return acc;
   },{})).sort((a,b)=>b.value-a.value).slice(0,5);
+  const now=Date.now();
+  const recentMs=30*24*60*60*1000;
   const recentQuoteCustomerIds={};
   activeQuotes.forEach(q=>{
     const d=new Date(q.createdAt||q.updatedAt||'');
-    if(!Number.isNaN(d.getTime())&&now-d.getTime()<=recentMs&&q.customerId){
-      recentQuoteCustomerIds[String(q.customerId).trim()]=true;
-    }
+    if(!Number.isNaN(d.getTime())&&now-d.getTime()<=recentMs&&q.customerId)recentQuoteCustomerIds[String(q.customerId).trim()]=true;
   });
-  const noRecentCustomers=(Array.isArray(DB.customers)?DB.customers:[]).filter(c=>!recentQuoteCustomerIds[String(c.customerId||c.customerCode||'').trim()]).slice(0,5);
-  const dashboardCustomers=(Array.isArray(DB.customers)?DB.customers:[]).map(normalizeCustomer);
-  const totalCustomers=dashboardCustomers.length||parseClientNumber(DB.counts?.customers);
-  const activeCustomers=dashboardCustomers.filter(customer=>customer.active!==false).length;
-  const inactiveCustomers=dashboardCustomers.filter(customer=>customer.active===false).length;
-  const customerKpi={total:totalCustomers,active:activeCustomers,inactive:inactiveCustomers,newCustomers};
-  return {quotes,lines,target,actual,forecast,achievement,gap,bu,newCustomers,draft,saved,cancelled,topCustomers,topProducts,openQuoteCustomers,noRecentCustomers,customerKpi};
+  const noRecentCustomers=customers.filter(c=>!recentQuoteCustomerIds[String(c.customerId||c.customerCode||'').trim()]).slice(0,5);
+  const expectedCustomerTotal=parseClientNumber(DB.counts?.customers);
+  const customerSummary=calculateCustomerSummary(customers,{recentDays:30,expectedTotal:expectedCustomerTotal});
+  const customerKpi={
+    total:customerSummary.totalCustomers||expectedCustomerTotal,
+    active:customerSummary.state==='ready'?customerSummary.activeCustomers:null,
+    inactive:customerSummary.state==='ready'?customerSummary.inactiveCustomers:null,
+    newCustomers:customerSummary.state==='ready'?customerSummary.newCustomers:null,
+    state:customerSummary.state,
+    message:customerSummary.message,
+    statusValues:customerSummary.statusValues,
+    invalidCreatedDateCount:customerSummary.invalidCreatedDateCount
+  };
+  return {quotes,lines,target,actual,forecast,achievement,gap,salesKpi,businessSummary,newCustomers,draft,saved,cancelled,topCustomers,topProducts,openQuoteCustomers,noRecentCustomers,customerKpi};
 }
 function renderDashboardList(items, renderer, emptyText){
   const list=Array.isArray(items)?items:[];
@@ -3322,6 +3612,9 @@ function renderHome(){
   if(welcomeEl)welcomeEl.textContent=DB.settings?.welcomeText||'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ';
   const root=ensureDashboardLayout();
   const metrics=buildDashboardMetrics();
+  const kpiReady=isDashboardKpiDataReady();
+  const dashboardEmptyValue='—';
+  const customerCountReady=bootstrapLoaded||customersLoaded;
   if(root){
     root.innerHTML=`
       <div class="dashboard-kpi-grid">
@@ -3335,8 +3628,7 @@ function renderHome(){
         <div class="card dashboard-card">
           <div class="section-title"><h2>BU Summary</h2></div>
           <div class="dashboard-mini-grid">
-            <div><small>Gyproc</small><b>${dashboardMoney(metrics.bu.Gyproc)}</b></div>
-            <div><small>Weber</small><b>${dashboardMoney(metrics.bu.Weber)}</b></div>
+            ${(metrics.businessSummary.units||[]).map(unit=>`<div><small>${dashboardText(unit.label)}</small><b>${unit.total===null?'—':dashboardMoney(unit.total)}</b></div>`).join('')||'<div><small>Business Unit</small><b>—</b></div>'}
             <div><small>Quotation Value</small><b>${dashboardMoney(metrics.actual)}</b></div>
             <div><small>New Customer</small><b>${metrics.newCustomers||0}</b></div>
           </div>
@@ -3377,21 +3669,16 @@ function renderHome(){
       </div>`;
   }
   const setText=(id,value)=>{const el=$(id); if(el)el.textContent=value;};
-  setText('statQuotes',metrics.quotes.length);
-  setText('statSales',Number(metrics.actual||0).toLocaleString('th-TH'));
-  setText('statCustomers',customerCount);
-  setText('statPending',metrics.draft.length);
-  setText('rProducts',productCount);
-  setText('rCustomers',customerCount);
+  setText('statQuotes',kpiReady?metrics.quotes.length:dashboardEmptyValue);
+  setText('statSales',kpiReady?Number(metrics.actual||0).toLocaleString('th-TH'):dashboardEmptyValue);
+  setText('statCustomers',customerCountReady?customerCount:dashboardEmptyValue);
+  setText('statPending',kpiReady?metrics.draft.length:dashboardEmptyValue);
+  setText('rProducts',(bootstrapLoaded||productsLoaded)?productCount:dashboardEmptyValue);
+  setText('rCustomers',customerCountReady?customerCount:dashboardEmptyValue);
   const promotionSummary=PROMOTION_DASHBOARD.summary||buildPromotionDashboardSummary(getPromotionDashboardGroups());
   setText('rPromos',promotionSummary.totalPromotions||0);
-  setText('rQuotes',metrics.quotes.length);
-  if(canViewPromotionsUi()&&!promotionDashboardLoaded&&!promotionDashboardPromise){
-    loadPromotionDashboard({background:true});
-  }
-  if(!quoteHistoryLoaded&&!quoteHistoryPromise&&(!Array.isArray(DB.quotes)||!DB.quotes.length)){
-    ensureQuotationHistoryLoaded();
-  }
+  setText('rQuotes',kpiReady?metrics.quotes.length:dashboardEmptyValue);
+  scheduleDashboardSecondaryDataLoad();
 }
 
 function renderDashboardKpiCard(icon,title,value,caption){
@@ -3409,6 +3696,7 @@ function renderDashboardSection(title,subtitle,trackHtml,options){
       </div>
       ${action}
     </div>
+    ${data.statusHtml||''}
     <div class="dashboard-section__track${trackClass}" tabindex="0" aria-label="${htmlAttr(title)}">${trackHtml}</div>
   </section>`;
 }
@@ -3439,7 +3727,7 @@ function renderHomeCommandCenter(){
   setText('homeWelcomeText',DB.settings?.welcomeText||'เลือกงานที่ต้องการเริ่มจากทางลัดด้านล่าง');
   setText('homeUserName',fullName);
   setText('homeUserMeta',userMeta);
-  setText('homeAppVersion',String(window.APP_VERSION||window.CACHE_VERSION||'-'));
+  setText('homeAppVersion',getAppInfo().version);
   const avatar=$('homeProfileAvatar');
   if(avatar)renderProfileImageElement(avatar,currentProfileImage(),USER);
   const announcement=String(DB.settings?.announcementText??'').trim();
@@ -3479,36 +3767,54 @@ function renderHomeDashboardRedesign(){
   const root=ensureDashboardLayout();
   const metrics=buildDashboardMetrics();
   const customerKpi=metrics.customerKpi||{};
+  const kpiReady=isDashboardKpiDataReady();
+  const dashboardEmptyValue='—';
+  const dashboardLoadingText='กำลังโหลดข้อมูล...';
+  const quoteValueText=kpiReady?dashboardMoney(metrics.actual):dashboardEmptyValue;
+  const quoteCountText=kpiReady?metrics.quotes.length:dashboardEmptyValue;
+  const customerCountReady=bootstrapLoaded||customersLoaded;
   if(root){
     const salesCards=renderDashboardMetricCards([
-      {icon:'🎯',title:'Target',value:dashboardMoney(metrics.target),caption:'เป้าหมายยอดขาย'},
-      {icon:'💰',title:'Actual',value:dashboardMoney(metrics.actual),caption:'ยอดจริงจากใบเสนอราคา'},
-      {icon:'📈',title:'Forecast',value:dashboardMoney(metrics.forecast),caption:'ประมาณการจากข้อมูลปัจจุบัน'},
-      {icon:'✅',title:'Achievement',value:(metrics.achievement?metrics.achievement.toFixed(1):'0.0')+'%',caption:'Actual / Target'}
+      {icon:'🎯',title:'Target',value:!kpiReady?dashboardEmptyValue:(metrics.salesKpi.hasTarget?dashboardMoney(metrics.target):dashboardEmptyValue),caption:!kpiReady?dashboardLoadingText:(metrics.salesKpi.hasTarget?`${metrics.salesKpi.periodStart} – ${metrics.salesKpi.periodEnd}`:'ยังไม่ได้กำหนดเป้าหมาย')},
+      {icon:'💰',title:'Actual',value:kpiReady?dashboardMoney(metrics.actual):dashboardEmptyValue,caption:kpiReady?'ยอดจริงจากใบเสนอราคา':dashboardLoadingText},
+      {icon:'📈',title:'Forecast',value:kpiReady?dashboardMoney(metrics.forecast):dashboardEmptyValue,caption:kpiReady?'Actual ÷ วันที่ผ่านไป × วันทั้งหมด':dashboardLoadingText},
+      {icon:'✅',title:'Achievement',value:!kpiReady?dashboardEmptyValue:(metrics.salesKpi.achievementPercent===null?dashboardEmptyValue:metrics.salesKpi.achievementPercent.toFixed(1)+'%'),caption:!kpiReady?dashboardLoadingText:(metrics.salesKpi.hasTarget?'Actual / Target':'ยังไม่ได้กำหนดเป้าหมาย')},
+      {icon:'🧭',title:'Remaining',value:!kpiReady?dashboardEmptyValue:(metrics.salesKpi.remaining===null?dashboardEmptyValue:dashboardMoney(metrics.salesKpi.remaining)),caption:kpiReady?'ยอดที่เหลือเพื่อถึงเป้าหมาย':dashboardLoadingText},
+      {icon:'📅',title:'Required / Month',value:!kpiReady?dashboardEmptyValue:(metrics.salesKpi.requiredMonthlyAverage===null?dashboardEmptyValue:dashboardMoney(metrics.salesKpi.requiredMonthlyAverage)),caption:kpiReady?'ยอดเฉลี่ยต่อเดือนที่เหลือ':dashboardLoadingText}
     ]);
-    const businessCards=renderDashboardMetricCards([
-      {icon:'🔷',title:'Gyproc total',value:dashboardMoney(metrics.bu.Gyproc),caption:'มูลค่าสินค้า Gyproc'},
-      {icon:'🟨',title:'Weber total',value:dashboardMoney(metrics.bu.Weber),caption:'มูลค่าสินค้า Weber'},
-      {icon:'📄',title:'Quotation value',value:dashboardMoney(metrics.actual),caption:'มูลค่ารวมใบเสนอราคา'},
-      {icon:'👤',title:'New customer',value:customerKpi.newCustomers||0,caption:'ลูกค้าใหม่ 30 วันล่าสุด'}
-    ]);
+    const businessSummary=metrics.businessSummary||{units:[],state:'error',message:'Unable to calculate KPI'};
+    const unitCards=(businessSummary.units||[]).map((unit,index)=>({
+      icon:index%2===0?'◆':'◇',
+      title:unit.label+' total',
+      value:unit.total===null?'—':dashboardMoney(unit.total),
+      caption:'มูลค่าสินค้าตาม Business Unit'
+    }));
+    if(!unitCards.length){
+      unitCards.push({icon:'◆',title:'Business unit total',value:'—',caption:businessSummary.message||'ยังไม่มีข้อมูลสินค้า'});
+    }
+    const businessCards=renderDashboardMetricCards(unitCards.concat([
+      {icon:'📄',title:'Quotation value',value:quoteValueText,caption:kpiReady?'มูลค่ารวมใบเสนอราคา':dashboardLoadingText},
+      {icon:'👤',title:'New customer',value:customerKpi.state==='ready'?customerKpi.newCustomers:dashboardEmptyValue,caption:customerKpi.state==='ready'?'ลูกค้าใหม่ 30 วันล่าสุด':(customerKpi.message||dashboardLoadingText)}
+    ]));
     const quotationCards=renderDashboardMetricCards([
-      {icon:'🧾',title:'Total quotation',value:metrics.quotes.length,caption:'ใบเสนอราคาทั้งหมด'},
-      {icon:'💵',title:'Total value',value:dashboardMoney(metrics.actual),caption:'ไม่รวมรายการยกเลิก'},
-      {icon:'✏️',title:'Draft',value:metrics.draft.length,caption:'สถานะ DRAFT'},
-      {icon:'✅',title:'Saved',value:metrics.saved.length,caption:'สถานะ SAVED'},
-      {icon:'⛔',title:'Cancelled',value:metrics.cancelled.length,caption:'สถานะ CANCELLED'}
+      {icon:'🧾',title:'Total quotation',value:quoteCountText,caption:kpiReady?'ใบเสนอราคาทั้งหมด':dashboardLoadingText},
+      {icon:'💵',title:'Total value',value:quoteValueText,caption:kpiReady?'ไม่รวมรายการยกเลิก':dashboardLoadingText},
+      {icon:'✏️',title:'Draft',value:kpiReady?metrics.draft.length:dashboardEmptyValue,caption:kpiReady?'สถานะ DRAFT':dashboardLoadingText},
+      {icon:'✅',title:'Saved',value:kpiReady?metrics.saved.length:dashboardEmptyValue,caption:kpiReady?'สถานะ SAVED':dashboardLoadingText},
+      {icon:'⛔',title:'Cancelled',value:kpiReady?metrics.cancelled.length:dashboardEmptyValue,caption:kpiReady?'สถานะ CANCELLED':dashboardLoadingText}
     ]);
+    const customerReady=customerKpi.state==='ready';
     const customerCards=renderDashboardMetricCards([
-      {icon:'🏪',title:'Total customer',value:customerKpi.total||customerCount||0,caption:'ร้านค้าทั้งหมด'},
-      {icon:'🟢',title:'Active customer',value:customerKpi.active||0,caption:'ร้านค้าที่เปิดใช้งาน'},
-      {icon:'✨',title:'New customer',value:customerKpi.newCustomers||0,caption:'ลูกค้าใหม่ 30 วันล่าสุด'},
-      {icon:'⚪',title:'Inactive customer',value:customerKpi.inactive||0,caption:'ร้านค้าที่ปิดใช้งาน'}
+      {icon:'🏪',title:'Total customer',value:customerCountReady?(customerKpi.total||customerCount||0):dashboardEmptyValue,caption:customerCountReady?'ร้านค้าทั้งหมด':dashboardLoadingText},
+      {icon:'🟢',title:'Active customer',value:customerReady?customerKpi.active:'—',caption:customerReady?'ร้านค้าที่เปิดใช้งาน':(customerKpi.message||'กำลังโหลดข้อมูลลูกค้า')},
+      {icon:'✨',title:'New customer',value:customerReady?customerKpi.newCustomers:'—',caption:customerReady?'ลูกค้าใหม่ 30 วันล่าสุด':(customerKpi.message||'กำลังโหลดข้อมูลลูกค้า')},
+      {icon:'⚪',title:'Inactive customer',value:customerReady?customerKpi.inactive:'—',caption:customerReady?'ร้านค้าที่ปิดใช้งาน':(customerKpi.message||'กำลังโหลดข้อมูลลูกค้า')}
     ]);
-    const topProducts=renderDashboardTopList(metrics.topProducts,item=>`<article class="dashboard-list-card"><h3>${dashboardText(item.name)}</h3><b>${dashboardMoney(item.value)}</b><small>จำนวน ${dashboardText(item.qty||0)}</small></article>`,'ยังไม่มีสินค้าอันดับต้น');
-    const topCustomers=renderDashboardTopList(metrics.topCustomers,item=>`<article class="dashboard-list-card"><h3>${dashboardText(item.name)}</h3><b>${dashboardMoney(item.value)}</b><small>${dashboardText(item.count||0)} ใบเสนอราคา</small></article>`,'ยังไม่มีลูกค้าอันดับต้น');
+    const dashboardLoadingCard=`<article class="dashboard-list-card dashboard-empty">${dashboardText(dashboardLoadingText)}</article>`;
+    const topProducts=kpiReady?renderDashboardTopList(metrics.topProducts,item=>`<article class="dashboard-list-card"><h3>${dashboardText(item.name)}</h3><b>${dashboardMoney(item.value)}</b><small>จำนวน ${dashboardText(item.qty||0)}</small></article>`,'ยังไม่มีสินค้าอันดับต้น'):dashboardLoadingCard;
+    const topCustomers=kpiReady?renderDashboardTopList(metrics.topCustomers,item=>`<article class="dashboard-list-card"><h3>${dashboardText(item.name)}</h3><b>${dashboardMoney(item.value)}</b><small>${dashboardText(item.count||0)} ใบเสนอราคา</small></article>`,'ยังไม่มีลูกค้าอันดับต้น'):dashboardLoadingCard;
     root.innerHTML=[
-      renderDashboardSection('Sales KPI','เป้าหมาย ยอดจริง ประมาณการ และ Achievement',salesCards,{id:'dashboard-sales-kpi',trackClass:'dashboard-kpi-grid dashboard-section__track--kpi'}),
+      renderDashboardSection('Sales KPI','เป้าหมาย ยอดจริง ประมาณการ และ Achievement',salesCards,{id:'dashboard-sales-kpi',trackClass:'dashboard-kpi-grid dashboard-section__track--kpi',statusHtml:kpiReady?'':`<p class="dashboard-loading-helper" role="status" aria-live="polite">${escapeHtml(dashboardLoadingText)}</p>`,actionLabel:canManageSalesTargetsUi()?'จัดการเป้าหมาย':'View Only',actionPage:canManageSalesTargetsUi()?'settings':'',actionAria:'จัดการเป้าหมายยอดขาย'}),
       renderDashboardSection('Business KPI','สรุปตามแบรนด์และยอดรวมธุรกิจ',businessCards,{id:'dashboard-business-kpi',trackClass:'dashboard-section__track--compact'}),
       renderDashboardSection('Quotation KPI','ใช้สถานะจริงที่มีในระบบปัจจุบัน',quotationCards,{id:'dashboard-quotation-kpi',trackClass:'dashboard-section__track--compact'}),
       renderDashboardSection('Customer KPI','สรุปจากข้อมูลร้านค้าที่โหลดอยู่',customerCards,{id:'dashboard-customer-kpi',trackClass:'dashboard-section__track--compact'}),
@@ -3517,23 +3823,19 @@ function renderHomeDashboardRedesign(){
     ].join('');
   }
   const setText=(id,value)=>{const el=$(id); if(el)el.textContent=value;};
-  setText('statQuotes',metrics.quotes.length);
-  setText('statSales',Number(metrics.actual||0).toLocaleString('th-TH'));
-  setText('statCustomers',customerCount);
-  setText('statPending',metrics.draft.length);
-  setText('rProducts',productCount);
-  setText('rCustomers',customerCount);
+  setText('statQuotes',kpiReady?metrics.quotes.length:dashboardEmptyValue);
+  setText('statSales',kpiReady?Number(metrics.actual||0).toLocaleString('th-TH'):dashboardEmptyValue);
+  setText('statCustomers',customerCountReady?customerCount:dashboardEmptyValue);
+  setText('statPending',kpiReady?metrics.draft.length:dashboardEmptyValue);
+  setText('rProducts',(bootstrapLoaded||productsLoaded)?productCount:dashboardEmptyValue);
+  setText('rCustomers',customerCountReady?customerCount:dashboardEmptyValue);
   const promotionSummary=PROMOTION_DASHBOARD.summary||buildPromotionDashboardSummary(getPromotionDashboardGroups());
   setText('rPromos',promotionSummary.totalPromotions||0);
-  setText('rQuotes',metrics.quotes.length);
-  if(canViewPromotionsUi()&&!promotionDashboardLoaded&&!promotionDashboardPromise){
-    loadPromotionDashboard({background:true});
-  }
-  if(!quoteHistoryLoaded&&!quoteHistoryPromise&&(!Array.isArray(DB.quotes)||!DB.quotes.length)){
-    ensureQuotationHistoryLoaded();
-  }
+  setText('rQuotes',kpiReady?metrics.quotes.length:dashboardEmptyValue);
+  scheduleDashboardSecondaryDataLoad();
 }
 function renderDashboard(){
+  if(!EFFECTIVE_SALES_TARGET&&DB.effectiveSalesTarget)EFFECTIVE_SALES_TARGET=DB.effectiveSalesTarget;
   renderHomeDashboardRedesign();
 }
 renderHome=renderHomeCommandCenter;
@@ -3747,9 +4049,37 @@ async function cancelQuotationFromHistory(quoteId){
     toast('Cancel ไม่สำเร็จ');
   }
 }
-function renderSettings(){if(!USER)return;let s=DB.settings||{},identity=getSystemIdentitySettingsForUi(); let set=(id,val)=>{let el=$(id); if(el)el.value=val||''}; set('setDisplay',USER.displayName); set('setPosition',USER.position); set('setPhone',USER.phone); set('setPhoto',USER.photoUrl); set('setPersonalGreeting',USER.greetingText||''); set('setCompany',identity.companyName); set('setAppName',identity.systemName); set('setWelcome',s.welcomeText); set('setMorning',s.greetingMorning); set('setAfternoon',s.greetingAfternoon); set('setEvening',s.greetingEvening); set('setNight',s.greetingNight); applySettingsPermissionUi(); updateProfilePreview(USER.photoUrl||'');}
+function canManageSalesTargetsUi(){return ['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0;}
+function canViewSalesTargetsUi(){return currentRole()!=='PC';}
+function salesTargetMonthOptions(){return ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];}
+function ensureSalesTargetFilterOptions(){
+  const now=new Date(),year=$('salesTargetFilterYear'),month=$('salesTargetFilterMonth');
+  if(year&&!year.options.length){for(let y=now.getFullYear()+2;y>=now.getFullYear()-5;y--){year.add(new Option(String(y),String(y)));}year.value=String(now.getFullYear());}
+  if(month&&!month.options.length){salesTargetMonthOptions().forEach((name,i)=>month.add(new Option(name,String(i+1))));month.value=String(now.getMonth()+1);}
+  handleSalesTargetFilterTypeChange(false);
+}
+function handleSalesTargetFilterTypeChange(load){const monthly=$('salesTargetFilterType')?.value==='MONTHLY';if($('salesTargetFilterMonth'))$('salesTargetFilterMonth').disabled=!monthly;if(load!==false)loadSalesTargets({force:true});}
+function populateSalesTargetOptions(){const options=SALES_TARGET_OPTIONS||{},area=$('salesTargetFilterArea'),user=$('salesTargetFilterUser');if(area){area.innerHTML='<option value="">ทุก Area</option>'+((options.areas||[]).map(v=>`<option value="${htmlAttr(v)}">${escapeHtml(v)}</option>`).join(''));}if(user){user.innerHTML='<option value="">ทุก Sales</option>'+((options.salesUsers||[]).map(v=>`<option value="${htmlAttr(v.userId)}">${escapeHtml(v.name||v.userId)}</option>`).join(''));}const formArea=$('salesTargetArea');if(formArea)formArea.innerHTML=(options.areas||[]).map(v=>`<option value="${htmlAttr(v)}">${escapeHtml(v)}</option>`).join('');handleSalesTargetAreaChange();const scope=$('salesTargetPermissionScope');if(scope)scope.textContent=currentRole()==='SUPER_ADMIN'?'Scope: ทุก Area':`Scope: ${escapeHtml(options.actorArea||getUserArea(USER)||'-')}`;}
+async function loadSalesTargetOptions(options){const force=!!(options&&options.force);if(SALES_TARGET_OPTIONS&&!force)return SALES_TARGET_OPTIONS;const response=await callApi('getSalesTargetFormOptions',force?{force:true}:{});if(!response?.ok)throw new Error(response?.message||'โหลดตัวเลือกเป้าหมายไม่สำเร็จ');SALES_TARGET_OPTIONS=response.data||{};populateSalesTargetOptions();return SALES_TARGET_OPTIONS;}
+function getSalesTargetFilters(){return{periodYear:Number($('salesTargetFilterYear')?.value||new Date().getFullYear()),targetType:$('salesTargetFilterType')?.value||'ANNUAL',periodMonth:$('salesTargetFilterType')?.value==='MONTHLY'?Number($('salesTargetFilterMonth')?.value||1):'',businessUnit:$('salesTargetFilterBu')?.value||'',salesArea:$('salesTargetFilterArea')?.value||'',salesUserId:$('salesTargetFilterUser')?.value||'',status:$('salesTargetFilterStatus')?.value||''};}
+function renderSalesTargetSummaryCards(summary,state){const target=$('salesTargetSummary');if(!target)return;const data=summary||{};const emptyValue=state==='loading'||state==='error'?'—':0;const values=[['Total active',data.totalActive??emptyValue],['Gyproc',data.gyproc??emptyValue],['Weber',data.weber??emptyValue],['Assigned users',data.assignedUsers??emptyValue]];target.innerHTML=values.map(v=>`<article><small>${v[0]}</small><b>${typeof v[1]==='number'&&v[0]!=='Assigned users'?dashboardMoney(v[1]):escapeHtml(String(v[1]))}</b></article>`).join('');}
+function getSalesTargetSummaryFromRows(rows){const active=(Array.isArray(rows)?rows:[]).filter(t=>t.active||t.status==='ACTIVE');return{totalActive:active.reduce((s,t)=>s+Number(t.targetAmount||0),0),gyproc:active.filter(t=>t.businessUnit==='GYPROC').reduce((s,t)=>s+Number(t.targetAmount||0),0),weber:active.filter(t=>t.businessUnit==='WEBER').reduce((s,t)=>s+Number(t.targetAmount||0),0),assignedUsers:new Set(active.map(t=>t.salesUserId).filter(Boolean)).size};}
+async function loadSalesTargets(options){if(!canViewSalesTargetsUi())return null;const opts=options&&typeof options==='object'?options:{};ensureSalesTargetFilterOptions();if(salesTargetsPromise&&!opts.force)return salesTargetsPromise;const state=$('salesTargetState'),list=$('salesTargetList');const requestId=++salesTargetRequestSequence;if(state){state.className='sales-target-state is-loading';state.textContent='กำลังโหลดข้อมูลเป้าหมาย...';}if(list)list.innerHTML='';renderSalesTargetSummaryCards(null,'loading');salesTargetsPromise=(async()=>{try{const filters=getSalesTargetFilters();const response=canManageSalesTargetsUi()?await callApi('getSalesTargetManagementData',filters):await callApi('getSalesTargets',filters);if(requestId!==salesTargetRequestSequence)return{ok:false,code:'STALE_RESPONSE_IGNORED',message:'Ignored older sales target response'};if(!response?.ok){const error=new Error(response?.message||'โหลดเป้าหมายไม่สำเร็จ');error.eventId=response?.eventId||'';error.code=response?.code||'ERROR';throw error;}if(canManageSalesTargetsUi()){const data=response.data||{};SALES_TARGET_OPTIONS=data.formOptions||SALES_TARGET_OPTIONS||{};populateSalesTargetOptions();SALES_TARGETS=Array.isArray(data.targets)?data.targets:[];salesTargetsLoaded=true;renderSalesTargets(data.summary);return{ok:true,data:SALES_TARGETS};}SALES_TARGETS=Array.isArray(response.data)?response.data:[];salesTargetsLoaded=true;renderSalesTargets();return{ok:true,data:SALES_TARGETS};}catch(error){if(requestId===salesTargetRequestSequence){renderSalesTargetSummaryCards(null,'error');if(state){const eventText=error&&error.eventId?`<br><small>Event ID: ${escapeHtml(error.eventId)}</small>`:'';state.className='sales-target-state is-error';state.innerHTML=`ไม่สามารถโหลดข้อมูลเป้าหมายได้${eventText}<br><button type="button" class="ghost" onclick="loadSalesTargets({force:true})">ลองใหม่</button>`;}}return{ok:false,code:error&&error.code||'ERROR',message:error&&error.message?error.message:String(error||'')};}finally{if(requestId===salesTargetRequestSequence)salesTargetsPromise=null;}})();return salesTargetsPromise;}
+function renderSalesTargets(summaryData){const list=$('salesTargetList'),state=$('salesTargetState');if(!list)return;renderSalesTargetSummaryCards(summaryData||getSalesTargetSummaryFromRows(SALES_TARGETS),'ready');if(!SALES_TARGETS.length){list.innerHTML='';if(state){state.className='sales-target-state is-empty';state.textContent='ยังไม่มีการกำหนดเป้าหมายตามตัวกรองนี้';}return;}if(state){state.className='sales-target-state';state.textContent='';}list.innerHTML=SALES_TARGETS.map(t=>`<article class="sales-target-card"><div class="sales-target-card-head"><div><small>${escapeHtml(t.targetType)} ${escapeHtml(String(t.periodYear))}${t.periodMonth?' / '+escapeHtml(String(t.periodMonth)):''}</small><h3>${escapeHtml(t.salesUserNameSnapshot||t.salesArea||'-')}</h3></div><span class="pill ${t.status==='ACTIVE'?'blue':'yellow'}">${escapeHtml(t.status)}</span></div><dl><div><dt>BU</dt><dd>${escapeHtml(t.businessUnit)}</dd></div><div><dt>Area</dt><dd>${escapeHtml(t.salesArea||'-')}</dd></div><div><dt>Target</dt><dd>${dashboardMoney(t.targetAmount)}</dd></div><div><dt>Updated</dt><dd>${escapeHtml(formatDateTime(t.updatedAt))}</dd></div></dl>${canManageSalesTargetsUi()?`<div class="actions"><button type="button" class="ghost" onclick="openSalesTargetForm('${htmlAttr(t.targetId)}')">แก้ไข</button>${t.status==='ACTIVE'?`<button type="button" class="danger" onclick="changeSalesTargetStatus('${htmlAttr(t.targetId)}','INACTIVE',${Number(t.version||1)})">Deactivate</button>`:''}</div>`:'<small>View Only</small>'}</article>`).join('');}
+function handleSalesTargetTypeChange(){const monthly=$('salesTargetType')?.value==='MONTHLY';if($('salesTargetMonthField'))$('salesTargetMonthField').hidden=!monthly;updateSalesTargetPeriodPreview();}
+function handleSalesTargetScopeChange(){if($('salesTargetUserField'))$('salesTargetUserField').hidden=$('salesTargetScopeType')?.value!=='USER';}
+function handleSalesTargetAreaChange(){const area=$('salesTargetArea')?.value||'',user=$('salesTargetUser');if(!user)return;const users=(SALES_TARGET_OPTIONS?.salesUsers||[]).filter(u=>!area||u.salesArea===area);user.innerHTML='<option value="">เลือก Sales</option>'+users.map(u=>`<option value="${htmlAttr(u.userId)}" data-name="${htmlAttr(u.name||u.userId)}">${escapeHtml(u.name||u.userId)}</option>`).join('');}
+function updateSalesTargetPeriodPreview(){const type=$('salesTargetType')?.value||'ANNUAL',year=Number($('salesTargetYear')?.value||new Date().getFullYear()),month=Number($('salesTargetMonth')?.value||1);const start=type==='MONTHLY'?`${year}-${String(month).padStart(2,'0')}-01`:`${year}-01-01`,endDate=type==='MONTHLY'?new Date(year,month,0):new Date(year,11,31),end=`${endDate.getFullYear()}-${String(endDate.getMonth()+1).padStart(2,'0')}-${String(endDate.getDate()).padStart(2,'0')}`;if($('salesTargetPeriodPreview'))$('salesTargetPeriodPreview').textContent=`Period: ${start} – ${end}`;}
+async function openSalesTargetForm(targetId){if(!canManageSalesTargetsUi())return toast('ไม่มีสิทธิ์จัดการเป้าหมาย');salesTargetFocusReturn=document.activeElement;await loadSalesTargetOptions();const target=targetId?SALES_TARGETS.find(t=>t.targetId===targetId):null,now=new Date();$('salesTargetId').value=target?.targetId||'';$('salesTargetVersion').value=target?.version||'';$('salesTargetType').value=target?.targetType||'ANNUAL';$('salesTargetYear').value=target?.periodYear||now.getFullYear();const month=$('salesTargetMonth');if(!month.options.length)salesTargetMonthOptions().forEach((name,i)=>month.add(new Option(name,String(i+1))));month.value=String(target?.periodMonth||now.getMonth()+1);$('salesTargetBusinessUnit').value=target?.businessUnit||'ALL';$('salesTargetScopeType').value=target?.salesUserId?'USER':'AREA';$('salesTargetArea').value=target?.salesArea||SALES_TARGET_OPTIONS?.actorArea||'';handleSalesTargetAreaChange();$('salesTargetUser').value=target?.salesUserId||'';$('salesTargetAmount').value=target?Number(target.targetAmount||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'';$('salesTargetStatus').value=target?.status||'DRAFT';$('salesTargetModalTitle').textContent=target?'แก้ไขเป้าหมาย':'เพิ่มเป้าหมาย';$('salesTargetFormError').textContent='';handleSalesTargetTypeChange();handleSalesTargetScopeChange();const modal=$('salesTargetModal');modal.classList.add('show');modal.setAttribute('aria-hidden','false');document.body.classList.add('sg-dialog-open');setTimeout(()=>$('salesTargetType')?.focus(),0);}
+function closeSalesTargetForm(){const modal=$('salesTargetModal');if(!modal)return;modal.classList.remove('show');modal.setAttribute('aria-hidden','true');document.body.classList.remove('sg-dialog-open');if(salesTargetFocusReturn?.focus)salesTargetFocusReturn.focus();}
+function getSalesTargetFormPayload(){const userSelect=$('salesTargetUser'),scope=$('salesTargetScopeType').value;return{targetId:$('salesTargetId').value,version:$('salesTargetVersion').value?Number($('salesTargetVersion').value):undefined,targetType:$('salesTargetType').value,periodYear:Number($('salesTargetYear').value),periodMonth:$('salesTargetType').value==='MONTHLY'?Number($('salesTargetMonth').value):'',businessUnit:$('salesTargetBusinessUnit').value,scopeType:scope,salesArea:$('salesTargetArea').value,salesUserId:scope==='USER'?userSelect.value:'',salesUserNameSnapshot:scope==='USER'?userSelect.options[userSelect.selectedIndex]?.dataset.name||userSelect.options[userSelect.selectedIndex]?.text||'':'',targetAmount:$('salesTargetAmount').value,status:$('salesTargetStatus').value};}
+async function saveSalesTargetForm(event){event?.preventDefault();if(salesTargetSaving)return;const payload=getSalesTargetFormPayload(),error=$('salesTargetFormError'),button=$('salesTargetSaveButton');if(!payload.salesArea||payload.scopeType==='USER'&&!payload.salesUserId||!Number.isFinite(Number(String(payload.targetAmount).replace(/,/g,'')))||Number(String(payload.targetAmount).replace(/,/g,''))<0){error.textContent='กรุณากรอกข้อมูลที่จำเป็นให้ครบและถูกต้อง';return;}salesTargetSaving=true;button.disabled=true;button.setAttribute('aria-busy','true');error.textContent='';try{const action=payload.targetId?'updateSalesTarget':'saveSalesTarget',response=await callApi(action,payload);if(!response?.ok)throw new Error(response?.message||'บันทึกเป้าหมายไม่สำเร็จ');if(typeof invalidateSalesTargetApiCaches==='function')invalidateSalesTargetApiCaches();closeSalesTargetForm();toast('บันทึกเป้าหมายเรียบร้อย');await refreshEffectiveSalesTarget();await loadSalesTargets({force:true});renderDashboard();}catch(e){error.textContent=e.message||'บันทึกเป้าหมายไม่สำเร็จ';}finally{salesTargetSaving=false;button.disabled=false;button.removeAttribute('aria-busy');}}
+async function changeSalesTargetStatus(targetId,status,version){if(!confirm('ยืนยันการเปลี่ยนสถานะเป้าหมาย?'))return;const response=await callApi('setSalesTargetStatus',{targetId,status,version});if(!response?.ok)return toast(response?.message||'เปลี่ยนสถานะไม่สำเร็จ');if(typeof invalidateSalesTargetApiCaches==='function')invalidateSalesTargetApiCaches();await refreshEffectiveSalesTarget();await loadSalesTargets({force:true});renderDashboard();}
+function getDashboardEffectiveSalesTargetRequest(){const now=new Date(),area=String(getUserArea(USER)||'').trim();const request={targetType:'MONTHLY',periodYear:now.getFullYear(),periodMonth:now.getMonth()+1,businessUnit:'ALL',force:true};if(area&&area.toUpperCase()!=='SYSTEM')request.salesArea=area;return request;}
+async function refreshEffectiveSalesTarget(){if(!canViewSalesTargetsUi())return null;try{const response=await callApi('getEffectiveSalesTarget',getDashboardEffectiveSalesTargetRequest());if(response?.ok){EFFECTIVE_SALES_TARGET=response.data||null;DB.effectiveSalesTarget=EFFECTIVE_SALES_TARGET;return EFFECTIVE_SALES_TARGET;}}catch(error){console.warn('[SALES_TARGET] effective target refresh failed',error);}return null;}
+function renderSettings(){if(!USER)return;document.querySelectorAll('[data-target-management-only]').forEach(el=>{el.hidden=!canManageSalesTargetsUi();});let s=DB.settings||{},identity=getSystemIdentitySettingsForUi(); let set=(id,val)=>{let el=$(id); if(el)el.value=val||''}; set('setDisplay',USER.displayName); set('setPosition',USER.position); set('setPhone',USER.phone); set('setPhoto',USER.photoUrl); set('setPersonalGreeting',USER.greetingText||''); set('setCompany',identity.companyName); set('setAppName',identity.systemName); set('setWelcome',s.welcomeText); set('setMorning',s.greetingMorning); set('setAfternoon',s.greetingAfternoon); set('setEvening',s.greetingEvening); set('setNight',s.greetingNight); applySettingsPermissionUi(); updateProfilePreview(USER.photoUrl||'');}
 function canManageDataEntryUi(){return permissionFlag('canManageCustomers',false)||permissionFlag('canManageProducts',false)||permissionFlag('canManagePromotions',false)||['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0}
-function openSettingPage(name){const targetName=String(name||'home'); if(['identity','systemGreeting'].indexOf(targetName)>=0&&!canManageSystemIdentitySettings()){toast('คุณไม่มีสิทธิ์แก้ไขชื่อบริษัทและชื่อระบบ');name='home'} if(targetName==='data'&&!canManageDataEntryUi()){toast('ไม่มีสิทธิ์เพิ่มข้อมูล');name='home'} document.querySelectorAll('#page-settings .setting-sub').forEach(x=>x.classList.remove('active')); let id=name==='home'?'settingsHome':'setting'+name.charAt(0).toUpperCase()+name.slice(1); let el=$(id); if(el)el.classList.add('active'); renderSettings(); if(name==='identity')loadSystemIdentitySettingsForSettings(); window.scrollTo({top:0,behavior:'smooth'});}
+function openSettingPage(name){const targetName=String(name||'home'); if(targetName==='salesTargets'&&!canManageSalesTargetsUi()){toast('คุณไม่มีสิทธิ์จัดการเป้าหมาย');name='home'} if(['identity','systemGreeting'].indexOf(targetName)>=0&&!canManageSystemIdentitySettings()){toast('คุณไม่มีสิทธิ์แก้ไขชื่อบริษัทและชื่อระบบ');name='home'} if(targetName==='data'&&!canManageDataEntryUi()){toast('ไม่มีสิทธิ์เพิ่มข้อมูล');name='home'} document.querySelectorAll('#page-settings .setting-sub').forEach(x=>x.classList.remove('active')); let id=name==='home'?'settingsHome':'setting'+name.charAt(0).toUpperCase()+name.slice(1); let el=$(id); if(el)el.classList.add('active'); renderSettings(); if(name==='identity')loadSystemIdentitySettingsForSettings(); if(name==='salesTargets'){ensureSalesTargetFilterOptions();loadSalesTargets({force:true});} window.scrollTo({top:0,behavior:'smooth'});}
 function updateProfilePreview(src){let box=$('profilePreview'); if(!box)return; box.innerHTML=src?`<img src="${src}">`:'👩🏻';}
 function handleProfileImage(ev){let file=ev.target.files&&ev.target.files[0]; if(!file)return; let reader=new FileReader(); reader.onload=e=>{let img=new Image(); img.onload=()=>{let canvas=document.createElement('canvas'); let max=320,scale=Math.min(max/img.width,max/img.height,1); canvas.width=Math.round(img.width*scale); canvas.height=Math.round(img.height*scale); let ctx=canvas.getContext('2d'); ctx.drawImage(img,0,0,canvas.width,canvas.height); let data=canvas.toDataURL('image/jpeg',0.78); document.getElementById('setPhoto').value=data; updateProfilePreview(data); toast('อัพโหลดรูปแล้ว กดบันทึกโปรไฟล์เพื่อใช้งาน');}; img.src=e.target.result;}; reader.readAsDataURL(file);}
 async function saveProfile(){
@@ -5324,6 +5654,17 @@ function bindPinnedProductDragAndDrop(){const grid=$('pinnedProductGrid');if(!gr
 const baseFilterQuoteProductsByBusinessUnitForPreferences=filterQuoteProductsByBusinessUnit;
 filterQuoteProductsByBusinessUnit=function(query,businessUnit){return baseFilterQuoteProductsByBusinessUnitForPreferences(query,businessUnit).map(decorateQuotePreferenceProduct).sort((a,b)=>productPreferenceRank(a)-productPreferenceRank(b)||rankQuoteProductBusinessUnit(a,businessUnit)-rankQuoteProductBusinessUnit(b,businessUnit)||rankQuoteProduct(a,query)-rankQuoteProduct(b,query)||String(a.productName||'').localeCompare(String(b.productName||''),'th'))};
 window.NAVIGATION_LABELS=NAVIGATION_LABELS; window.NAVIGATION_ITEMS=NAVIGATION_ITEMS; window.getNavigationLabel=getNavigationLabel; window.getNavigationLabelForPage=getNavigationLabelForPage; window.getNavigationRoute=getNavigationRoute; window.getNavigationButtonRoute=getNavigationButtonRoute; window.renderSidebarNavigation=renderSidebarNavigation; window.bindSidebarNavigationEvents=bindSidebarNavigationEvents; window.applyNavigationLabels=applyNavigationLabels;
-window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderDashboard=renderDashboard; window.renderCustomers=renderCustomers; window.openCustomerDetailsModal=openCustomerDetailsModal; window.openCustomerEditModal=openCustomerEditModal; window.toggleFavoriteCustomer=toggleFavoriteCustomer; window.handleCustomerAction=handleCustomerAction; window.bindCustomerCardActions=bindCustomerCardActions; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.handleProductCardCalculatorClick=handleProductCardCalculatorClick; window.isProductCardInteractiveClick=isProductCardInteractiveClick; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.createAddProductButton=createAddProductButton; window.addProductCardToQuote=addProductCardToQuote; window.handleProductAction=handleProductAction; window.bindProductCardActions=bindProductCardActions; window.openProductPromotionDetail=openProductPromotionDetail; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.loadPromotionDashboard=loadPromotionDashboard; window.refreshPromotionDashboard=refreshPromotionDashboard; window.openPromotionDetail=openPromotionDetail; window.renderPromotionProductPanel=renderPromotionProductPanel; window.closePromotionProductPanel=closePromotionProductPanel; window.goToPromotionProduct=goToPromotionProduct; window.buildProductPromotionDashboardFromProducts=buildPromotionDashboardFromProducts; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.resetAuthenticatedFrontendState=resetAuthenticatedFrontendState; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.canCreateQuotationsUi=canCreateQuotationsUi; window.canEditQuotationsUi=canEditQuotationsUi; window.canViewQuotationsUi=canViewQuotationsUi; window.canExportQuotationsUi=canExportQuotationsUi; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
+window.calculateSalesKpi=calculateSalesKpi; window.loadSalesTargets=loadSalesTargets; window.openSalesTargetForm=openSalesTargetForm; window.closeSalesTargetForm=closeSalesTargetForm; window.saveSalesTargetForm=saveSalesTargetForm; window.changeSalesTargetStatus=changeSalesTargetStatus; window.handleSalesTargetFilterTypeChange=handleSalesTargetFilterTypeChange; window.handleSalesTargetTypeChange=handleSalesTargetTypeChange; window.handleSalesTargetScopeChange=handleSalesTargetScopeChange; window.handleSalesTargetAreaChange=handleSalesTargetAreaChange; window.openSettingPage=openSettingPage; window.calculateCustomerSummary=calculateCustomerSummary; window.resolveCustomerActiveState=resolveCustomerActiveState; window.parseCustomerDateForKpi=parseCustomerDateForKpi; window.toggleMenu=toggleMenu; window.go=go; window.normalizeDb=normalizeDb; window.normalizeProduct=normalizeProduct; window.normalizeCustomer=normalizeCustomer; window.showApp=showApp; window.hydrateBootstrapFromCache=hydrateBootstrapFromCache; window.loadData=loadData; window.loadCustomers=loadCustomers; window.refreshCustomersFromServer=refreshCustomersFromServer; window.loadProducts=loadProducts; window.ensurePageData=ensurePageData; window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openUserForm=openUserForm; window.saveUserForm=saveUserForm; window.renderAll=renderAll; window.renderBrand=renderBrand; window.greeting=greeting; window.renderProfile=renderProfile; window.renderHome=renderHome; window.renderDashboard=renderDashboard; window.renderCustomers=renderCustomers; window.openCustomerDetailsModal=openCustomerDetailsModal; window.openCustomerEditModal=openCustomerEditModal; window.toggleFavoriteCustomer=toggleFavoriteCustomer; window.handleCustomerAction=handleCustomerAction; window.bindCustomerCardActions=bindCustomerCardActions; window.renderProducts=renderProducts; window.openProductCalculator=openProductCalculator; window.handleProductCardCalculatorClick=handleProductCardCalculatorClick; window.isProductCardInteractiveClick=isProductCardInteractiveClick; window.closeProductCalculator=closeProductCalculator; window.resetProductCalculator=resetProductCalculator; window.renderProductCalculator=renderProductCalculator; window.saveProductCalculatorImage=saveProductCalculatorImage; window.createAddProductButton=createAddProductButton; window.addProductCardToQuote=addProductCardToQuote; window.handleProductAction=handleProductAction; window.bindProductCardActions=bindProductCardActions; window.openProductPromotionDetail=openProductPromotionDetail; window.getProductDiscount=getProductDiscount; window.renderQuoteCustomerPicker=renderQuoteCustomerPicker; window.chooseQuoteCustomer=chooseQuoteCustomer; window.renderQuoteProductPicker=renderQuoteProductPicker; window.renderProductPicker=renderQuoteProductPicker; window.renderPromos=renderPromos; window.loadPromotionDashboard=loadPromotionDashboard; window.refreshPromotionDashboard=refreshPromotionDashboard; window.openPromotionDetail=openPromotionDetail; window.renderPromotionProductPanel=renderPromotionProductPanel; window.closePromotionProductPanel=closePromotionProductPanel; window.goToPromotionProduct=goToPromotionProduct; window.buildProductPromotionDashboardFromProducts=buildPromotionDashboardFromProducts; window.renderHistory=renderHistory; window.refreshQuotationHistory=refreshQuotationHistory; window.ensureQuotationHistoryLoaded=ensureQuotationHistoryLoaded; window.isQuotationHistoryLoaded=isQuotationHistoryLoaded; window.openQuotationDetail=openQuotationDetail; window.openQuotationDetailModal=openQuotationDetailModal; window.closeQuotationDetailModal=closeQuotationDetailModal; window.editQuotationFromHistory=editQuotationFromHistory; window.duplicateQuotationFromHistory=duplicateQuotationFromHistory; window.cancelQuotationFromHistory=cancelQuotationFromHistory; window.renderSettings=renderSettings; window.openSettingPage=openSettingPage; window.updateProfilePreview=updateProfilePreview; window.handleProfileImage=handleProfileImage; window.saveProfile=saveProfile; window.saveSettings=saveSettings; window.openModal=openModal; window.closeModal=closeModal; window.saveModal=saveModal; window.clearAppCaches=clearAppCaches; window.resetAuthenticatedFrontendState=resetAuthenticatedFrontendState; window.checkAppVersion=checkAppVersion; window.applyRolePermissions=applyRolePermissions; window.canCreateQuotationsUi=canCreateQuotationsUi; window.canEditQuotationsUi=canEditQuotationsUi; window.canViewQuotationsUi=canViewQuotationsUi; window.canExportQuotationsUi=canExportQuotationsUi; window.toast=toast; window.loadProductPreferences=loadProductPreferences; window.toggleFavoriteProduct=toggleFavoriteProduct; window.togglePinnedProduct=togglePinnedProduct; window.persistPinnedProductOrder=persistPinnedProductOrder; window.renderQuoteProductPreferenceSections=renderQuoteProductPreferenceSections; window.toggleProductPreferenceSection=toggleProductPreferenceSection;
 window.createProductIdentityKey=createProductIdentityKey; window.dedupeExactProducts=dedupeExactProducts; window.dedupeExactProductsWithReport=dedupeExactProductsWithReport; window.cloneProductRecordForSelection=cloneProductRecordForSelection; window.getStableProductRecordKey=getStableProductRecordKey; window.registerProductRecordSelection=registerProductRecordSelection; window.resolveProductRecordSelection=resolveProductRecordSelection; window.renderProductThumbnailHtml=renderProductThumbnailHtml; window.getProductImageSource=getProductImageSource;
 window.updateAnnouncementCharacterCounter=updateAnnouncementCharacterCounter; window.normalizeSystemIdentitySettings=normalizeSystemIdentitySettings; window.applySystemIdentityToUI=applySystemIdentityToUI; window.renderLoginBranding=renderLoginBranding; window.renderSidebarBranding=renderSidebarBranding; window.refreshPublicSystemSettings=refreshPublicSystemSettings; window.setPublicSystemSettings=setPublicSystemSettings; window.loadSystemIdentitySettingsForSettings=loadSystemIdentitySettingsForSettings; window.saveSystemIdentitySettings=saveSystemIdentitySettings; window.savePersonalGreetingSettings=savePersonalGreetingSettings; window.saveSystemGreetingSettings=saveSystemGreetingSettings; window.canManageSystemIdentitySettings=canManageSystemIdentitySettings; window.applySettingsPermissionUi=applySettingsPermissionUi;
+
+
+document.addEventListener('keydown',function(event){
+  if(event.key==='Escape'&&document.getElementById('versionDialog')?.classList.contains('show')){
+    closeVersionDialog();
+  }
+});
+window.getAppInfo=getAppInfo;
+window.renderApplicationVersionInfo=renderApplicationVersionInfo;
+window.openVersionDialog=openVersionDialog;
+window.closeVersionDialog=closeVersionDialog;

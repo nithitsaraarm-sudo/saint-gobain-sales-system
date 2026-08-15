@@ -3,20 +3,33 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Saint-Gobain Sales System</title>
-<link rel="manifest" href="manifest.json?v=0.5.47">
+<script src="js/version.js"></script>
+<script>
+(function () {
+  var info = window.APP_INFO && typeof window.APP_INFO === 'object'
+    ? window.APP_INFO
+    : { version: 'Unknown', build: 'Unknown', release: 'Unknown', cacheVersion: 'Unknown' };
+  var version = encodeURIComponent(String(info.version || 'Unknown'));
+  window.getVersionedAssetUrl = function (path) {
+    var separator = String(path).indexOf('?') >= 0 ? '&' : '?';
+    return String(path) + separator + 'v=' + version;
+  };
+  document.write('<link rel="manifest" href="' + window.getVersionedAssetUrl('manifest.json') + '">');
+  document.write('<link rel="icon" type="image/png" sizes="16x16" href="' + window.getVersionedAssetUrl('icons/favicon-16x16.png') + '">');
+  document.write('<link rel="icon" type="image/png" sizes="32x32" href="' + window.getVersionedAssetUrl('icons/favicon-32x32.png') + '">');
+  document.write('<link rel="shortcut icon" href="' + window.getVersionedAssetUrl('favicon.ico') + '">');
+  document.write('<link rel="apple-touch-icon" sizes="180x180" href="' + window.getVersionedAssetUrl('icons/apple-touch-icon.png') + '">');
+  document.write('<link rel="stylesheet" href="' + window.getVersionedAssetUrl('css/main.css') + '">');
+})();
+</script>
 <meta name="theme-color" content="#0067b1">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Sales System">
-<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16x16.png?v=0.5.47">
-<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32x32.png?v=0.5.47">
-<link rel="shortcut icon" href="favicon.ico?v=0.5.47">
-<link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png?v=0.5.47">
 
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700;800&family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,500,0,0&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/main.css?v=0.5.55">
 </head>
 <body>
 <div id="loginView" class="login">
@@ -28,7 +41,8 @@
       <div class="field"><label>Email หรือ Username</label><input id="loginUsername" autocomplete="username"></div>
       <div class="field"><label>Password</label><input id="loginPassword" type="password" autocomplete="current-password"></div>
       <label class="remember-row"><input id="rememberLogin" type="checkbox"> Remember Me</label>
-      <button type="button" class="primary" style="width:100%" onclick="login()">เข้าสู่ระบบ</button>
+      <button id="loginButton" type="button" class="primary" style="width:100%" onclick="login()" aria-busy="false" aria-describedby="loginStatus">เข้าสู่ระบบ</button>
+      <div id="loginStatus" class="login-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
       <div class="test-box hidden" data-demo-login="true" hidden>
         <small>Test mode: ทดลองใช้งานได้ทันทีโดยยังไม่ต้องเปิด Google Apps Script</small>
         <button type="button" class="ghost" style="width:100%" onclick="startTestMode()">ทดลองใช้งาน / Demo Login</button>
@@ -68,7 +82,7 @@
     <nav id="mainNavigation" class="nav" aria-label="Main navigation"></nav>
   </aside>
   <main class="main">
-    <div class="topbar no-print"><div id="mobileSidebarToggleHost" class="mobile-sidebar-toggle-host"></div><div></div><div class="topbar-user-area"><button type="button" class="header-profile" onclick="go('settings')" aria-label="Profile"><span class="header-avatar" id="topAvatar">👤</span><span class="header-user-text"><b id="topName">-</b><small id="topPosition">-</small></span></button><span class="header-separator"></span><button class="logout-icon-button" type="button" onclick="logout()" aria-label="Logout" title="Logout"><img class="logout-icon" src="assets/icons/logout.svg?v=0.5.47" alt="" aria-hidden="true"></button></div></div>
+    <div class="topbar no-print"><div id="mobileSidebarToggleHost" class="mobile-sidebar-toggle-host"></div><div></div><div class="topbar-user-area"><button type="button" class="header-profile" onclick="go('settings')" aria-label="Profile"><span class="header-avatar" id="topAvatar">👤</span><span class="header-user-text"><b id="topName">-</b><small id="topPosition">-</small></span></button><span class="header-separator"></span><button class="logout-icon-button" type="button" onclick="logout()" aria-label="Logout" title="Logout"><img class="logout-icon" src="assets/icons/logout.svg" alt="" aria-hidden="true"></button></div></div>
     <section id="page-home" class="page active">
       <div class="home-command-center">
         <section class="home-command-hero" aria-labelledby="homeGreetingText">
@@ -101,7 +115,7 @@
           <div id="homeQuickActions" class="home-quick-actions" aria-live="polite"></div>
         </section>
         <section class="home-info-grid" aria-label="ข้อมูลระบบและรายการล่าสุด">
-          <article class="home-info-card">
+          <article class="home-info-card home-version-card" role="button" tabindex="0" onclick="openVersionDialog()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openVersionDialog();}" aria-label="ดูข้อมูลเวอร์ชันระบบ">
             <h2>ข้อมูลระบบ</h2>
             <p>เวอร์ชันที่ใช้งาน</p>
             <b id="homeAppVersion">-</b>
@@ -138,12 +152,24 @@
           <button type="button" class="setting-tile" onclick="openSettingPage('greeting')"><span class="icon">💬</span><span><h3>คำทักทายส่วนตัว</h3><p>ตั้งข้อความทักทายที่แสดงเฉพาะบัญชีของคุณ</p></span><span class="arrow">›</span></button>
           <button type="button" class="setting-tile" data-super-admin-only="true" onclick="openSettingPage('identity')"><span class="icon">🏢</span><span><h3>ชื่อบริษัทและชื่อระบบ</h3><p>ตั้งชื่อบริษัทและชื่อระบบที่แสดงบน Login และ Sidebar</p></span><span class="arrow">›</span></button>
           <button type="button" class="setting-tile" data-super-admin-only="true" onclick="openSettingPage('systemGreeting')"><span class="icon">📣</span><span><h3>คำทักทายจากระบบ / ข่าวสาร</h3><p>ตั้งข้อความต้อนรับและคำทักทายตามช่วงเวลา</p></span><span class="arrow">›</span></button>
+          <button type="button" class="setting-tile" data-target-management-only="true" onclick="openSettingPage('salesTargets')"><span class="icon">🎯</span><span><h3>Sales Target Management</h3><p>กำหนดเป้าหมายรายปี/รายเดือนตาม BU, Area และ Sales</p></span><span class="arrow">›</span></button>
           <button type="button" class="setting-tile" data-manage-data-only="true" onclick="openSettingPage('data')"><span class="icon">＋</span><span><h3>เพิ่มข้อมูล</h3><p>เพิ่มร้านค้า สินค้า และโปรโมชั่น</p></span><span class="arrow">›</span></button>
           <button type="button" class="setting-tile" onclick="openSettingPage('account')"><span class="icon">🔐</span><span><h3>บัญชีและความปลอดภัย</h3><p>ออกจากระบบ และข้อมูลสำหรับรีเซ็ตรหัสผ่าน</p></span><span class="arrow">›</span></button>
           <button type="button" class="setting-tile" onclick="openSettingPage('password')"><span class="icon">🔑</span><span><h3>Change Password</h3><p>เปลี่ยนรหัสผ่านของบัญชีปัจจุบัน</p></span><span class="arrow">›</span></button>
         </div>
       </div>
 
+
+      <div id="settingSalesTargets" class="setting-sub">
+        <button type="button" class="ghost" onclick="openSettingPage('home')">← กลับ</button>
+        <section class="sales-target-page" aria-labelledby="salesTargetPageTitle">
+          <div class="section-title sales-target-header"><div><h2 id="salesTargetPageTitle">Sales Target Management</h2><p id="salesTargetPermissionScope">-</p></div><button id="salesTargetAddButton" type="button" class="primary" onclick="openSalesTargetForm()">+ เพิ่มเป้าหมาย</button></div>
+          <div class="sales-target-filters" aria-label="ตัวกรองเป้าหมาย"><select id="salesTargetFilterYear" onchange="loadSalesTargets({force:true})" aria-label="ปี"></select><select id="salesTargetFilterType" onchange="handleSalesTargetFilterTypeChange()" aria-label="ประเภทเป้าหมาย"><option value="ANNUAL">Annual</option><option value="MONTHLY">Monthly</option></select><select id="salesTargetFilterMonth" onchange="loadSalesTargets({force:true})" aria-label="เดือน"></select><select id="salesTargetFilterBu" onchange="loadSalesTargets({force:true})" aria-label="Business Unit"><option value="">ทุก BU</option><option value="ALL">All</option><option value="GYPROC">Gyproc</option><option value="WEBER">Weber</option></select><select id="salesTargetFilterArea" onchange="loadSalesTargets({force:true})" aria-label="Area"><option value="">ทุก Area</option></select><select id="salesTargetFilterUser" onchange="loadSalesTargets({force:true})" aria-label="Sales user"><option value="">ทุก Sales</option></select><select id="salesTargetFilterStatus" onchange="loadSalesTargets({force:true})" aria-label="สถานะ"><option value="">ทุกสถานะ</option><option value="ACTIVE">Active</option><option value="DRAFT">Draft</option><option value="INACTIVE">Inactive</option><option value="ARCHIVED">Archived</option></select></div>
+          <div id="salesTargetSummary" class="sales-target-summary" aria-live="polite"></div>
+          <div id="salesTargetState" class="sales-target-state" role="status" aria-live="polite"></div>
+          <div id="salesTargetList" class="sales-target-list"></div>
+        </section>
+      </div>
       <div id="settingProfile" class="setting-sub">
         <button type="button" class="ghost" onclick="openSettingPage('home')">← กลับ</button>
         <div class="card" style="margin-top:16px"><h2>โปรไฟล์ผู้ใช้งาน</h2>
@@ -210,6 +236,11 @@
         <div class="card" style="margin-top:16px"><h2>Change Password</h2><div class="field"><label>Current Password</label><input id="currentPassword" type="password"></div><div class="field"><label>New Password</label><input id="newPassword" type="password"></div><div class="field"><label>Confirm Password</label><input id="confirmPassword" type="password"></div><button type="button" class="primary" onclick="changePassword()">Save Password</button><p style="color:var(--muted)">Forgot Password: not required now.</p></div>
       </div>
     </section>
+    <footer class="app-footer no-print">
+      <button type="button" class="app-version-link" onclick="openVersionDialog()" aria-label="ดูข้อมูลเวอร์ชันระบบ">
+        Version <span id="footerAppVersion">Unknown</span>
+      </button>
+    </footer>
   </main>
 </div>
 <div id="quotationPrintPreview" class="quotation-print-overlay hidden" role="dialog" aria-modal="true" aria-label="Quotation print preview">
@@ -260,42 +291,86 @@
     <div class="actions" style="margin-top:14px"><button type="button" class="ghost" onclick="closeQuoteTypeModal()">Cancel</button></div>
   </div>
 </div>
-<div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-card"><div class="section-title"><h2 id="modalTitle">เพิ่มข้อมูล</h2><button type="button" class="ghost" onclick="closeModal()" aria-label="Close modal">ปิด</button></div><div id="modalBody"></div></div></div><div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
+<div id="versionDialog" class="modal version-dialog" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="versionDialogTitle" onclick="if(event.target===this)closeVersionDialog()">
+  <div class="modal-card version-dialog-card">
+    <div class="section-title">
+      <h2 id="versionDialogTitle">Saint-Gobain Sales System</h2>
+      <button type="button" class="ghost" data-version-dialog-close onclick="closeVersionDialog()" aria-label="ปิดข้อมูลเวอร์ชัน">ปิด</button>
+    </div>
+    <dl class="version-info-list">
+      <div><dt>Version</dt><dd id="aboutAppVersion">Unknown</dd></div>
+      <div><dt>Build</dt><dd id="aboutAppBuild">Unknown</dd></div>
+      <div><dt>Release</dt><dd id="aboutAppRelease">Unknown</dd></div>
+    </dl>
+  </div>
+</div>
+<div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-card"><div class="section-title"><h2 id="modalTitle">เพิ่มข้อมูล</h2><button type="button" class="ghost" onclick="closeModal()" aria-label="Close modal">ปิด</button></div><div id="modalBody"></div></div></div>
+<div id="salesTargetModal" class="modal sales-target-modal" role="dialog" aria-modal="true" aria-labelledby="salesTargetModalTitle" aria-hidden="true">
+  <div class="modal-card sales-target-modal-card">
+    <div class="section-title"><h2 id="salesTargetModalTitle">เพิ่มเป้าหมาย</h2><button type="button" class="ghost" onclick="closeSalesTargetForm()" aria-label="ปิด">×</button></div>
+    <form id="salesTargetForm" onsubmit="saveSalesTargetForm(event)" novalidate>
+      <input id="salesTargetId" type="hidden"><input id="salesTargetVersion" type="hidden">
+      <div class="sales-target-form-grid"><div class="field"><label for="salesTargetType">Target Type</label><select id="salesTargetType" required onchange="handleSalesTargetTypeChange()"><option value="ANNUAL">Annual</option><option value="MONTHLY">Monthly</option></select></div><div class="field"><label for="salesTargetYear">Year</label><input id="salesTargetYear" type="number" min="2000" max="2100" inputmode="numeric" required></div><div class="field" id="salesTargetMonthField"><label for="salesTargetMonth">Month</label><select id="salesTargetMonth"></select></div><div class="field"><label for="salesTargetBusinessUnit">Business Unit</label><select id="salesTargetBusinessUnit" required><option value="ALL">All</option><option value="GYPROC">Gyproc</option><option value="WEBER">Weber</option></select></div><div class="field"><label for="salesTargetScopeType">Scope Type</label><select id="salesTargetScopeType" required onchange="handleSalesTargetScopeChange()"><option value="AREA">Area</option><option value="USER">Individual Sales</option></select></div><div class="field"><label for="salesTargetArea">Sales Area</label><select id="salesTargetArea" required onchange="handleSalesTargetAreaChange()"></select></div><div class="field" id="salesTargetUserField"><label for="salesTargetUser">Sales User</label><select id="salesTargetUser"></select></div><div class="field"><label for="salesTargetAmount">Target Amount</label><input id="salesTargetAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="8,500,000.00" required></div><div class="field"><label for="salesTargetStatus">Status</label><select id="salesTargetStatus" required><option value="DRAFT">Draft</option><option value="ACTIVE">Active</option><option value="INACTIVE">Inactive</option></select></div></div>
+      <div id="salesTargetPeriodPreview" class="sales-target-period-preview"></div><div id="salesTargetFormError" class="sales-target-form-error" role="alert"></div>
+      <div class="actions sales-target-form-actions"><button type="button" class="ghost" onclick="closeSalesTargetForm()">ยกเลิก</button><button id="salesTargetSaveButton" type="submit" class="primary">บันทึก</button></div>
+    </form>
+  </div>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 
 <script>
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   window.addEventListener('load', function () {
-    const isLocalDevelopment = location.hostname === '127.0.0.1' || location.hostname === 'localhost';
+    var isLocalDevelopment = location.hostname === '127.0.0.1' || location.hostname === 'localhost';
     if (isLocalDevelopment) {
       navigator.serviceWorker.getRegistrations()
         .then(function (registrations) {
-          return Promise.all(registrations.map(function (registration) {
-            return registration.unregister();
-          }));
+          return Promise.all(registrations.map(function (registration) { return registration.unregister(); }));
         })
         .then(function () {
           if (!('caches' in window)) return;
           return caches.keys().then(function (keys) {
-            return Promise.all(keys.map(function (key) {
-              return caches.delete(key);
-            }));
+            return Promise.all(keys.map(function (key) { return caches.delete(key); }));
           });
         })
-        .catch(function (err) { console.log('Development cache cleanup failed:', err); });
+        .catch(function (error) { console.warn('Development cache cleanup failed:', error); });
       return;
     }
-    navigator.serviceWorker.register('./service-worker.js')
-      .catch(function (err) { console.log('Service worker registration failed:', err); });
+
+    var reloadingForController = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (reloadingForController) return;
+      reloadingForController = true;
+      window.location.reload();
+    });
+
+    navigator.serviceWorker.register('./service-worker.js', { updateViaCache: 'none' })
+      .then(function (registration) {
+        registration.update().catch(function () {});
+        if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+        registration.addEventListener('updatefound', function () {
+          var worker = registration.installing;
+          if (!worker) return;
+          worker.addEventListener('statechange', function () {
+            if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+              worker.postMessage({ type: 'SKIP_WAITING' });
+            }
+          });
+        });
+      })
+      .catch(function (error) { console.warn('Service worker registration failed:', error); });
   });
 }
 </script>
-<script src="js/config.js?v=0.5.47"></script>
-<script src="js/api.js?v=0.5.47"></script>
-<script src="js/notifications.js?v=0.5.47"></script>
-<script src="js/auth.js?v=0.5.47"></script>
-<script src="js/app.js?v=0.5.47"></script>
-<script src="js/quotation.js?v=0.5.47"></script>
+<script>
+(function () {
+  ['config', 'api', 'notifications', 'auth', 'app', 'quotation'].forEach(function (name) {
+    document.write('<script src="' + window.getVersionedAssetUrl('js/' + name + '.js') + '"><\/script>');
+  });
+})();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous"></script>
 </body></html>

@@ -1,8 +1,8 @@
 window.APP_CONFIG = Object.assign({
   appName: "Saint-Gobain Sales System",
-  version: "0.5.47",
+  version: window.APP_INFO && window.APP_INFO.version || "Unknown",
   environment: "production",
-  cacheVersion: "0.5.47",
+  cacheVersion: window.APP_INFO && window.APP_INFO.cacheVersion || "Unknown",
   enableDemoLogin: false,
   gasWebAppUrl: "https://script.google.com/macros/s/AKfycbyuhRP2aIYI11vzMsIzGr2ncuhrflHb1u9flm_OwjpjZOJOTXvAg1HQu4iq62ZwjJn3RQ/exec"
 }, window.APP_CONFIG || {});
@@ -24,5 +24,7 @@ window.APP_CACHE_KEYS = [
   "sg_public_settings_cache",
   "sg_discount_cache",
   "sg_quotation_history_cache",
-  "sg_quotation_cache"
+  "sg_quotation_cache",
+  "sg_sales_targets_cache",
+  "sg_effective_sales_target_cache"
 ];

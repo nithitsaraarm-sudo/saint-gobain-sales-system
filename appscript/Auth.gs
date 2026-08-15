@@ -54,7 +54,7 @@ function createSession(user) {
     if (!safeUser || !safeUser.userId && !safeUser.username) {
       return fail('Unable to create session');
     }
-    const token = 'sess-' + Utilities.getUuid();
+    const token = 'sess-' + Utilities.getUuid() + '-' + Utilities.getUuid();
     const now = new Date();
     const session = {
       sessionToken: token,
@@ -78,15 +78,28 @@ function getSession(sessionToken) {
     const token = String(sessionToken || '').trim();
     if (!token) return fail('Session not found');
     const key = getSessionCacheKey(token);
-    const cached = getAuthCache().get(key) || getSessionStore().getProperty(key);
+    const cache = getAuthCache();
+    var cached = cache.get(key);
+    var cacheHit = true;
+    if (!cached) {
+      cacheHit = false;
+      cached = getSessionStore().getProperty(key);
+    }
     if (!cached) return fail('Session not found');
     const session = JSON.parse(cached);
     const expiresAt = new Date(session.expiresAt || 0);
-    if (!session.user || isNaN(expiresAt.getTime()) || expiresAt.getTime() <= new Date().getTime()) {
+    const now = new Date().getTime();
+    if (!session.user || isNaN(expiresAt.getTime()) || expiresAt.getTime() <= now) {
       logoutUser(token);
       return fail('Session expired');
     }
-    return success(session);
+    if (!cacheHit) {
+      const remainingSeconds = Math.max(1, Math.min(Math.floor((expiresAt.getTime() - now) / 1000), SESSION_TTL_SECONDS));
+      cache.put(key, cached, remainingSeconds);
+    }
+    const result = success(session);
+    result.cacheHit = cacheHit;
+    return result;
   } catch (error) {
     logError('getSession', error);
     return fail('Session lookup failed');
@@ -135,6 +148,35 @@ function revokeUserSessions(userId) {
   }
 }
 
+function revokeUserSessionsExcept_(userId, activeSessionToken) {
+  try {
+    const targetUserId = String(userId || '').trim();
+    const activeKey = getSessionCacheKey(activeSessionToken);
+    if (!targetUserId) return success({ revoked: 0 });
+    const store = getSessionStore();
+    const properties = store.getProperties();
+    var revoked = 0;
+    Object.keys(properties || {}).forEach(function (key) {
+      if (key.indexOf('sg_session:') !== 0 || key === activeKey) return;
+      try {
+        const session = JSON.parse(properties[key] || '{}');
+        const sessionUserId = String(session.user && session.user.userId || '').trim();
+        if (sessionUserId === targetUserId) {
+          getAuthCache().remove(key);
+          store.deleteProperty(key);
+          revoked += 1;
+        }
+      } catch (parseError) {
+        logWarning('revokeUserSessionsExcept_', 'Unable to parse stored session for cleanup');
+      }
+    });
+    return success({ revoked: revoked });
+  } catch (error) {
+    logError('revokeUserSessionsExcept_', error);
+    return fail('Unable to revoke sessions');
+  }
+}
+
 function isAuthenticated(sessionToken) {
   return getSession(sessionToken).ok;
 }
@@ -160,46 +202,74 @@ function clearFailedLogin(username) {
 }
 
 function loginUserCore(username, password) {
+  const trace = typeof createBackendPerformanceTrace_ === 'function' ? createBackendPerformanceTrace_('login') : null;
+  var outcome = 'ERROR';
   try {
     const normalizedUsername = String(username || '').trim();
     const normalizedPassword = String(password || '').trim();
+    if (trace) markBackendPerformanceStep_(trace, 'input_normalized', { usernameLength: normalizedUsername.length });
     if (!normalizedUsername || !normalizedPassword) {
+      outcome = 'VALIDATION_ERROR';
       return validationError('กรุณากรอก Username และ Password');
     }
     if (isLoginLocked(normalizedUsername)) {
+      outcome = 'LOCKED';
       return forbidden('บัญชีถูกล็อกชั่วคราว กรุณาลองใหม่ภายหลัง');
     }
+    if (trace) markBackendPerformanceStep_(trace, 'login_lock_checked');
     const userResult = getUserByUsername(normalizedUsername);
+    if (trace) markBackendPerformanceStep_(trace, 'user_lookup_finished', {
+      ok: userResult.ok,
+      cacheHit: userResult.cacheHit,
+      usersReadMs: userResult.usersReadMs,
+      spreadsheetOpenMs: userResult.spreadsheetOpenMs
+    });
     if (!userResult.ok) {
       recordFailedLogin(normalizedUsername);
+      outcome = 'INVALID_CREDENTIALS';
       return fail('Username หรือ Password ไม่ถูกต้อง');
     }
     const user = normalizeUserAccount(userResult.data);
     if (user.status === USER_STATUSES.PENDING) {
+      outcome = 'PENDING';
       return fail('บัญชีอยู่ระหว่างรออนุมัติ');
     }
     if (user.status === USER_STATUSES.LOCKED) {
+      outcome = 'LOCKED';
       return forbidden('บัญชีนี้ถูกล็อก กรุณาติดต่อผู้ดูแลระบบ');
     }
     if (user.status !== USER_STATUSES.ACTIVE) {
+      outcome = 'INACTIVE';
       return fail('บัญชีนี้ถูกปิดการใช้งาน กรุณาติดต่อผู้ดูแลระบบ');
     }
+    if (trace) markBackendPerformanceStep_(trace, 'user_status_checked', { role: user.role, status: user.status });
     if (!verifyPassword(normalizedPassword, user.passwordHash, user.passwordSalt)) {
       recordFailedLogin(normalizedUsername);
       logWarning('loginUser', 'Invalid credentials for ' + normalizedUsername);
+      outcome = 'INVALID_CREDENTIALS';
       return fail('Username หรือ Password ไม่ถูกต้อง');
     }
+    if (trace) markBackendPerformanceStep_(trace, 'password_verified');
     clearFailedLogin(normalizedUsername);
     const now = new Date().toISOString();
-    updateRowById(getUsersSheetName(), 'userId', user.userId, { lastLogin: now, updatedAt: now });
+    const updateResult = updateRowById(getUsersSheetName(), 'userId', user.userId, { lastLogin: now, updatedAt: now });
+    if (trace) markBackendPerformanceStep_(trace, 'last_login_updated', { ok: updateResult && updateResult.ok });
     user.lastLogin = now;
     const session = createSession(user);
-    if (!session.ok) return session;
+    if (trace) markBackendPerformanceStep_(trace, 'session_created', { ok: session && session.ok });
+    if (!session.ok) {
+      outcome = 'SESSION_CREATE_FAILED';
+      return session;
+    }
     logActivity(user.userId || '', 'loginUser', 'successful login');
+    if (trace) markBackendPerformanceStep_(trace, 'audit_logged');
+    outcome = 'SUCCESS';
     return success(session.data, 'Login successful');
   } catch (error) {
     logError('loginUser', error);
     return fail('ไม่สามารถเข้าสู่ระบบได้ กรุณาลองใหม่อีกครั้ง');
+  } finally {
+    if (trace) endBackendPerformanceTrace_(trace, outcome);
   }
 }
 

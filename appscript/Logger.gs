@@ -1,46 +1,59 @@
+function redactLogSecret_(value) {
+  const text = String(value === undefined || value === null ? '' : value);
+  return text
+    .replace(/("(?:password|currentPassword|newPassword|confirmPassword|sessionToken|sg_token|token|authorization)"\s*:\s*)"[^"]*"/gi, '$1"[REDACTED]"')
+    .replace(/((?:password|currentPassword|newPassword|confirmPassword|sessionToken|sg_token|token|authorization)=)[^&;\s"']+/gi, '$1[REDACTED]');
+}
+
 function logInfo(action, detail) {
   try {
-    logActivity('', action, detail);
+    logActivity('', action, redactLogSecret_(detail));
     return success(null, 'logged');
   } catch (error) {
-    console.log('[INFO] ' + action + ': ' + error);
-    return fail('Logger failed', RESPONSE_CODES.ERROR, error && error.message ? error.message : error);
+    const safeError = redactLogSecret_(error && error.message ? error.message : error);
+    console.log('[INFO] ' + action + ': ' + safeError);
+    return fail('Logger failed', RESPONSE_CODES.ERROR, safeError);
   }
 }
 
 function logWarning(action, detail) {
   try {
-    logActivity('', action, detail);
+    logActivity('', action, redactLogSecret_(detail));
     return success(null, 'warning logged');
   } catch (error) {
-    console.warn('[WARN] ' + action + ': ' + error);
-    return fail('Logger failed', RESPONSE_CODES.ERROR, error && error.message ? error.message : error);
+    const safeError = redactLogSecret_(error && error.message ? error.message : error);
+    console.warn('[WARN] ' + action + ': ' + safeError);
+    return fail('Logger failed', RESPONSE_CODES.ERROR, safeError);
   }
 }
 
 function logError(action, error) {
   try {
-    console.error('[ERROR] ' + action + ': ' + (error && error.message ? error.message : error));
-    return fail('Error logged', RESPONSE_CODES.ERROR, error && error.message ? error.message : error);
+    const safeError = redactLogSecret_(error && error.message ? error.message : error);
+    console.error('[ERROR] ' + action + ': ' + safeError);
+    return fail('Error logged', RESPONSE_CODES.ERROR, safeError);
   } catch (err) {
-    console.error('[ERROR] ' + action + ': ' + err);
-    return fail('Logger failed', RESPONSE_CODES.ERROR, err && err.message ? err.message : err);
+    const safeLoggerError = redactLogSecret_(err && err.message ? err.message : err);
+    console.error('[ERROR] ' + action + ': ' + safeLoggerError);
+    return fail('Logger failed', RESPONSE_CODES.ERROR, safeLoggerError);
   }
 }
 
 function logActivity(userId, action, detail) {
   try {
-    console.log('[SYSLOG] ' + userId + ' | ' + action + ' | ' + detail);
+    const safeDetail = redactLogSecret_(detail);
+    console.log('[SYSLOG] ' + userId + ' | ' + action + ' | ' + safeDetail);
     const row = {
       userId: userId || '',
       action: action || '',
-      detail: detail || '',
+      detail: safeDetail || '',
       createdAt: new Date().toISOString()
     };
     appendRow(SHEET_NAMES.SYSTEM_LOGS, row);
     return success(null, 'logged');
   } catch (error) {
-    console.log('[SYSLOG] ' + userId + ' | ' + action + ' | ' + error);
-    return fail('Activity log failed', RESPONSE_CODES.ERROR, error && error.message ? error.message : error);
+    const safeError = redactLogSecret_(error && error.message ? error.message : error);
+    console.log('[SYSLOG] ' + userId + ' | ' + action + ' | ' + safeError);
+    return fail('Activity log failed', RESPONSE_CODES.ERROR, safeError);
   }
 }

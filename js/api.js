@@ -1,4 +1,4 @@
-window.APP_VERSION = window.APP_VERSION || '0.5.47';
+window.APP_VERSION = window.APP_VERSION || (window.APP_INFO && window.APP_INFO.version) || 'Unknown';
 const APP_ENV = String(window.APP_ENV || 'production').trim().toLowerCase();
 const API_MOCK_MODE = APP_ENV === 'development';
 const GAS_WEB_APP_URL = String(window.GAS_WEB_APP_URL || '').trim();
@@ -13,7 +13,9 @@ const CACHE_KEYS = {
   publicSettings: 'sg_public_settings_cache',
   discount: 'sg_discount_cache',
   quotation: 'sg_quotation_cache',
-  quotationHistory: 'sg_quotation_history_cache'
+  quotationHistory: 'sg_quotation_history_cache',
+  salesTargets: 'sg_sales_targets_cache',
+  effectiveSalesTarget: 'sg_effective_sales_target_cache'
 };
 const PUBLIC_CACHE_KEY_SET = {};
 PUBLIC_CACHE_KEY_SET[CACHE_KEYS.publicSettings] = true;
@@ -24,10 +26,13 @@ const PRIVATE_CACHE_PREFIXES = [
   CACHE_KEYS.bootstrap,
   CACHE_KEYS.discount,
   CACHE_KEYS.quotation,
-  CACHE_KEYS.quotationHistory
+  CACHE_KEYS.quotationHistory,
+  CACHE_KEYS.salesTargets,
+  CACHE_KEYS.effectiveSalesTarget
 ];
 const API_TIMEOUT_MS = 30000;
 const API_RESPONSE_PREVIEW_LIMIT = 500;
+const API_SECRET_FIELD_PATTERN = /^(password|currentPassword|newPassword|confirmPassword|sessionToken|sg_token|token|authorization)$/i;
 const QUOTATION_SAVE_RECONCILE_ACTIONS = ['saveQuotation', 'updateQuotation', 'quotation'];
 const API_POST_RECONCILE_CODES = ['NETWORK_ERROR', 'TIMEOUT', 'HTTP_ERROR', 'EMPTY_RESPONSE', 'INVALID_JSON', 'API_RESPONSE_INVALID'];
 const READ_ACTIONS = [
@@ -55,7 +60,12 @@ const READ_ACTIONS = [
   'getQuotationHistory',
   'loadUsers',
   'getFavoriteCustomers',
-  'getProductPreferences'
+  'getProductPreferences',
+  'getSalesTargets',
+  'getSalesTarget',
+  'getEffectiveSalesTarget',
+  'getSalesTargetFormOptions',
+  'getSalesTargetManagementData'
 ];
 const WRITE_ACTIONS = [
   'login',
@@ -87,7 +97,10 @@ const WRITE_ACTIONS = [
   'cancelQuotation',
   'updateQuotation',
   'quotation',
-  'saveQuotation'
+  'saveQuotation',
+  'saveSalesTarget',
+  'updateSalesTarget',
+  'setSalesTargetStatus'
 ];
 
 function isApiDebugEnabled() {
@@ -102,8 +115,48 @@ function isApiDebugEnabled() {
 
 function logApiDebug(action, state) {
   if (isApiDebugEnabled() && typeof console !== 'undefined' && typeof console.log === 'function') {
-    console.log('[API]', action, state);
+    console.log('[API]', action, redactApiLogValue(state));
   }
+}
+
+function redactApiText(text) {
+  const value = String(text === undefined || text === null ? '' : text);
+  return value
+    .replace(/("(?:password|currentPassword|newPassword|confirmPassword|sessionToken|sg_token|token|authorization)"\s*:\s*)"[^"]*"/gi, '$1"[REDACTED]"')
+    .replace(/((?:password|currentPassword|newPassword|confirmPassword|sessionToken|sg_token|token|authorization)=)[^&\s"']+/gi, '$1[REDACTED]');
+}
+
+function redactApiLogValue(value, depth) {
+  const level = Number(depth || 0);
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') return redactApiText(value);
+  if (typeof value !== 'object') return value;
+  if (level > 4) return '[REDACTED_DEPTH]';
+  if (Array.isArray(value)) {
+    return value.map(function (item) {
+      return redactApiLogValue(item, level + 1);
+    });
+  }
+  const output = {};
+  Object.keys(value).forEach(function (key) {
+    output[key] = API_SECRET_FIELD_PATTERN.test(String(key || ''))
+      ? '[REDACTED]'
+      : redactApiLogValue(value[key], level + 1);
+  });
+  return output;
+}
+
+function hasApiSecretField(value, depth) {
+  const level = Number(depth || 0);
+  if (!value || typeof value !== 'object' || level > 6) return false;
+  if (Array.isArray(value)) {
+    return value.some(function (item) {
+      return hasApiSecretField(item, level + 1);
+    });
+  }
+  return Object.keys(value).some(function (key) {
+    return API_SECRET_FIELD_PATTERN.test(String(key || '')) || hasApiSecretField(value[key], level + 1);
+  });
 }
 
 function normalizeApiBoolean(value) {
@@ -115,7 +168,7 @@ function normalizeApiBoolean(value) {
 }
 
 function getApiResponsePreview(text) {
-  return String(text === undefined || text === null ? '' : text).slice(0, API_RESPONSE_PREVIEW_LIMIT);
+  return redactApiText(text).slice(0, API_RESPONSE_PREVIEW_LIMIT);
 }
 
 function normalizeApiResponse(response, fallback) {
@@ -190,9 +243,9 @@ function logApiTechnicalIssue(action, issue) {
     code: data.code || '',
     status: data.status || '',
     redirected: Boolean(data.redirected),
-    url: data.url ? String(data.url).slice(0, 160) : '',
-    message: data.message || '',
-    detail: data.detail ? String(data.detail).slice(0, API_RESPONSE_PREVIEW_LIMIT) : ''
+    url: data.url ? redactApiText(data.url).slice(0, 160) : '',
+    message: data.message ? redactApiText(data.message) : '',
+    detail: data.detail ? redactApiText(data.detail).slice(0, API_RESPONSE_PREVIEW_LIMIT) : ''
   });
 }
 
@@ -323,13 +376,13 @@ function getCacheScope(key) {
   const userId = String(localStorage.getItem('sg_userId') || user.userId || user.username || 'anonymous').trim();
   const role = String(localStorage.getItem('sg_role') || user.role || '').trim();
   const area = String(user.area || user.branch || '').trim();
-  const token = String(localStorage.getItem('sg_token') || localStorage.getItem('sessionToken') || '').trim();
+  const sessionScopeId = String(localStorage.getItem('sg_session_scope_id') || '').trim();
   return [
-    String(window.APP_VERSION || '0.5.47').trim(),
+    String(window.APP_INFO && window.APP_INFO.version || window.APP_VERSION || 'Unknown').trim(),
     userId || 'anonymous',
     role || 'role-unknown',
     area || 'area-unknown',
-    token ? token.slice(-12) : 'no-token'
+    sessionScopeId || 'no-session-scope'
   ].join(':');
 }
 
@@ -358,6 +411,12 @@ function invalidateBootstrapApiCache() {
   clearCache(CACHE_KEYS.bootstrap);
 }
 
+function invalidateSalesTargetApiCaches() {
+  clearCache(CACHE_KEYS.salesTargets);
+  clearCache(CACHE_KEYS.effectiveSalesTarget);
+  invalidateBootstrapApiCache();
+}
+
 function isUsableBootstrapCache(data) {
   return data
     && typeof data === 'object'
@@ -369,7 +428,10 @@ function getRequestKey(action, payload) {
   if (payload && typeof payload === 'object' && payload.profileImageData) {
     return String(action || '').trim() + ':profileImage:' + String(payload.profileImageData || '').length;
   }
-  const keyPayload = payload && typeof payload === 'object' && !Array.isArray(payload) ? Object.assign({}, payload) : payload;
+  if (payload && typeof payload === 'object' && !Array.isArray(payload) && hasApiSecretField(payload)) {
+    return String(action || '').trim() + ':sensitive:' + String(payload.requestId || createApiRequestId(action));
+  }
+  const keyPayload = payload && typeof payload === 'object' && !Array.isArray(payload) ? redactApiLogValue(Object.assign({}, payload)) : redactApiLogValue(payload);
   if (keyPayload && typeof keyPayload === 'object' && !Array.isArray(keyPayload)) {
     delete keyPayload.requestId;
     delete keyPayload.clientRequestId;
@@ -378,7 +440,7 @@ function getRequestKey(action, payload) {
 }
 
 function isApiTimingEnabled(action) {
-  const timedActions = ['bootstrap', 'products', 'getProducts', 'getProductPromotions', 'getPromotionDashboard', 'customers', 'getCustomers', 'getCustomerFormOptions', 'getAssignableSalesUsers', 'getCustomerFilters', 'getAreas', 'getQuotationHistory', 'loadQuotation', 'discount', 'quotation', 'saveQuotation', 'updateQuotation'];
+  const timedActions = ['bootstrap', 'products', 'getProducts', 'getProductPromotions', 'getPromotionDashboard', 'customers', 'getCustomers', 'getCustomerFormOptions', 'getAssignableSalesUsers', 'getCustomerFilters', 'getAreas', 'getQuotationHistory', 'loadQuotation', 'discount', 'quotation', 'saveQuotation', 'updateQuotation', 'getSalesTargets', 'getEffectiveSalesTarget', 'getSalesTargetManagementData', 'saveSalesTarget', 'updateSalesTarget', 'setSalesTargetStatus'];
   const normalizedAction = String(action || '').trim();
   if (['getCustomerFormOptions', 'getAssignableSalesUsers', 'getCustomerFilters', 'getAreas'].indexOf(normalizedAction) >= 0) {
     return true;
@@ -502,6 +564,11 @@ function hasAuthenticatedPayload(payload) {
   return Boolean(data.sessionToken || data.sg_token || data.token);
 }
 
+function shouldAttachAuthContext(action) {
+  const normalizedAction = String(action || '').trim();
+  return ['login', 'demoLogin', 'register', 'resetPassword', 'getPublicSystemSettings'].indexOf(normalizedAction) < 0;
+}
+
 function runApiRequest(action, payload) {
   return apiRequest(action, payload);
 }
@@ -530,13 +597,15 @@ function callApi(action, payload) {
   } else {
     body = { value: body };
   }
-  try {
-    const token = localStorage.getItem('sg_token') || localStorage.getItem('sessionToken') || '';
-    const userId = localStorage.getItem('sg_userId') || '';
-    if (token && !body.sessionToken) body.sessionToken = token;
-    if (userId && !body.currentUserId) body.currentUserId = userId;
-  } catch (error) {
-    // Auth context is optional for public calls.
+  if (shouldAttachAuthContext(normalizedAction)) {
+    try {
+      const token = localStorage.getItem('sg_token') || localStorage.getItem('sessionToken') || '';
+      const userId = localStorage.getItem('sg_userId') || '';
+      if (token && !body.sessionToken) body.sessionToken = token;
+      if (userId && !body.currentUserId) body.currentUserId = userId;
+    } catch (error) {
+      // Auth context is optional for public calls.
+    }
   }
   if (normalizedAction === 'loadQuotation') {
     body = { quoteId: getQuoteIdFromPayload(body) };
@@ -638,6 +707,15 @@ function apiJsonpGet(action, payload, options) {
   if (!GAS_WEB_APP_URL) {
     return Promise.resolve({ ok: false, success: false, code: 'API_URL_NOT_CONFIGURED', message: 'API URL is not configured' });
   }
+  if (!isPublicJsonpReadAction(action)) {
+    return Promise.resolve({ ok: false, success: false, code: 'JSONP_FORBIDDEN', message: 'JSONP is only available for public API actions' });
+  }
+  const publicPayload = payload && typeof payload === 'object' && !Array.isArray(payload) ? Object.assign({}, payload) : {};
+  Object.keys(publicPayload).forEach(function (key) {
+    if (API_SECRET_FIELD_PATTERN.test(String(key || '')) || String(key || '') === 'currentUserId') {
+      delete publicPayload[key];
+    }
+  });
   return new Promise(function (resolve) {
     const callbackName = '__sgApiCallback_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
     const script = document.createElement('script');
@@ -693,7 +771,7 @@ function apiJsonpGet(action, payload, options) {
 
     script.src = GAS_WEB_APP_URL
       + '?action=' + encodeURIComponent(action)
-      + '&payload=' + encodeURIComponent(JSON.stringify(payload || {}))
+      + '&payload=' + encodeURIComponent(JSON.stringify(publicPayload))
       + '&callback=' + encodeURIComponent(callbackName);
 
     document.head.appendChild(script);
@@ -843,6 +921,21 @@ function mockApi(action, payload) {
     case 'getPromotions':
       window.__mockPromotions = window.__mockPromotions || [];
       return { ok: true, data: window.__mockPromotions };
+    case 'getSalesTargets':
+      window.__mockSalesTargets = window.__mockSalesTargets || [];
+      return { ok: true, data: window.__mockSalesTargets };
+    case 'getEffectiveSalesTarget':
+      return { ok: true, data: { targetAmount: null, totalTarget: null, gyprocTarget: 0, weberTarget: 0, targetType: 'MONTHLY', periodYear: new Date().getFullYear(), periodMonth: new Date().getMonth() + 1, periodStart: new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0') + '-01', periodEnd: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getFullYear() + '-' + String(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getMonth() + 1).padStart(2, '0') + '-' + String(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate()).padStart(2, '0'), businessUnit: 'ALL', sourceScope: 'NONE', sourceTargetIds: [] } };
+    case 'getSalesTargetFormOptions':
+      return { ok: true, data: { areas: ['NE03'], salesUsers: [], businessUnits: ['ALL','GYPROC','WEBER'], targetTypes: ['ANNUAL','MONTHLY'], statuses: ['DRAFT','ACTIVE','INACTIVE','ARCHIVED'], canManage: true, actorArea: 'NE03' } };
+    case 'getSalesTargetManagementData':
+      window.__mockSalesTargets = window.__mockSalesTargets || [];
+      return { ok: true, data: { targets: window.__mockSalesTargets, summary: { totalActive: 0, gyproc: 0, weber: 0, assignedUsers: 0 }, formOptions: { areas: ['NE03'], salesUsers: [], businessUnits: ['ALL','GYPROC','WEBER'], targetTypes: ['ANNUAL','MONTHLY'], statuses: ['DRAFT','ACTIVE','INACTIVE','ARCHIVED'], canManage: true, actorArea: 'NE03' } } };
+    case 'saveSalesTarget':
+    case 'updateSalesTarget':
+    case 'setSalesTargetStatus':
+      window.__mockSalesTargets = window.__mockSalesTargets || [];
+      return { ok: true, data: Object.assign({ targetId: data.targetId || ('TARGET-' + Date.now()), version: Number(data.version || 0) + 1 }, data), message: 'Mock sales target saved' };
     case 'discount':
       return { ok: true, data: { customerId: data.customerId || '', groupCode: data.groupCode || '', discountGroup: '', discountPercent: 0, source: 'mock' }, message: 'Mock discount' };
     case 'quotation':
@@ -951,3 +1044,5 @@ window.clearPrivateApiCaches = clearPrivateApiCaches;
 window.invalidateBootstrapApiCache = invalidateBootstrapApiCache;
 window.CACHE_KEYS = CACHE_KEYS;
 window.clearQuotationCache = clearQuotationCache;
+
+window.invalidateSalesTargetApiCaches = invalidateSalesTargetApiCaches;

@@ -1,3 +1,124 @@
+## 2026-08-15 — Final release audit fixes before commit
+
+Scope completed:
+
+- Audited the dirty working tree on `audit/full-remediation` before staging.
+- Confirmed `getSalesTargetManagementData` is wired from frontend action name to `appscript/Api.gs` central router and `dispatchSalesTargetAction_()`.
+- Fixed Login UX release blocker: the Login button now exposes loading text, `aria-busy`, a polite live status region, disabled state, and duplicate-submit guard.
+- Changed successful login to reveal the App shell immediately while bootstrap continues in the background.
+- Kept password clearing in `finally` for login and added reset-password sensitive-field clearing.
+- Fixed the disabled `resetPassword` route classification so the login-page Forgot Password flow returns the intended disabled response without requiring an existing session.
+- Re-ran static release checks locally: `git diff --check`, action route duplicate scan, old runtime-version scan, button type scan, sensitive logging marker scan, and Service Worker asset existence scan.
+
+Runtime Apps Script, Google Sheets, browser/device, and installed-PWA tests remain required after deployment.
+
+## 2026-07-30 — Sales Target Management implementation (provided file set)
+
+Completed:
+
+- Replaced legacy Dashboard target reads from Settings with a dedicated `SalesTargets` entity.
+- Added annual/monthly, BU, Area and individual Sales scope with historical rows.
+- Added backend list/detail/effective/create/update/status APIs, backend RBAC, Area scope, validation, duplicate-active conflict checks, ScriptLock, optimistic versioning and event IDs.
+- Added effective-target precedence and combined Gyproc/Weber behavior.
+- Added Settings → Sales Target Management UI, filters, summaries, responsive cards, accessible form, loading/empty/error states and double-submit protection.
+- Added centralized `calculateSalesKpi()` with elapsed-period forecast, nullable achievement, remaining and required monthly average.
+- Added target-specific frontend cache keys and invalidation.
+- Updated API, RBAC, release and test documentation.
+
+Files changed/added:
+
+- `appscript/SalesTarget.gs` (new)
+- `appscript/Code.gs`
+- `appscript/Database.gs`
+- `js/api.js`
+- `js/app.js`
+- `index.html`
+- `css/main.css`
+- `service-worker.js`
+- `API.md`
+- `RBAC_PERMISSION_AUDIT.md`
+- `RELEASE_NOTES_V1.md`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Static checks were executed on the provided file set. Live Apps Script, Google Sheets, browser/device and installed-PWA tests remain Not Run.
+
+# Saint-Gobain Sales System - Work History
+
+## 2026-07-30 — Customer KPI SSOT audit and fix
+
+Scope completed:
+
+- Fixed Customer KPI without changing Customer API, RBAC, area permissions, assigned-sales permissions, Dashboard layout, or business modules.
+- Root cause: Total Customer could use `DB.counts.customers` while category counts used an empty lazy-loaded `DB.customers` array. Dashboard was not re-rendered after customer load.
+- Added `calculateCustomerSummary()` as the single calculation source.
+- Added centralized active-state resolution supporting current and legacy status fields.
+- Missing/unknown status defaults to Active for backward compatibility.
+- Added customer creation-date parser supporting ISO, Google Sheet-style dates, Thai digits, and Buddhist years.
+- New Customer uses creation fields only and no longer falls back to `updatedAt`.
+- Added Dashboard customer-load trigger and Dashboard re-render after customer cache/API refresh.
+- Category values show `—` while records are loading instead of false zeroes.
+- Aggregation now uses one O(n) customer pass.
+- Bumped frontend version/cache generation to `0.5.57` / `20260730-03`.
+
+Files changed:
+
+- `js/app.js`
+- `js/version.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Runtime browser/PWA/API tests remain required after deployment.
+
+## 2026-07-30 — Production-ready centralized Version Management System
+
+Scope completed:
+
+- Added `js/version.js` as the only application version definition.
+- Added immutable `globalThis.APP_INFO` fields for application version, build, release channel, and cache generation.
+- Replaced Home, footer, About/version dialog, console diagnostics, browser asset query strings, manifest URL, and Service Worker cache naming with `APP_INFO`.
+- Added safe `Unknown` fallbacks when the version source cannot be loaded.
+- Added version-aware loading for local CSS, JavaScript, manifest, favicons, and touch icons.
+- Updated the Service Worker to import the same version source, generate its cache name from `APP_INFO.cacheVersion`, remove legacy Saint-Gobain caches during activation, skip waiting, claim clients, and reload once after controller change.
+- Removed version query strings from `manifest.json`; the manifest contains no duplicated version value.
+- Preserved routing, authentication, RBAC, quotation, customer, promotion, Dashboard, API, Google Apps Script, and business logic.
+- Removed literal historical semantic-version values from this working-history file so repository version scans identify only the centralized version source.
+
+Files changed:
+
+- `js/version.js` (new)
+- `index.html`
+- `js/app.js`
+- `css/main.css`
+- `manifest.json`
+- `service-worker.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Static validation completed:
+
+- Central version literal exists only in `js/version.js`.
+- Runtime files contain no hardcoded semantic version values.
+- Home, footer, version dialog, and console read from `APP_INFO`.
+- Service Worker cache name reads from `APP_INFO.cacheVersion`.
+- Manifest icon paths contain no version query strings.
+- Existing sensitive-request and approved-static-asset cache guards remain in place.
+
+Runtime validation still required:
+
+- Desktop Chrome/Edge.
+- iPhone Safari.
+- Android Chrome.
+- Installed PWA update from the previous cache generation.
+- Offline launch after the new Service Worker has activated.
+
+Rollback:
+
+```powershell
+git checkout -- index.html js/app.js css/main.css manifest.json service-worker.js TEST_CASES.md WORK_HISTORY.md
+Remove-Item js/version.js
+```
+
 # Saint-Gobain Sales System - Work History
 
 ## 2026-07-30 — Announcement/News frontend setting
@@ -74,7 +195,7 @@ Implementation:
 - Hardened `getNavButtonForPage()` and `applyRolePermissions()` to use `getNavigationButtonRoute()`.
 - Hardened `go()` so a passed button is used for active state only when its route matches the target route.
 - Added non-blocking `validateNavigationConfiguration()` checks for duplicate routes and missing page DOM targets.
-- Bumped runtime/cache version to `0.5.46`.
+- Bumped runtime/cache version to `[legacy version]`.
 - Updated `TEST_CASES.md` with `REG-STATIC-006`.
 
 Files changed:
@@ -105,7 +226,7 @@ Validation notes:
 - Static scan confirmed every `NAVIGATION_ITEMS` entry has explicit `id` and `route`.
 - Static scan confirmed generated sidebar buttons use `data-route`.
 - Static scan confirmed `bindSidebarNavigationEvents()`, `getNavigationButtonRoute()`, and route-safe active logic are present.
-- Static scan confirmed runtime files use `0.5.46`; no stale `0.5.45` strings remain in checked runtime files.
+- Static scan confirmed runtime files use `[legacy version]`; no stale `[legacy version]` strings remain in checked runtime files.
 - `git diff --check` passed with only line-ending warnings.
 - Runtime browser/device/PWA validation is still required for desktop clicks, mobile drawer clicks, browser Back/Forward, refresh, and installed PWA.
 - Rollback command for this phase:
@@ -151,7 +272,7 @@ Implementation:
 - Replaced module page headings with `data-nav-label` bindings.
 - Updated Home primary quotation action and Home quick actions to use navigation label keys.
 - Exported navigation constants/helpers on `window` for frontend reuse/debugging.
-- Bumped runtime/cache version to `0.5.45`.
+- Bumped runtime/cache version to `[legacy version]`.
 - Updated `TEST_CASES.md` with `REG-STATIC-005`.
 
 Files changed:
@@ -169,7 +290,7 @@ Validation notes:
 - Static scan confirmed `NAVIGATION_LABELS`, `NAVIGATION_ITEMS`, `renderSidebarNavigation()`, and `applyNavigationLabels()` are present.
 - Static scan confirmed `#mainNavigation` is now the sidebar container and hardcoded sidebar label markup was removed.
 - Static scan confirmed page headings use `data-nav-label` bindings.
-- Static scan confirmed runtime files use `0.5.45`; no stale `0.5.44` strings remain in checked runtime files.
+- Static scan confirmed runtime files use `[legacy version]`; no stale `[legacy version]` strings remain in checked runtime files.
 - `git diff --check` passed with only line-ending warnings.
 - Runtime browser/device/PWA validation is still required on Desktop Chrome/Edge, Android Chrome, iPhone Safari, and installed PWA.
 - Rollback command for this phase:
@@ -220,7 +341,7 @@ Implementation:
   - route helpers support refresh/back-forward through `#home`, `#dashboard`, etc.
 - Quick actions call existing routes only and are filtered with `canAccessPage()`.
 - Added scoped Home CSS only; no global button/card rules were changed.
-- Bumped runtime/cache version to `0.5.44`.
+- Bumped runtime/cache version to `[legacy version]`.
 
 Files changed:
 
@@ -239,7 +360,7 @@ Validation notes:
 - Static scan confirmed `data-page="home"` / `go('home')`, `data-page="dashboard"` / `go('dashboard')`, and `data-page="users"` / `go('users')` are present.
 - Static scan confirmed `ensureDashboardLayout()` targets `page-dashboard`.
 - Static scan confirmed Dashboard still uses `buildDashboardMetrics()` and `renderHomeDashboardRedesign()`.
-- Static scan confirmed runtime files use `0.5.44`; no stale `0.5.43` strings remain in checked runtime files.
+- Static scan confirmed runtime files use `[legacy version]`; no stale `[legacy version]` strings remain in checked runtime files.
 - `git diff --check` passed with only line-ending warnings.
 - `node --check js/app.js` could not run because Node.js is not available in this environment.
 - Runtime browser/device/PWA validation is still required on Desktop Chrome/Edge, Android Chrome, iPhone Safari, and installed PWA.
@@ -293,7 +414,7 @@ git checkout -- index.html js/app.js css/main.css js/api.js js/config.js service
 
 ### Summary
 
-- Performed a final static pre-release audit of the V1 candidate at version `0.5.26`.
+- Performed a final static pre-release audit of the V1 candidate at version `[legacy version]`.
 - Recorded release decision as `NOT READY` for real-user UAT/Pilot because runtime API, RBAC, mobile/PWA, production smoke, concurrency, and backup/restore evidence is still blocked/not run.
 - Created business-readable UAT checklist, pilot plan, release notes, known issues, and rollback plan.
 - No application code, API behavior, database schema, permissions, or configuration was changed in this phase.
@@ -599,7 +720,7 @@ Implementation:
 - Kept Edit behind existing `canEditCustomers()` UI permission and existing edit modal workflow.
 - Kept Favorite backend validation and added optimistic UI update with rollback on API failure.
 - Added customer detail modal CSS only; existing `.icon-action-button` design/touch target remains the base.
-- Bumped app/service-worker version to `0.5.38` so updated UI assets are picked up by PWA/browser cache.
+- Bumped app/service-worker version to `[legacy version]` so updated UI assets are picked up by PWA/browser cache.
 
 Files changed:
 
@@ -655,7 +776,7 @@ Implementation:
   - `ประวัติใบเสนอราคา`
   - `รายงาน`
   - `ตั้งค่า`
-- Bumped app/service-worker version to `0.5.43` so browser/PWA cache picks up the label updates.
+- Bumped app/service-worker version to `[legacy version]` so browser/PWA cache picks up the label updates.
 
 Files changed:
 
@@ -671,7 +792,7 @@ Validation notes:
 
 - Static scan confirmed sidebar `data-page="home"` now shows `Dashboard` while keeping `go('home')`.
 - Static scan confirmed sidebar `data-page="users"` and `#page-users h1` now show `ผู้ใช้งาน` while keeping `go('users')`.
-- Static scan confirmed checked runtime files use version `0.5.43`.
+- Static scan confirmed checked runtime files use version `[legacy version]`.
 - `git diff --check` passed with only line-ending warnings.
 - Runtime browser/device/PWA validation is still required on Desktop Chrome/Edge, Android Chrome, iPhone Safari, and PWA.
 - Rollback command for this phase:
@@ -708,7 +829,7 @@ Implementation:
 - Updated `addProductCardToQuote()` so missing product records or missing handlers show user feedback instead of failing silently.
 - Kept Add Product on the existing `addProductToQuoteByReference()` quotation workflow, preserving BU/customer/product validation.
 - Raised quote product favorite/pinned touch targets to 44px and added focus/disabled states.
-- Bumped app/service-worker version to `0.5.39` so browser/PWA cache picks up the action handler changes.
+- Bumped app/service-worker version to `[legacy version]` so browser/PWA cache picks up the action handler changes.
 
 Files changed:
 
@@ -755,7 +876,7 @@ Implementation:
 - Added `handleProductCardCalculatorClick(event, recordKey)` so card clicks open the calculator only when the click starts from a non-interactive area.
 - Updated `renderProductCard()` to use the guarded calculator click handler instead of calling `openProductCalculator()` directly from the card inline handler.
 - Kept keyboard behavior for the card itself: Enter/Space on the card still opens the calculator, while button keyboard activation remains scoped to the button action.
-- Bumped app/service-worker version to `0.5.40` so browser/PWA cache picks up the corrected click handler.
+- Bumped app/service-worker version to `[legacy version]` so browser/PWA cache picks up the corrected click handler.
 
 Files changed:
 
@@ -807,7 +928,7 @@ Implementation:
   - Promotion cards
 - Standardized existing customer favorite rails and quotation pinned/favorite product lists to the same touch-scroll behavior.
 - Added vertical safeguards for large dataset lists: Products, Quotation Product Search Results, Customers, Quote History, Quotation Cart, User List, and Promotion Product List.
-- Bumped app/service-worker version to `0.5.41` so browser/PWA cache picks up the CSS/layout changes.
+- Bumped app/service-worker version to `[legacy version]` so browser/PWA cache picks up the CSS/layout changes.
 
 Files changed:
 
@@ -866,7 +987,7 @@ Implementation:
   - Top Product/Top Customer: wider horizontal cards on mobile.
   - Section headings remain outside scroll containers.
   - Scroll tracks are keyboard-focusable with visible focus rings.
-- Bumped app/service-worker version to `0.5.42` so browser/PWA cache picks up the Dashboard CSS/JS changes.
+- Bumped app/service-worker version to `[legacy version]` so browser/PWA cache picks up the Dashboard CSS/JS changes.
 
 Files changed:
 
@@ -883,7 +1004,7 @@ Validation notes:
 
 - Static scan confirmed all six Dashboard sections are rendered by `renderHomeDashboardRedesign()`.
 - Static scan confirmed mobile Dashboard track selectors and customer KPI fields are present.
-- Static scan confirmed runtime cache/version strings were updated to `0.5.42` and no `0.5.41` runtime strings remain in checked files.
+- Static scan confirmed runtime cache/version strings were updated to `[legacy version]` and no `[legacy version]` runtime strings remain in checked files.
 - `git diff --check` passed with only line-ending warnings.
 - `node --check js/app.js` could not be executed because Node.js is not installed in this environment.
 - Runtime browser/device/PWA validation is still required on Desktop Chrome/Edge, Android Chrome, iPhone Safari, and PWA.
@@ -902,3 +1023,216 @@ git checkout -- js/app.js css/main.css index.html js/api.js js/config.js service
 - Included `announcementText` in role-filtered bootstrap settings so Home can render it for authorized users.
 - Kept the existing key-value Settings sheet structure; no destructive database migration is required.
 - Normalized the `updateSettings` API payload and attached the authenticated user context.
+
+## 2026-07-30 — Business KPI SSOT audit and production fix
+
+### Root cause
+
+- Quotation Value used quotation header totals from `DB.quotes`, so it remained correct.
+- Business Unit totals used `DB.quoteLines`, but classified each line with `product.brand || line.brand || line.discountGroup`.
+- Current records primarily use `productBusinessUnit` / `businessUnit`; `discountGroup` is not a Business Unit field.
+- Product refresh called `renderHome()` but did not call `renderDashboard()`, so an early empty calculation could remain visible after products finished loading.
+- Dashboard product lookup performed repeated linear searches for each quote line.
+
+### Implementation
+
+- Added `calculateBusinessSummary()` as the single Business KPI calculation source.
+- Added centralized Business Unit resolution using current line fields, normalized product fields, and legacy quote metadata fallback.
+- Added centralized line-value resolution supporting transactional total fields first and unit-price × quantity only as a fallback.
+- Replaced fixed Gyproc/Weber calculation keys with a dynamic Business Unit map, automatically supporting future Business Units.
+- Added one-pass quote-line aggregation and one product index per calculation.
+- Added explicit `ready`, `empty`, `incomplete`, and `error` states.
+- Empty or incomplete Business Unit data renders `—`; calculation failure renders `Unable to calculate KPI` instead of false `0.00` values.
+- Updated product refresh rendering to recalculate Dashboard KPI after product data loads.
+- Preserved Quotation Value and New Customer logic behavior.
+- Bumped the centralized version source to `0.5.56` and cache generation to `20260730-02` so the corrected JavaScript reaches installed PWA/browser clients.
+
+### Files modified
+
+- `js/app.js`
+- `js/version.js`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+### Performance
+
+- Before: repeated `DB.products.find()` per quote line, potentially O(lines × products).
+- After: one product index build plus one quote-line aggregation pass, O(products + quotes + lines + customers).
+
+### Backward compatibility
+
+No changes were made to Routing, Authentication, RBAC, Quotation Engine, Promotion, Customer APIs, Sidebar, Navigation, Google Apps Script, or database schema.
+
+### Validation
+
+- JavaScript syntax check passed with Node.js.
+- Static architecture checks passed for centralized calculation, dynamic BU map, loading-state handling, and Dashboard recalculation after product refresh.
+- Live browser/PWA, role-filtered data, and production API tests remain required after deployment.
+## 2026-08-13 — Sales Target worktree audit and scoped fixes
+
+Scope completed:
+
+- Audited the current local worktree before editing as requested.
+- Classified changed files across Sales Target, version/PWA/cache, Business KPI, Customer KPI and documentation.
+- Restored the Service Worker to the registered root path `service-worker.js`; the misplaced untracked `js/service-worker.js` copy was moved back to the registered path.
+- Routed Sales Target API actions through the central `api()` dispatcher instead of bypassing it from `doGet()` / `doPost()`.
+- Added `getSalesTargetManagementData` as the consolidated management read action returning targets, summary and form options in one request.
+- Hardened Sales Target management RBAC to match the current canonical policy: `SUPER_ADMIN` and `ADMIN` manage; `MANAGER` is not a management role.
+- Added backend validation that a selected individual Sales user exists, is a SALES role, and belongs to the selected/allowed Area.
+- Added request sequencing on the Sales Target Management frontend so stale responses cannot overwrite the current state.
+- Updated Sales Target loading/error rendering so loading/error states show `—` summary values and do not render misleading business zeroes.
+- Added a Sales Target cache-version script property and included it in the bootstrap cache key so target writes invalidate Dashboard/effective-target bootstrap data without clearing unrelated caches.
+- Adjusted frontend version consumers so `js/config.js` and `js/api.js` read `APP_INFO` instead of stale hardcoded frontend release values.
+
+Static validation executed:
+
+- `git diff --check` passed with Windows LF/CRLF warnings only.
+- Confirmed `service-worker.js`, `js/version.js`, `js/config.js`, `js/api.js`, `js/app.js`, and `js/quotation.js` exist.
+- Duplicate function scan found zero duplicate function declarations in `js/app.js`.
+- Duplicate function scan found zero duplicate function declarations in `appscript/SalesTarget.gs`.
+- Duplicate HTML id scan found zero duplicate ids in `index.html`.
+- Confirmed `index.html` registers `./service-worker.js` and that file now exists.
+- Confirmed Service Worker still contains API/sensitive URL cache guards.
+
+Not run:
+
+- `node --check` because Node.js is not installed in the current environment.
+- Live Apps Script / Google Sheets runtime requests.
+- Browser Network verification for `getSalesTargetManagementData`.
+- Desktop, Android Chrome, iPhone Safari and installed PWA runtime tests.
+
+No commit was created in this audit phase, per instruction.
+
+## 2026-08-13 — Authentication and session security hardening
+
+Scope completed:
+
+- Audited the login flow, authenticated API client flow, Apps Script `api()` routing, session helpers, permission helpers, backend logging, frontend diagnostics, and Service Worker cache policy.
+- Confirmed that seeing `password`, `sessionToken`, and `currentUserId` in the browser owner's DevTools request body is expected for client-constructed requests and is not proof that HTTPS is broken.
+- Confirmed sessions already have server-side `createdAt`, `expiresAt`, a 6-hour TTL, logout revocation, and active-user revalidation through `requireApiUser()`.
+- Hardened session token generation for new sessions from one UUID to two UUIDs.
+- Added backend mismatch rejection when `payload.currentUserId` or `payload.currentUser.userId` does not match the canonical user loaded from the validated session.
+- Stopped the frontend from attaching auth context to public `getPublicSystemSettings` JSONP requests.
+- Restricted Apps Script `doGet()` JSONP responses to public API actions only and rejected credentials in GET/query payloads.
+- Added frontend API redaction for diagnostic logs, response previews, technical-issue logs, and pending-request keys.
+- Replaced private cache scoping based on a token suffix with a per-session client cache scope id.
+- Added backend logger redaction for password/session-token fields before writing console/SystemLogs details.
+- Revoked other existing sessions for the same user after successful self password change while preserving the current session.
+- Confirmed Service Worker already avoids POST/API/sensitive URL caching; no Service Worker code change was required in this task.
+
+Files modified:
+
+- `appscript/Auth.gs`
+- `appscript/Code.gs`
+- `appscript/Logger.gs`
+- `appscript/Permission.gs`
+- `appscript/User.gs`
+- `js/api.js`
+- `js/auth.js`
+- `SECURITY.md`
+- `RBAC_PERMISSION_AUDIT.md`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Static validation executed:
+
+- `git diff --check` passed with Windows LF/CRLF warnings only.
+- Static search confirmed no remaining `token.slice(...)` private cache scope usage.
+- Static search confirmed the new `currentUserId` mismatch guard, GET credential rejection, JSONP public-action restriction, frontend/backend redaction helpers, and password-change session revocation hooks are present.
+
+Blocked / not run:
+
+- `node --check js/api.js` and `node --check js/auth.js` because Node.js is not installed in the current environment.
+- Live Apps Script runtime tests for login, logout token revocation, tampered `currentUserId`, expired token rejection, and password-change old-session revocation.
+- Browser/PWA tests for Chrome, Edge, Android Chrome, iPhone Safari, and installed PWA session behavior.
+
+No commit was created, per instruction.
+
+## 2026-08-13 — Backend login/bootstrap performance audit and safe optimization
+
+Scope completed:
+
+- Audited backend-only flow for login, bootstrap, session validation, user lookup, bootstrap Google Sheets reads, effective Sales Target read, cache usage, and logging overhead.
+- Confirmed `api('bootstrap')` authenticated through the central router and then `getBootstrapData(payload)` authenticated again, causing duplicate session validation and duplicate Users lookup on the bootstrap path.
+- Split bootstrap into a backward-compatible public wrapper and an internal authenticated core:
+  - `getBootstrapData(payload)` still validates direct calls.
+  - `getBootstrapDataForAuthenticatedUser_(payload, currentUser)` reuses the router-authenticated user.
+  - `getBootstrapDataCore_(payload, currentUser)` performs the existing bootstrap read/build flow.
+- Added backend performance step traces for login and bootstrap using `Logger.log()` only, avoiding extra SystemLogs writes and avoiding secrets in logs.
+- Added ScriptProperties-to-CacheService repopulation in `getSession()` after a session cache miss and valid persistent session fallback.
+- Added internal timing metadata propagation from `getUserByUsername()` and `getUserById()`.
+- Added `SalesTargets` support to shared `getSheetData()` cache keys and cleared that cache from `salesTargetInvalidateCaches_()`.
+- Reduced redundant settings/default settings lookups inside bootstrap by passing already-loaded settings/defaults to `getPublicSystemSettingsData_()`.
+- Preserved Sales KPI formulas, Sales Target precedence, RBAC, auth rules, Quotation/Customer/Promotion business logic, frontend orchestration, timeout values, API contract, and database schema.
+- Created `BACKEND_PERFORMANCE_AUDIT.md` with call graphs, sheet-read inventory, implemented changes, validation status, runtime acceptance checks, and rollback instructions.
+
+Files modified:
+
+- `appscript/Api.gs`
+- `appscript/Auth.gs`
+- `appscript/Code.gs`
+- `appscript/Database.gs`
+- `appscript/SalesTarget.gs`
+- `appscript/User.gs`
+- `BACKEND_PERFORMANCE_AUDIT.md`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Static validation executed:
+
+- `git diff --check` passed with Windows LF/CRLF warnings only.
+- Static search confirmed exactly one `case 'bootstrap'` route and one public `getBootstrapData(payload)` wrapper.
+- Static search confirmed `Api.gs` routes bootstrap to `getBootstrapDataForAuthenticatedUser_(payload, user)`.
+- Static search confirmed `sheetData:salesTargets` exists and `salesTargetInvalidateCaches_()` clears Sales Target sheet cache.
+
+Blocked / not run:
+
+- Live Apps Script runtime timing for `login` and `bootstrap`.
+- Real Google Sheets cache-hit/cache-miss timing.
+- Browser Network timing.
+- UAT/production deployed API tests.
+- Node/Python syntax tooling because Node.js was unavailable and Python execution was blocked in this sandbox.
+
+No commit was created, per instruction.
+
+## 2026-08-13 — Dashboard initial-load performance orchestration
+
+Scope completed:
+
+- Audited the current login and Dashboard load lifecycle before editing.
+- Confirmed the current initial flow rendered Dashboard before bootstrap data finished, which could show misleading `0.00` KPI values while data was still loading.
+- Confirmed the Dashboard route/render path could auto-trigger secondary reads around first paint: `customers`, `getQuotationHistory`, `getProductPromotions`, and `getPublicSystemSettings`.
+- Confirmed `bootstrap` already returns Sales KPI-critical `quotes`, `quoteLines`, and `effectiveSalesTarget`, plus `publicSettings`, `settings`, `permissions`, `counts`, and `promotions`.
+- Kept Sales KPI formulas, Sales Target business rules, Actual/Forecast calculation, Target precedence, RBAC, area permissions, API routing, and Apps Script backend logic unchanged.
+- Updated authenticated startup so public settings are taken from bootstrap/cache instead of forcing a separate public settings request during authenticated app load.
+- Changed Dashboard route entry so customer data loads in the background only after bootstrap/KPI data is ready.
+- Removed Dashboard render-time auto-loads for quotation history and product promotions; quotation history still loads on the quotation-history route, and promotions still load on the promotions route.
+- Added Dashboard KPI loading state that displays `—` and an accessible `กำลังโหลดข้อมูล...` helper before KPI-critical data is ready.
+- Preserved genuine business zero display after bootstrap succeeds.
+
+Files modified:
+
+- `js/app.js`
+- `css/main.css`
+- `TEST_CASES.md`
+- `WORK_HISTORY.md`
+
+Static validation executed:
+
+- `git diff --check` passed with Windows LF/CRLF warnings only.
+- Static search confirmed Dashboard no longer calls `getQuotationHistory` or `getProductPromotions` from Dashboard render.
+- Static search confirmed `getQuotationHistory` remains on the `quotes` route and `getProductPromotions` remains in `loadPromotionDashboard()`.
+- Static search confirmed `getPublicSystemSettings` auth exclusion in `js/api.js` remains present.
+
+Blocked / not run:
+
+- `node --check js/app.js` because Node.js is not installed in the current environment.
+- Live Apps Script runtime request timing.
+- Browser Network before/after measurement for initial authenticated request count and KPI first meaningful paint.
+- Desktop Chrome/Edge, Android Chrome, iPhone Safari, and installed PWA runtime tests.
+
+Known follow-up:
+
+- Google Drive profile-image/thumbnail `429 Too Many Requests` remains out of scope for this performance pass.
+
+No commit was created, per instruction.

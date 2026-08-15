@@ -1,0 +1,14 @@
+Business KPI static validation
+
+PASS - js/app.js syntax is valid.
+PASS - calculateBusinessSummary() is the centralized calculation entry point.
+PASS - Business Unit totals use a dynamic Map.
+PASS - Current productBusinessUnit/businessUnit fields are resolved before legacy brand fallback.
+PASS - Transaction line values are centralized.
+PASS - Product index eliminates repeated DB.products.find() inside line aggregation.
+PASS - renderProductViews() recalculates Dashboard after product load/refresh.
+PASS - Empty/incomplete values render as em dash rather than false 0.00.
+PASS - Quotation Value continues to use active quotation header totals.
+PASS - No backend, RBAC, authentication, quotation-engine, or database changes.
+
+Runtime browser/PWA and live API tests: NOT RUN.

@@ -21,6 +21,71 @@ function endPerformanceTimer(timer, detail) {
   }
 }
 
+function createBackendPerformanceTrace_(action) {
+  const now = Date.now();
+  return {
+    action: String(action || 'operation').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80) || 'operation',
+    eventId: 'PERF-' + now + '-' + Math.floor(Math.random() * 10000),
+    startedAt: now,
+    lastAt: now
+  };
+}
+
+function formatBackendPerformanceDetail_(detail) {
+  try {
+    if (detail === undefined || detail === null || detail === '') {
+      return '';
+    }
+    if (typeof detail !== 'object') {
+      return String(detail).replace(/[\r\n\t]+/g, ' ').slice(0, 240);
+    }
+    const blockedKeys = /password|currentPassword|newPassword|confirmPassword|sessionToken|sg_token|token|authorization|secret/i;
+    return Object.keys(detail).filter(function (key) {
+      return !blockedKeys.test(String(key || ''));
+    }).slice(0, 14).map(function (key) {
+      const value = detail[key];
+      if (value === undefined || value === null) {
+        return key + '=';
+      }
+      if (typeof value === 'object') {
+        return key + '=object';
+      }
+      return key + '=' + String(value).replace(/[\r\n\t]+/g, ' ').slice(0, 80);
+    }).join(' ');
+  } catch (error) {
+    return '';
+  }
+}
+
+function markBackendPerformanceStep_(trace, step, detail) {
+  try {
+    if (!trace || !trace.action || !trace.startedAt) {
+      return;
+    }
+    const now = Date.now();
+    const stepMs = now - (trace.lastAt || trace.startedAt);
+    const totalMs = now - trace.startedAt;
+    trace.lastAt = now;
+    const formattedDetail = formatBackendPerformanceDetail_(detail);
+    Logger.log('[PERF_STEP] action=' + trace.action + ' eventId=' + trace.eventId + ' step=' + String(step || 'step').replace(/\s+/g, '_') + ' stepMs=' + stepMs + ' totalMs=' + totalMs + (formattedDetail ? ' ' + formattedDetail : ''));
+  } catch (error) {
+    // Diagnostic logging must never affect runtime behavior.
+  }
+}
+
+function endBackendPerformanceTrace_(trace, status, detail) {
+  try {
+    if (!trace || !trace.action || !trace.startedAt) {
+      return;
+    }
+    const totalMs = Date.now() - trace.startedAt;
+    const formattedDetail = formatBackendPerformanceDetail_(detail);
+    Logger.log('[PERF_DONE] action=' + trace.action + ' eventId=' + trace.eventId + ' status=' + String(status || 'done').replace(/\s+/g, '_') + ' totalMs=' + totalMs + (formattedDetail ? ' ' + formattedDetail : ''));
+  } catch (error) {
+    // Diagnostic logging must never affect runtime behavior.
+  }
+}
+
 function getSpreadsheet() {
   try {
     if (SG_SPREADSHEET_CACHE) {
@@ -150,6 +215,9 @@ function getSheetDataCacheKey(sheetName) {
   }
   if (name === String(SHEET_NAMES.PROMOTIONS || '') || name === String(typeof PROMOTIONS_SHEET !== 'undefined' ? PROMOTIONS_SHEET : '')) {
     return 'sheetData:promotions';
+  }
+  if (name === String(typeof SALES_TARGETS_SHEET !== 'undefined' ? SALES_TARGETS_SHEET : 'SalesTargets')) {
+    return 'sheetData:salesTargets';
   }
   return '';
 }
@@ -502,6 +570,9 @@ function getHeadersForSheet(sheetName) {
   }
   if (sheetName === SHEET_NAMES.PROMOTIONS) {
     return ['promotionId', 'brand', 'productName', 'description', 'discountText', 'active', 'createdAt', 'updatedAt'];
+  }
+  if (String(sheetName || '') === 'SalesTargets') {
+    return ['targetId', 'targetType', 'periodYear', 'periodMonth', 'periodStart', 'periodEnd', 'businessUnit', 'salesArea', 'salesUserId', 'salesUserNameSnapshot', 'targetAmount', 'currency', 'status', 'active', 'createdByUserId', 'createdByNameSnapshot', 'createdAt', 'updatedByUserId', 'updatedByNameSnapshot', 'updatedAt', 'version'];
   }
   return [];
 }

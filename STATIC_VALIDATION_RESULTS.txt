@@ -1,0 +1,13 @@
+# STATIC_VALIDATION_RESULTS
+
+- PASS — Single version literal: semantic application version appears only in js/version.js
+- PASS — APP_INFO fields: all required fields present
+- PASS — Index generated URLs: no hardcoded application version query
+- PASS — Home binding: Home reads centralized version
+- PASS — Footer binding: Footer reads centralized version
+- PASS — Popup metadata: Version, Build, Release fields present
+- PASS — Console once: one-time console guard present
+- PASS — SW shared source: Service Worker imports same source
+- PASS — SW cache generation: cache name and cleanup use centralized metadata
+- PASS — Manifest deduplicated: no version values in manifest icon URLs
+- PASS — Safe fallback: fallback markers found

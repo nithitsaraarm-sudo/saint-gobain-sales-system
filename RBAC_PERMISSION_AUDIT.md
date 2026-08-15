@@ -1,5 +1,22 @@
 # RBAC & Security Audit — Saint-Gobain Sales System
 
+## Authentication/session addendum — 2026-08-13
+
+The original finding that JSONP GET could expose `sessionToken` in a URL has been partially remediated in the local source:
+
+- `js/api.js` no longer attaches auth context to public `getPublicSystemSettings` JSONP requests.
+- `apiJsonpGet()` rejects non-public actions.
+- `appscript/Code.gs` restricts JSONP callback output to public API actions and rejects credential-bearing GET/query payloads.
+- `appscript/Permission.gs` rejects a supplied `currentUserId` that does not match the canonical user resolved from the validated session.
+- Frontend and backend diagnostic logging now redact password/session-token fields.
+
+Runtime deployment validation is still required before this finding can be closed in production:
+
+- Deploy the Apps Script Web App.
+- Confirm authenticated requests use POST and no `sessionToken` appears in request URLs.
+- Confirm tampered `currentUserId` returns `Session user mismatch` or equivalent forbidden response.
+- Confirm public settings still loads without auth.
+
 วันที่ตรวจ: 2026-07-26  
 สถานะ: Audit-only / ไม่มีการแก้ไขโค้ดระบบจาก audit นี้
 
