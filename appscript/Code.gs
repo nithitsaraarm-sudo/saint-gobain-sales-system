@@ -1,4 +1,26 @@
 // Main Apps Script entry point for Saint-Gobain Sales System.
+function isPublicGetApiAction_(action) {
+  return ['getPublicSystemSettings'].indexOf(String(action || '').trim()) >= 0;
+}
+
+function hasSensitiveApiCredentialField_(key) {
+  return /^(password|currentPassword|newPassword|confirmPassword|sessionToken|sg_token|token|authorization)$/i.test(String(key || '').trim());
+}
+
+function containsSensitiveApiCredential_(value, depth) {
+  const level = Number(depth || 0);
+  if (!value || level > 6) return false;
+  if (typeof value !== 'object') return false;
+  if (Array.isArray(value)) {
+    return value.some(function (item) {
+      return containsSensitiveApiCredential_(item, level + 1);
+    });
+  }
+  return Object.keys(value).some(function (key) {
+    return hasSensitiveApiCredentialField_(key) || containsSensitiveApiCredential_(value[key], level + 1);
+  });
+}
+
 function doGet(e) {
   try {
     const params = e && e.parameter ? e.parameter : {};
@@ -14,14 +36,21 @@ function doGet(e) {
       'saveProduct', 'savePromotion',
       'updateSettings', 'updateSystemIdentitySettings',
       'createQuotation', 'duplicateQuotation', 'cancelQuotation',
-      'updateQuotation', 'quotation', 'saveQuotation'
+      'updateQuotation', 'quotation', 'saveQuotation',
+      'saveSalesTarget', 'updateSalesTarget', 'setSalesTargetStatus'
     ];
 
     if (action) {
-      if (getBlockedWriteActions.indexOf(action) >= 0) {
-        return createApiOutput(validationError('Write action requires POST'), params.callback);
+      if (params.callback && !isPublicGetApiAction_(action)) {
+        return createApiOutput(forbidden('JSONP is only available for public API actions'), '');
       }
       const payload = params.payload ? JSON.parse(params.payload) : {};
+      if (containsSensitiveApiCredential_(params) || containsSensitiveApiCredential_(payload)) {
+        return createApiOutput(validationError('Credentials must not be sent via GET'), '');
+      }
+      if (getBlockedWriteActions.indexOf(action) >= 0) {
+        return createApiOutput(validationError('Write action requires POST'), '');
+      }
       const result = api(action, payload);
       return createApiOutput(result, params.callback);
     }
@@ -38,62 +67,110 @@ function doGet(e) {
 }
 
 function getBootstrapData(payload) {
+  const auth = requireApiUser(payload);
+  if (!auth.ok) {
+    return auth;
+  }
+  return getBootstrapDataCore_(payload, auth.data);
+}
+
+function getBootstrapDataForAuthenticatedUser_(payload, currentUser) {
+  if (!currentUser || !String(currentUser.userId || currentUser.username || '').trim()) {
+    return getBootstrapData(payload);
+  }
+  return getBootstrapDataCore_(payload, currentUser);
+}
+
+function getBootstrapDataCore_(payload, currentUser) {
   const timer = startPerformanceTimer('bootstrap');
+  const trace = typeof createBackendPerformanceTrace_ === 'function' ? createBackendPerformanceTrace_('bootstrap') : null;
+  var outcome = 'ERROR';
   try {
     const force = payload && typeof payload === 'object' && payload.force === true;
-    const auth = requireApiUser(payload);
-    if (!auth.ok) {
-      return auth;
-    }
-    const currentUser = auth.data;
+    if (trace) markBackendPerformanceStep_(trace, 'auth_ready', {
+      role: currentUser.role,
+      userId: currentUser.userId ? 'present' : '',
+      authMs: payload && typeof payload === 'object' ? payload._authMs : ''
+    });
     const permissions = getUserPermissions(currentUser);
+    if (trace) markBackendPerformanceStep_(trace, 'permissions_resolved', { canViewPromotions: permissions.canViewPromotions });
     const settings = getSystemSettings();
-    const cacheKey = 'bootstrap:dashboard:v3:' + String(currentUser.userId || currentUser.username || 'anon') + ':' + String(settings.cacheVersion || settings.identityUpdatedAt || '');
+    if (trace) markBackendPerformanceStep_(trace, 'settings_loaded', { cacheVersion: settings.cacheVersion || settings.identityUpdatedAt || '' });
+    const salesTargetCacheVersion = typeof getSalesTargetCacheVersion_ === 'function' ? getSalesTargetCacheVersion_() : '';
+    if (trace) markBackendPerformanceStep_(trace, 'sales_target_cache_version_loaded', { version: salesTargetCacheVersion || '' });
+    const cacheKey = 'bootstrap:dashboard:v4:' + String(currentUser.userId || currentUser.username || 'anon') + ':' + String(settings.cacheVersion || settings.identityUpdatedAt || '') + ':' + String(salesTargetCacheVersion || '');
     const cached = force ? null : getServerCache(cacheKey);
+    if (trace) markBackendPerformanceStep_(trace, 'bootstrap_cache_checked', { cache: cached ? 'hit' : 'miss', force: force });
     if (cached) {
       endPerformanceTimer(timer, 'cache=hit');
+      outcome = 'CACHE_HIT';
       return success(cached);
     }
     const env = getCurrentEnvironment();
+    if (trace) markBackendPerformanceStep_(trace, 'environment_loaded');
 
     const allQuotes = getBootstrapQuoteHistoryRows(200);
+    if (trace) markBackendPerformanceStep_(trace, 'quote_history_loaded', { rows: allQuotes.length });
     const quotes = filterQuotesForUser(allQuotes, currentUser);
+    if (trace) markBackendPerformanceStep_(trace, 'quote_history_scoped', { rows: quotes.length });
     const quoteLines = getBootstrapQuoteLineRows(quotes);
+    if (trace) markBackendPerformanceStep_(trace, 'quote_lines_loaded', { rows: quoteLines.length });
     const scopedCustomers = typeof getCustomers === 'function' ? getCustomers({ currentUser: currentUser }) : null;
+    if (trace) markBackendPerformanceStep_(trace, 'customers_loaded', {
+      ok: scopedCustomers && scopedCustomers.ok,
+      rows: scopedCustomers && scopedCustomers.ok && Array.isArray(scopedCustomers.data) ? scopedCustomers.data.length : 0
+    });
     const promotionsResult = permissions.canViewPromotions ? getPromotions({ currentUser: currentUser }) : success([]);
+    if (trace) markBackendPerformanceStep_(trace, 'promotions_loaded', {
+      ok: promotionsResult && promotionsResult.ok,
+      rows: promotionsResult && promotionsResult.ok && Array.isArray(promotionsResult.data) ? promotionsResult.data.length : 0
+    });
     const customerCount = scopedCustomers && scopedCustomers.ok && Array.isArray(scopedCustomers.data)
       ? scopedCustomers.data.length
       : countSheetDataRows(CUSTOMERS_SHEET);
+    const productCount = countSheetDataRows(SHEET_NAMES.PRODUCTS);
+    if (trace) markBackendPerformanceStep_(trace, 'counts_loaded', { customers: customerCount, products: productCount });
+    const defaults = getDefaultSystemSettings();
+    const salesTargetRows = typeof salesTargetRows_ === 'function' ? salesTargetRows_() : [];
+    if (trace) markBackendPerformanceStep_(trace, 'sales_target_rows_loaded', { rows: salesTargetRows.length });
     const data = {
       environment: env,
       sheetInitialized: true,
       user: currentUser,
       permissions: permissions,
       settings: filterSettingsForUser_(settings, currentUser),
-      publicSettings: getPublicSystemSettingsData_(),
+      publicSettings: getPublicSystemSettingsData_(settings, defaults),
       defaultSettings: {
-        companyName: getDefaultSystemSettings().companyName,
-        appName: getDefaultSystemSettings().appName,
-        systemName: getDefaultSystemSettings().systemName,
+        companyName: defaults.companyName,
+        appName: defaults.appName,
+        systemName: defaults.systemName,
         welcomeText: 'เริ่มต้นวันใหม่อย่างมีประสิทธิภาพนะคะ',
         announcementText: '',
         vatRate: 7
       },
       counts: {
         customers: customerCount,
-        products: countSheetDataRows(SHEET_NAMES.PRODUCTS)
+        products: productCount
       },
       quotes: quotes.slice(0, 50),
       quoteLines: quoteLines,
-      promotions: promotionsResult.ok && Array.isArray(promotionsResult.data) ? promotionsResult.data : []
+      promotions: promotionsResult.ok && Array.isArray(promotionsResult.data) ? promotionsResult.data : [],
+      effectiveSalesTarget: typeof resolveEffectiveSalesTarget_ === 'function'
+        ? resolveEffectiveSalesTarget_(salesTargetRows, currentUser, typeof getDashboardEffectiveSalesTargetRequest_ === 'function' ? getDashboardEffectiveSalesTargetRequest_(currentUser) : { targetType: 'MONTHLY', periodYear: new Date().getFullYear(), periodMonth: new Date().getMonth() + 1, businessUnit: 'ALL' })
+        : null
     };
+    if (trace) markBackendPerformanceStep_(trace, 'response_built');
     setServerCache(cacheKey, data, 300);
+    if (trace) markBackendPerformanceStep_(trace, 'bootstrap_cache_written');
     endPerformanceTimer(timer, 'cache=miss');
+    outcome = 'CACHE_MISS';
     return success(data);
   } catch (error) {
     endPerformanceTimer(timer, 'error=true');
     logError('getBootstrapData', error);
     return fail(error && error.message ? error.message : 'Bootstrap failed');
+  } finally {
+    if (trace) endBackendPerformanceTrace_(trace, outcome);
   }
 }
 
@@ -131,9 +208,9 @@ function requireSuperAdminForSystemIdentity_(payload) {
   return auth;
 }
 
-function getPublicSystemSettingsData_() {
-  const settings = getSystemSettings();
-  const defaults = getDefaultSystemSettings();
+function getPublicSystemSettingsData_(settingsOverride, defaultsOverride) {
+  const settings = settingsOverride && typeof settingsOverride === 'object' ? settingsOverride : getSystemSettings();
+  const defaults = defaultsOverride && typeof defaultsOverride === 'object' ? defaultsOverride : getDefaultSystemSettings();
   const companyName = String(settings.companyName || defaults.companyName).trim();
   const systemName = String(settings.systemName || settings.appName || defaults.systemName).trim();
   return {

@@ -64,6 +64,13 @@ function getPayloadSessionToken(payload) {
   return '';
 }
 
+function getPayloadClaimedCurrentUserId_(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return '';
+  }
+  return String(payload.currentUserId || payload.currentUser && payload.currentUser.userId || '').trim();
+}
+
 function requireApiUser(payload) {
   try {
     const session = getSession(getPayloadSessionToken(payload));
@@ -78,6 +85,11 @@ function requireApiUser(payload) {
     const user = normalizeUserAccount(userResult.data);
     if (user.status !== USER_STATUSES.ACTIVE) {
       return forbidden('บัญชีนี้ถูกปิดการใช้งาน กรุณาติดต่อผู้ดูแลระบบ');
+    }
+    const claimedCurrentUserId = getPayloadClaimedCurrentUserId_(payload);
+    if (claimedCurrentUserId && normalizeString(claimedCurrentUserId) !== normalizeString(user.userId)) {
+      logWarning('requireApiUser', 'Rejected currentUserId mismatch for session user ' + String(user.userId || '').trim());
+      return forbidden('Session user mismatch');
     }
     return success(sanitizeUser(user));
   } catch (error) {

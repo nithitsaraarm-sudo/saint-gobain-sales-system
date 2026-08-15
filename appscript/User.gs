@@ -174,7 +174,11 @@ function getUserByUsername(usernameOrEmail) {
     const user = result.data.find(function (item) {
       return String(item.username || '').trim().toLowerCase() === target || String(item.email || '').trim().toLowerCase() === target;
     });
-    return user ? success(user) : fail('User not found');
+    const response = user ? success(user) : fail('User not found');
+    response.cacheHit = result.cacheHit;
+    response.spreadsheetOpenMs = result.spreadsheetOpenMs;
+    response.usersReadMs = result.usersReadMs;
+    return response;
   } catch (error) {
     logError('getUserByUsername', error);
     return fail('Unable to load user');
@@ -189,7 +193,11 @@ function getUserById(userId) {
     const user = result.data.find(function (item) {
       return String(item.userId || '').trim() === target;
     });
-    return user ? success(user) : fail('User not found');
+    const response = user ? success(user) : fail('User not found');
+    response.cacheHit = result.cacheHit;
+    response.spreadsheetOpenMs = result.spreadsheetOpenMs;
+    response.usersReadMs = result.usersReadMs;
+    return response;
   } catch (error) {
     logError('getUserById', error);
     return fail('Unable to load user');
@@ -499,6 +507,9 @@ function changePassword(payload) {
       updatedAt: new Date().toISOString()
     });
     if (!result.ok) return result;
+    if (typeof revokeUserSessionsExcept_ === 'function') {
+      revokeUserSessionsExcept_(user.userId, getPayloadSessionToken(payload));
+    }
     logActivity(user.userId || '', 'changePassword', 'password changed');
     return success({ userId: user.userId }, 'Password changed');
   } catch (error) {

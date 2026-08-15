@@ -1,7 +1,7 @@
 function api(action, payload) {
   try {
     const normalizedAction = String(action || '').trim();
-    const publicActions = ['login', 'demoLogin', 'register', 'getPublicSystemSettings'];
+    const publicActions = ['login', 'demoLogin', 'register', 'resetPassword', 'getPublicSystemSettings'];
     const authStartedAt = Date.now();
     const auth = publicActions.indexOf(normalizedAction) >= 0 ? null : requireApiUser(payload);
     const authMs = Date.now() - authStartedAt;
@@ -179,6 +179,16 @@ function api(action, payload) {
         if (!permissions.canViewQuotations) return forbidden('Insufficient permission');
         if (payload && typeof payload === 'object') payload.currentUser = user;
         return authorizeAction(getQuotationHistory, [payload]);
+      case 'getSalesTargets':
+      case 'getSalesTarget':
+      case 'getEffectiveSalesTarget':
+      case 'getSalesTargetFormOptions':
+      case 'getSalesTargetManagementData':
+      case 'saveSalesTarget':
+      case 'updateSalesTarget':
+      case 'setSalesTargetStatus':
+        if (typeof dispatchSalesTargetAction_ !== 'function') return fail('Action not available');
+        return authorizeAction(dispatchSalesTargetAction_, [normalizedAction, payload]);
       case 'updateQuotation':
         if (!permissions.canEditQuotations) return forbidden('Insufficient permission');
         if (payload && typeof payload === 'object') payload.currentUser = user;
@@ -189,7 +199,8 @@ function api(action, payload) {
         if (payload && typeof payload === 'object') payload.currentUser = user;
         return authorizeAction(saveQuotation, [payload]);
       case 'bootstrap':
-        return authorizeAction(getBootstrapData, [payload]);
+        if (auth && !auth.ok) return auth;
+        return authorizeAction(getBootstrapDataForAuthenticatedUser_, [payload, user]);
       default:
         return fail('Unsupported API action: ' + normalizedAction);
     }

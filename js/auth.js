@@ -23,6 +23,28 @@ function toastMessage(message) {
   }
 }
 
+let loginInProgress = false;
+
+function setLoginLoadingState(isLoading, message) {
+  const button = document.getElementById('loginButton');
+  const status = document.getElementById('loginStatus');
+  const loading = Boolean(isLoading);
+  if (button) {
+    if (!button.dataset.defaultLabel) {
+      button.dataset.defaultLabel = button.textContent || 'เข้าสู่ระบบ';
+    }
+    button.disabled = loading;
+    button.classList.toggle('is-loading', loading);
+    button.setAttribute('aria-busy', loading ? 'true' : 'false');
+    button.textContent = loading ? 'กำลังเข้าสู่ระบบ...' : button.dataset.defaultLabel;
+  }
+  if (status) {
+    status.textContent = message || '';
+    status.hidden = !message;
+    status.classList.toggle('is-loading', loading && Boolean(message));
+  }
+}
+
 function isDemoLoginEnabled() {
   const env = String(window.APP_ENV || 'production').trim().toLowerCase();
   return env !== 'production' && window.ENABLE_DEMO_LOGIN === true;
@@ -33,6 +55,22 @@ function applyDemoLoginVisibility() {
   document.querySelectorAll('[data-demo-login="true"]').forEach(function (element) {
     element.hidden = !enabled;
     element.classList.toggle('hidden', !enabled);
+  });
+}
+
+function createClientSessionScopeId() {
+  try {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+      return window.crypto.randomUUID();
+    }
+  } catch (error) {}
+  return 'scope-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 1000000).toString(36);
+}
+
+function clearSensitiveInputValues(ids) {
+  (Array.isArray(ids) ? ids : []).forEach(function (id) {
+    const element = document.getElementById(id);
+    if (element) element.value = '';
   });
 }
 
@@ -63,6 +101,7 @@ function saveSession(user, sessionToken) {
   if (sessionToken) {
     localStorage.setItem('sg_token', String(sessionToken));
     localStorage.setItem('sessionToken', String(sessionToken));
+    localStorage.setItem('sg_session_scope_id', createClientSessionScopeId());
   }
 }
 
@@ -81,6 +120,7 @@ function clearSession() {
   localStorage.removeItem('sg_userId');
   localStorage.removeItem('currentUser');
   localStorage.removeItem('sessionToken');
+  localStorage.removeItem('sg_session_scope_id');
   USER = null;
 }
 
@@ -133,6 +173,10 @@ async function loadBootstrap() {
 }
 
 async function login() {
+  if (loginInProgress) {
+    setLoginLoadingState(true, 'กำลังเข้าสู่ระบบ...');
+    return { ok: false, code: 'LOGIN_IN_PROGRESS', message: 'Login already in progress' };
+  }
   try {
     const username = document.getElementById('loginUsername') ? document.getElementById('loginUsername').value : '';
     const password = document.getElementById('loginPassword') ? document.getElementById('loginPassword').value : '';
@@ -141,6 +185,8 @@ async function login() {
       toastMessage('กรุณากรอก Email/Username และ Password');
       return { ok: false, message: 'username and password are required' };
     }
+    loginInProgress = true;
+    setLoginLoadingState(true, 'กำลังเข้าสู่ระบบ...');
     const response = await callApi('login', { username: username, password: password });
     if (!response.ok) {
       toastMessage(response.message || 'เข้าสู่ระบบไม่สำเร็จ');
@@ -155,7 +201,10 @@ async function login() {
     else localStorage.removeItem('rememberUsername');
     USER = user;
     showApp();
-    await loadBootstrap();
+    loadBootstrap().catch(function (error) {
+      console.error(error);
+      toastMessage('โหลดข้อมูลเริ่มต้นไม่สำเร็จ');
+    });
     if (user && user.mustChangePassword) {
       toastMessage('กรุณาเปลี่ยนรหัสผ่านก่อนใช้งานต่อ');
       if (typeof go === 'function') go('settings');
@@ -166,6 +215,10 @@ async function login() {
     console.error(error);
     toastMessage('เข้าสู่ระบบไม่สำเร็จ');
     return { ok: false, message: String(error && error.message ? error.message : 'API error') };
+  } finally {
+    clearSensitiveInputValues(['loginPassword']);
+    loginInProgress = false;
+    setLoginLoadingState(false, '');
   }
 }
 
@@ -294,6 +347,8 @@ async function resetPass() {
   } catch (error) {
     toastMessage('เข้าสู่ระบบไม่สำเร็จ');
     return { ok: false, message: String(error && error.message ? error.message : 'API error') };
+  } finally {
+    clearSensitiveInputValues(['resetPassword']);
   }
 }
 
