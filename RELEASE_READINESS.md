@@ -1,5 +1,42 @@
 # Release Readiness Report — Audit Remediation
 
+## Phase 4 Integration/API Contract Testing addendum — 2026-08-18
+
+Decision impact: **SOURCE CONTRACT COVERAGE IMPROVED / NOT RUNTIME READY**.
+
+Phase 4 adds zero-network integration/API contract coverage across the frontend API client, Apps Script API router, backend action dispatch, permission gates, response normalization, and empty/error-state behavior.
+
+Local source coverage added:
+
+- API client: success, legacy success compatibility, HTTP failure, empty response, invalid JSON, timeout/abort, network failure, `eventId`, redirect metadata on HTTP failure, and session context attachment.
+- API router: frontend/backend action-name parity, `getSalesTargetManagementData` dispatch, unknown action contract, invalid session rejection, authenticated `currentUser` injection, and request payload role/permission tamper denial.
+- Customer: SALES own-area create/update, cross-area denial, assignment tampering denial, VIEWER/PC write denial, and scoped list empty-state handling.
+- Sales Target: GYPROC/WEBER configurable targets, ALL filter/history behavior, duplicate active conflict, stale/correct version updates, legacy ALL status handling, effective target read vs management permissions, and no double-counting legacy ALL.
+- Product/Promotion: current read RBAC plus master write denial for SALES/PC and allow path for ADMIN/SUPER_ADMIN.
+- Quotation: save/update response shape, validation error shape, view/history/duplicate/cancel guards, VIEWER read-only behavior, and PC denial.
+- Auth/RBAC/Error: PC is distinct from SALES, permission payload shape remains bootstrap-compatible, backend failures are preserved by the frontend, and successful empty arrays are not converted into errors.
+
+Tooling update:
+
+- `npm.cmd run check` = static validation.
+- `npm.cmd run test` / `npm.cmd run test:unit` = unit business-logic tests.
+- `npm.cmd run test:integration` = zero-network API/contract integration tests.
+- `npm.cmd run test:all` = unit + integration tests.
+- `npm.cmd run verify` = `check + test:all`.
+
+Local Phase 4 validation result:
+
+- Node.js/npm observed: `node v24.19.0`, `npm 11.17.0`.
+- `npm.cmd run check` passed.
+- `npm.cmd run test` passed with 57/57 unit tests.
+- `npm.cmd run test:integration` passed with 35/35 integration/API contract tests.
+- `npm.cmd run test:all` passed with 92/92 total tests.
+- Controlled failure validation passed: a temporary failing integration fixture produced a non-zero test result and was removed before final validation.
+- `npm.cmd run verify` passed with 92/92 total tests.
+- `git diff --check` passed with line-ending warnings only.
+
+Runtime readiness remains unchanged: Apps Script live backend, Google Sheets live data, desktop browser, iPhone Safari, Android Chrome, installed PWA, and production smoke tests still require manual/runtime execution with evidence. This addendum does **not** change the release recommendation to runtime-ready.
+
 ## Phase 3.2.1 Customer Add Button Permission Sync addendum — 2026-08-18
 
 Decision impact: **SOURCE UI PERMISSION SYNC REMEDIATED / NOT RUNTIME READY**.

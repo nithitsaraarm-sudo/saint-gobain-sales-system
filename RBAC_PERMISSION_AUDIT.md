@@ -1,5 +1,31 @@
 # RBAC & Security Audit — Saint-Gobain Sales System
 
+## Phase 4 Integration/API Contract Testing addendum — 2026-08-18
+
+Phase 4 adds automated source-level contract tests for the current RBAC/API behavior without calling live Apps Script, Google Sheets, browsers, devices, or production endpoints.
+
+New automated evidence:
+
+- `tests/integration/api-router-contract.test.mjs` checks frontend/backend action-name parity, `getSalesTargetManagementData` dispatch through `dispatchSalesTargetAction_`, unknown action response, invalid-session rejection, authenticated `currentUser` injection, and request-payload role escalation denial.
+- `tests/integration/auth-rbac-error-contract.test.mjs` checks the PC role does not fall through to SALES, SALES customer/product/promotion permission boundaries, response helper shape, and frontend preservation of backend error codes.
+- `tests/integration/customer-api-contract.test.mjs` checks SALES own-area customer create/update, cross-area denial, assignment tampering denial, VIEWER/PC write denial, and customer list scope/empty-state contract through the central router.
+- `tests/integration/sales-target-api-contract.test.mjs` checks Sales Target manage/view separation, PC denial, BU rules, legacy ALL handling, duplicate/conflict handling, stale version handling, and effective target aggregation.
+- `tests/integration/product-promotion-api-contract.test.mjs` checks Product/Promotion master write restrictions for SALES/PC and allow paths for ADMIN/SUPER_ADMIN.
+- `tests/integration/quotation-api-contract.test.mjs` checks quotation save/update/read/history/duplicate/cancel route contracts and VIEWER/PC RBAC behavior.
+
+Local runtime of the integration suite has passed with synthetic fixtures only. Production RBAC sign-off still requires deployed Apps Script/API role-matrix testing, live Google Sheets data isolation checks, browser/device/PWA validation, and evidence attachments.
+
+Phase 4 validation evidence:
+
+- `node -v`: `v24.19.0`; `npm.cmd -v`: `11.17.0`.
+- `npm.cmd run check`: passed.
+- `npm.cmd run test`: passed with 57/57 unit tests.
+- `npm.cmd run test:integration`: passed with 35/35 integration/API contract tests.
+- `npm.cmd run test:all`: passed with 92/92 total tests.
+- Controlled failure validation: passed; temporary failing fixture caused a non-zero integration test run and was removed.
+- `npm.cmd run verify`: passed with 92/92 total tests.
+- `git diff --check`: passed with line-ending warnings only.
+
 ## Phase 3.2.1 UI permission-sync addendum — 2026-08-18
 
 Phase 3.2.1 updates the frontend customer add-action permission sync discovered in `index.html` and `js/app.js`.

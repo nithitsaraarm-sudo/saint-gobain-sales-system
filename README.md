@@ -34,25 +34,31 @@ Phase 3.1 remediates the Sales Target Business Unit rule found by Phase 3 tests:
 - Current total target is derived as `GYPROC target + WEBER target`.
 - Historical `ALL` Sales Target rows remain readable for audit/history, but new configurable `ALL` targets are rejected by backend validation.
 
-Phase 3 adds automated unit tests for critical business logic using Node built-in `node:test` and `node:assert/strict`. Node.js/npm remain development/testing tools only; production runtime remains static HTML/CSS/vanilla JavaScript + Google Apps Script + Google Sheets + GitHub Pages/PWA.
+Phase 4 adds zero-network integration/API contract tests that validate the frontend API client, Apps Script API router, backend action dispatch, permission gates, response normalization, and empty/error-state contracts. Phase 3 unit tests continue to cover critical business logic using Node built-in `node:test` and `node:assert/strict`. Node.js/npm remain development/testing tools only; production runtime remains static HTML/CSS/vanilla JavaScript + Google Apps Script + Google Sheets + GitHub Pages/PWA.
 
 Use these commands during development:
 
 ```bash
 npm run check
 npm run test
+npm run test:integration
+npm run test:all
 npm run verify
 ```
 
 - `check` = static validation for JavaScript, Apps Script syntax, JSON, and local static assets.
 - `test` / `test:unit` = automated unit business-logic tests.
-- `verify` = `check + test`; run before commit/deploy handoff.
+- `test:integration` = zero-network API/client/router/permission contract tests using mocks and synthetic fixtures.
+- `test:all` = unit + integration tests.
+- `verify` = `check + test:all`; run before commit/deploy handoff.
 
 On Windows PowerShell, if `npm.ps1` is blocked by Execution Policy, use:
 
 ```powershell
 npm.cmd run check
 npm.cmd run test
+npm.cmd run test:integration
+npm.cmd run test:all
 npm.cmd run verify
 ```
 

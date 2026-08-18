@@ -1,3 +1,32 @@
+## 2026-08-18 — Phase 4 Integration / API Contract Testing
+
+Scope completed:
+
+- Audited the current frontend API client (`js/api.js`), Apps Script API router (`appscript/Api.gs`), `doPost()` handoff (`appscript/Code.gs`), response helpers (`appscript/Response.gs`), permission helpers (`appscript/Permission.gs`), Customer API, Sales Target API, Product/Promotion write routes, and Quotation routes before changing files.
+- Added zero-network integration tests using Node built-ins only (`node:test`, `node:assert/strict`, `node:vm`) and synthetic fixtures.
+- Added API client contract coverage for success, legacy `success:true/result`, HTTP failure, empty response, invalid JSON, timeout/abort, network failure, `eventId` preservation, session context attachment, and empty-list vs error-state behavior.
+- Added API router contract coverage for frontend/backend action-name parity, `getSalesTargetManagementData` routing through `dispatchSalesTargetAction_`, unknown action behavior, invalid-session rejection, authenticated `currentUser` injection, and frontend role/permission payload tampering denial.
+- Added Customer contract coverage through the central router for SALES own-area create/update, cross-area denial, assignment tampering denial, VIEWER/PC write denial, and scoped customer list empty-state behavior.
+- Added Sales Target contract coverage for configurable `GYPROC`/`WEBER`, filter-only `ALL`, historical `ALL`, duplicate active target conflict, stale/correct version update, legacy ALL deactivation/reactivation, SALES effective-target read vs management denial, PC denial, and no double-counting legacy ALL.
+- Added Product/Promotion contract coverage preserving current read RBAC and direct API write denial for SALES/PC while ADMIN/SUPER_ADMIN remain allowed.
+- Added Quotation contract coverage for save/update route shape, validation error preservation, view/history/duplicate/cancel guards, VIEWER read-only behavior, and PC denial.
+- Added `npm run test:integration`, `npm run test:all`, and updated `verify` to run `check + test:all`.
+- No production application, API, backend, database, Google Apps Script runtime behavior, or Google Sheet schema was changed.
+
+Validation status at this point:
+
+- `node -v` returned `v24.19.0`; `npm.cmd -v` returned `11.17.0`.
+- `npm.cmd run check` passed locally.
+- `npm.cmd run test` passed locally with 57/57 unit tests.
+- `npm.cmd run test:integration` passed locally with 35/35 integration tests.
+- `npm.cmd run test:all` passed locally with 92/92 total tests.
+- Controlled failure validation passed: a temporary failing integration fixture caused `npm.cmd run test:integration` to exit non-zero, then the fixture was removed.
+- `npm.cmd run verify` passed locally with `check + test:all` and 92/92 tests.
+- `git diff --check` passed with line-ending warnings only.
+- Live Apps Script, Google Sheets, desktop browser, iPhone Safari, Android Chrome, and PWA UAT remain not run by this phase.
+
+Files added/modified in this phase are limited to test harnesses, fixtures, npm scripts, and documentation.
+
 ## 2026-08-18 — Phase 3.2.1 Customer Add Button Permission Sync
 
 Scope completed:
