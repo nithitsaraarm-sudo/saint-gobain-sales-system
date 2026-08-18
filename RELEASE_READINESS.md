@@ -1,5 +1,28 @@
 # Release Readiness Report — Audit Remediation
 
+## Phase 3.2 Sales scoped customer self-service addendum — 2026-08-18
+
+Decision impact: **SOURCE RBAC REMEDIATED / NOT RUNTIME READY**.
+
+Phase 3.2 remediated the customer self-service permission gap:
+
+- `SALES` can now pass the canonical `canManageCustomers` permission for scoped customer create/edit only.
+- `SALES` still cannot manage Product Master or Promotion Master through the central API router.
+- `Customer.gs` now enforces customer write permission directly, derives SALES assignment from the authenticated user on create, rejects cross-area writes, rejects assignment hijack attempts, and blocks SALES changes to protected metadata/status fields.
+- `PC` is now normalized as a distinct restricted role rather than falling through to `SALES`.
+- Frontend data-entry UI now reflects customer-only access for SALES and hides assignment controls for roles without assignment-management permission.
+- Automated unit coverage increased to 53 tests after adding the Phase 3.2 customer/RBAC suite.
+
+Local source validation currently completed for this addendum:
+
+- Baseline `npm.cmd run verify`: passed before implementation with 38 tests.
+- `npm.cmd run check`: passed after implementation.
+- `npm.cmd run test`: passed after implementation with 53/53 tests.
+- `npm.cmd run verify`: passed after implementation with 53/53 tests.
+- `git diff --check`: passed; Git only reported line-ending normalization warnings.
+
+Runtime readiness still requires Apps Script deployment, live Google Sheets API/UAT, role-specific browser checks, iPhone Safari, Android Chrome, Desktop, and installed-PWA verification. This addendum does **not** change the release recommendation to runtime-ready.
+
 ## Sales Target Management UI/UX cleanup addendum — 2026-08-18
 
 Decision impact: **SOURCE UI/UX DEFECTS REMEDIATED / NOT RUNTIME READY**.

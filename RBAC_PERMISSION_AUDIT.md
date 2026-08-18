@@ -1,5 +1,37 @@
 # RBAC & Security Audit — Saint-Gobain Sales System
 
+## Phase 3.2 RBAC addendum — 2026-08-18
+
+Phase 3.2 updates the canonical customer-management policy discovered in `appscript/Permission.gs`, `appscript/Api.gs`, `appscript/Customer.gs`, and `js/app.js`.
+
+Updated source-level customer/data-entry matrix:
+
+| Feature group | SUPER_ADMIN | ADMIN | MANAGER | SALES | VIEWER | PC |
+|---|---|---|---|---|---|---|
+| Customer list/detail | All areas | Scoped/system area behavior unchanged | Scoped read | Area + assigned-sales scoped | Scoped read-only | No |
+| Customer create | Yes | Yes | No | Yes, own authorized area only | No | No |
+| Customer edit | Yes | Yes | No | Yes, existing customer must be in own area/assignment scope | No | No |
+| Customer assignment management | Yes | Yes | No | No; backend derives/validates current SALES user | No | No |
+| Product Master create/edit | Yes | Yes | No | No | No | No |
+| Promotion Master create/edit | Yes | Yes | No | No | No | No |
+
+Confirmed source changes:
+
+- `canManageCustomers` now includes `SALES`; `canManageProducts` and `canManagePromotions` remain `SUPER_ADMIN || ADMIN`.
+- `saveCustomer` and `updateCustomer` now perform backend write-permission checks inside `Customer.gs`, in addition to the central API router.
+- SALES create rejects cross-area `salesArea` and derives blank assignment from the authenticated session user.
+- SALES create/edit rejects arbitrary assignment to another sales user with `CUSTOMER_SCOPE_VIOLATION`.
+- SALES cannot change protected customer fields: `active`, `status`, `createdBy`, `createdAt`, `updatedBy`, `updatedAt`.
+- `PC` is now a distinct restricted role and no longer normalizes to `SALES`; backend customer helpers deny PC customer reads/writes.
+- Frontend settings/data-entry affordances now reflect customer-only access for SALES and keep Product/Promotion actions hidden by canonical permission flags.
+
+Automated source evidence:
+
+- `tests/unit/customer-permission.test.mjs` covers Sales scoped create/edit, cross-area denial, assignment hijack denial, protected-field denial, direct Product/Promotion API denial, Viewer denial, PC restriction, and list/edit scope alignment.
+- `npm.cmd run test` passed locally with 53/53 tests after this addendum.
+
+Runtime role-matrix validation against the deployed Apps Script Web App, live Google Sheets, desktop browsers, iPhone Safari, Android Chrome, and PWA remains required before production readiness can be claimed.
+
 ## Authentication/session addendum — 2026-08-13
 
 The original finding that JSONP GET could expose `sessionToken` in a URL has been partially remediated in the local source:

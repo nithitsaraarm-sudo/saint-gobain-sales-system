@@ -76,7 +76,8 @@ export function createAppsScriptContext(extraContext = {}) {
     decodeURIComponent,
     QUOTE_STATUSES: { DRAFT: 'DRAFT', SAVED: 'SAVED', CANCELLED: 'CANCELLED' },
     LINE_STATUSES: { ACTIVE: 'ACTIVE', REMOVED: 'REMOVED' },
-    USER_ROLES: { SUPER_ADMIN: 'SUPER_ADMIN', ADMIN: 'ADMIN', MANAGER: 'MANAGER', SALES: 'SALES', VIEWER: 'VIEWER' },
+    USER_ROLES: { SUPER_ADMIN: 'SUPER_ADMIN', ADMIN: 'ADMIN', MANAGER: 'MANAGER', SALES: 'SALES', VIEWER: 'VIEWER', PC: 'PC' },
+    USER_STATUSES: { ACTIVE: 'Active', PENDING: 'Pending', LOCKED: 'Locked', INACTIVE: 'Inactive' },
     success(data, message) {
       return { ok: true, success: true, data: data === undefined ? null : data, message: String(message || ''), code: 'SUCCESS' };
     },

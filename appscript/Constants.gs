@@ -50,7 +50,8 @@ const USER_ROLES = {
   ADMIN: 'ADMIN',
   MANAGER: 'MANAGER',
   SALES: 'SALES',
-  VIEWER: 'VIEWER'
+  VIEWER: 'VIEWER',
+  PC: 'PC'
 };
 
 const USER_STATUSES = {

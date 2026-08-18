@@ -5,6 +5,7 @@ function normalizePermissionRole(role) {
   if (value === USER_ROLES.ADMIN) return USER_ROLES.ADMIN;
   if (value === USER_ROLES.MANAGER) return USER_ROLES.MANAGER;
   if (value === USER_ROLES.VIEWER) return USER_ROLES.VIEWER;
+  if (value === (USER_ROLES.PC || 'PC') || value === 'PC') return USER_ROLES.PC || 'PC';
   return USER_ROLES.SALES;
 }
 
@@ -111,6 +112,7 @@ function getUserPermissions(user) {
   const isManager = role === USER_ROLES.MANAGER;
   const isSales = role === USER_ROLES.SALES;
   const isViewer = role === USER_ROLES.VIEWER;
+  const isPc = role === (USER_ROLES.PC || 'PC');
   const canCreateQuotes = isSuperAdmin || isAdmin || isSales;
   const canEditQuotes = isSuperAdmin || isAdmin || isSales;
   const canViewQuotes = isSuperAdmin || isAdmin || isManager || isSales || isViewer;
@@ -123,9 +125,10 @@ function getUserPermissions(user) {
     isManager: isManager,
     isSales: isSales,
     isViewer: isViewer,
+    isPc: isPc,
     canManageUsers: isSuperAdmin || isAdmin,
     canManageProducts: isSuperAdmin || isAdmin,
-    canManageCustomers: isSuperAdmin || isAdmin,
+    canManageCustomers: isSuperAdmin || isAdmin || isSales,
     canManagePromotions: isSuperAdmin || isAdmin,
     canManageSettings: isSuperAdmin,
     canViewLogs: isSuperAdmin || isAdmin,

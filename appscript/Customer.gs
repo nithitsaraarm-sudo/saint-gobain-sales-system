@@ -209,6 +209,14 @@ function saveCustomer(payload) {
     if (!auth.ok) {
       return auth;
     }
+    const permissionCheck = validateCustomerWritePermissionForActor_(auth.data);
+    if (!permissionCheck.ok) {
+      return permissionCheck;
+    }
+    const protectedCheck = validateSalesCustomerProtectedPayload_(payload, auth.data);
+    if (!protectedCheck.ok) {
+      return protectedCheck;
+    }
     const check = validatePayload(payload, ['customerId', 'customerName']);
     if (!check.ok) {
       return check;
@@ -227,7 +235,14 @@ function saveCustomer(payload) {
     if (!brandCheck.ok) {
       return brandCheck;
     }
-    const assigned = normalizeCustomerAssignedSales_(data);
+    var assigned = normalizeCustomerAssignedSales_(data);
+    if (isCustomerSalesActor_(auth.data)) {
+      const salesAssignmentCheck = validateSalesCustomerAssignmentPayload_(data, auth.data, true);
+      if (!salesAssignmentCheck.ok) {
+        return salesAssignmentCheck;
+      }
+      assigned = salesAssignmentCheck.data || assigned;
+    }
     const assignedCheck = validateAssignedSalesForCustomer_(assigned.assignedSalesUserId, salesArea, assigned.assignedSalesUsername);
     if (!assignedCheck.ok) {
       return assignedCheck;
@@ -279,12 +294,20 @@ function updateCustomer(customerId, payload) {
     if (!auth.ok) {
       return auth;
     }
+    const permissionCheck = validateCustomerWritePermissionForActor_(auth.data);
+    if (!permissionCheck.ok) {
+      return permissionCheck;
+    }
     const idCheck = requireValue(customerId, 'customerId');
     if (!idCheck.ok) {
       return idCheck;
     }
     if (!payload || typeof payload !== 'object') {
       return validationError('payload is required');
+    }
+    const protectedCheck = validateSalesCustomerProtectedPayload_(payload, auth.data);
+    if (!protectedCheck.ok) {
+      return protectedCheck;
     }
     const customerResult = getCustomer(customerId, { currentUser: auth.data });
     if (!customerResult.ok) {
@@ -300,8 +323,15 @@ function updateCustomer(customerId, payload) {
     if (!brandCheck.ok) {
       return brandCheck;
     }
-    const submittedAssigned = normalizeCustomerAssignedSales_(payload);
+    var submittedAssigned = normalizeCustomerAssignedSales_(payload);
     const assignedWasSubmitted = payload.assignedSalesUserId !== undefined || payload.assignedSalesUsername !== undefined || payload.assignedSalesNameSnapshot !== undefined;
+    if (assignedWasSubmitted && isCustomerSalesActor_(auth.data)) {
+      const salesAssignmentCheck = validateSalesCustomerAssignmentPayload_(payload, auth.data, false);
+      if (!salesAssignmentCheck.ok) {
+        return salesAssignmentCheck;
+      }
+      submittedAssigned = salesAssignmentCheck.data || submittedAssigned;
+    }
     const nextAssignedUserId = assignedWasSubmitted
       ? submittedAssigned.assignedSalesUserId
       : String(existingCustomer.assignedSalesUserId || '').trim();
@@ -999,6 +1029,9 @@ function canAccessCustomerRecord_(user, customer, options) {
   if (!user) {
     return success(true);
   }
+  if (hasRole(user, [USER_ROLES.PC || 'PC'])) {
+    return denyCustomerScopeAccess_(user, customer, 'CUSTOMER_ACCESS_DENIED', options);
+  }
   if (isSystemWideCustomerUser_(user)) {
     return success(true);
   }
@@ -1127,6 +1160,77 @@ function normalizeCustomerAssignedSales_(source) {
     assignedSalesUsername: String(item.assignedSalesUsername || item.salesUsername || item.ownerUsername || snapshot).trim(),
     assignedSalesNameSnapshot: snapshot
   };
+}
+
+function validateCustomerWritePermissionForActor_(actor) {
+  if (typeof getUserPermissions !== 'function') {
+    return success(true);
+  }
+  const permissions = getUserPermissions(actor);
+  return permissions && permissions.canManageCustomers === true ? success(true) : forbidden('Insufficient permission');
+}
+
+function isCustomerSalesActor_(actor) {
+  return hasRole(actor, [USER_ROLES.SALES]);
+}
+
+function getSalesCustomerActorAssignment_(actor) {
+  const user = actor && typeof actor === 'object' ? actor : {};
+  const displayName = String(user.quoteDisplayName || user.displayName || user.fullName || user.username || '').trim();
+  return {
+    assignedSalesUserId: String(user.userId || '').trim(),
+    assignedSalesUsername: String(user.username || '').trim(),
+    assignedSalesNameSnapshot: displayName
+  };
+}
+
+function hasCustomerOwnField_(source, field) {
+  return Boolean(source && typeof source === 'object' && Object.prototype.hasOwnProperty.call(source, field));
+}
+
+function validateSalesCustomerProtectedPayload_(payload, actor) {
+  if (!isCustomerSalesActor_(actor)) {
+    return success(true);
+  }
+  const protectedFields = ['active', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'];
+  for (var i = 0; i < protectedFields.length; i++) {
+    const field = protectedFields[i];
+    if (hasCustomerOwnField_(payload, field)) {
+      return fail('CUSTOMER_PROTECTED_FIELD', 'CUSTOMER_PROTECTED_FIELD', { field: field });
+    }
+  }
+  return success(true);
+}
+
+function validateSalesCustomerAssignmentPayload_(payload, actor, deriveWhenBlank) {
+  if (!isCustomerSalesActor_(actor)) {
+    return success(null);
+  }
+  const data = payload && typeof payload === 'object' ? payload : {};
+  const submitted = hasCustomerOwnField_(data, 'assignedSalesUserId')
+    || hasCustomerOwnField_(data, 'assignedSalesUsername')
+    || hasCustomerOwnField_(data, 'assignedSalesNameSnapshot');
+  const actorAssigned = getSalesCustomerActorAssignment_(actor);
+  if (!submitted) {
+    return deriveWhenBlank ? success(actorAssigned) : success(null);
+  }
+  const assigned = normalizeCustomerAssignedSales_(data);
+  const assignedUserId = normalizeString(assigned.assignedSalesUserId);
+  const assignedUsername = normalizeString(assigned.assignedSalesUsername);
+  const actorUserId = normalizeString(actorAssigned.assignedSalesUserId);
+  const actorUsername = normalizeString(actorAssigned.assignedSalesUsername);
+  if (!assignedUserId && !assignedUsername) {
+    return deriveWhenBlank
+      ? success(actorAssigned)
+      : fail('CUSTOMER_SCOPE_VIOLATION', 'CUSTOMER_SCOPE_VIOLATION', { field: 'assignedSalesUserId' });
+  }
+  if (assignedUserId && assignedUserId !== actorUserId) {
+    return fail('CUSTOMER_SCOPE_VIOLATION', 'CUSTOMER_SCOPE_VIOLATION', { field: 'assignedSalesUserId' });
+  }
+  if (assignedUsername && actorUsername && assignedUsername !== actorUsername) {
+    return fail('CUSTOMER_SCOPE_VIOLATION', 'CUSTOMER_SCOPE_VIOLATION', { field: 'assignedSalesUsername' });
+  }
+  return success(actorAssigned);
 }
 
 function findAssignedSalesUser_(assignedSalesUserId, assignedSalesUsername) {

@@ -44,6 +44,7 @@ function normalizeUserRole(role) {
   if (value === USER_ROLES.ADMIN) return USER_ROLES.ADMIN;
   if (value === USER_ROLES.MANAGER) return USER_ROLES.MANAGER;
   if (value === USER_ROLES.VIEWER) return USER_ROLES.VIEWER;
+  if (value === (USER_ROLES.PC || 'PC') || value === 'PC') return USER_ROLES.PC || 'PC';
   return USER_ROLES.SALES;
 }
 
@@ -55,6 +56,7 @@ function getRoleLevel(role) {
   levels[USER_ROLES.MANAGER] = 30;
   levels[USER_ROLES.SALES] = 20;
   levels[USER_ROLES.VIEWER] = 10;
+  levels[USER_ROLES.PC || 'PC'] = 5;
   return levels[normalizedRole] || 0;
 }
 

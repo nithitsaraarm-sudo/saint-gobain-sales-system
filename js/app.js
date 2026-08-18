@@ -4085,7 +4085,24 @@ async function changeSalesTargetStatus(targetId,status,version){if(!confirm('ย
 function getDashboardEffectiveSalesTargetRequest(){const now=new Date(),area=String(getUserArea(USER)||'').trim();const request={targetType:'MONTHLY',periodYear:now.getFullYear(),periodMonth:now.getMonth()+1,businessUnit:'ALL',force:true};if(area&&area.toUpperCase()!=='SYSTEM')request.salesArea=area;return request;}
 async function refreshEffectiveSalesTarget(){if(!canViewSalesTargetsUi())return null;try{const response=await callApi('getEffectiveSalesTarget',getDashboardEffectiveSalesTargetRequest());if(response?.ok){EFFECTIVE_SALES_TARGET=response.data||null;DB.effectiveSalesTarget=EFFECTIVE_SALES_TARGET;return EFFECTIVE_SALES_TARGET;}}catch(error){console.warn('[SALES_TARGET] effective target refresh failed',error);}return null;}
 function renderSettings(){if(!USER)return;document.querySelectorAll('[data-target-management-only]').forEach(el=>{el.hidden=!canManageSalesTargetsUi();});let s=DB.settings||{},identity=getSystemIdentitySettingsForUi(); let set=(id,val)=>{let el=$(id); if(el)el.value=val||''}; set('setDisplay',USER.displayName); set('setPosition',USER.position); set('setPhone',USER.phone); set('setPhoto',USER.photoUrl); set('setPersonalGreeting',USER.greetingText||''); set('setCompany',identity.companyName); set('setAppName',identity.systemName); set('setWelcome',s.welcomeText); set('setMorning',s.greetingMorning); set('setAfternoon',s.greetingAfternoon); set('setEvening',s.greetingEvening); set('setNight',s.greetingNight); applySettingsPermissionUi(); updateProfilePreview(USER.photoUrl||'');}
-function canManageDataEntryUi(){return permissionFlag('canManageCustomers',false)||permissionFlag('canManageProducts',false)||permissionFlag('canManagePromotions',false)||['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0}
+function canManageCustomersUi(){return permissionFlag('canManageCustomers',['SUPER_ADMIN','ADMIN','SALES'].indexOf(currentRole())>=0)}
+function canManageDataEntryUi(){return canManageCustomersUi()||permissionFlag('canManageProducts',false)||permissionFlag('canManagePromotions',false)||['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0}
+function getManageDataEntryLabelsForUi(){
+  const labels=[];
+  if(canManageCustomersUi())labels.push('ร้านค้า');
+  if(permissionFlag('canManageProducts',false))labels.push('สินค้า');
+  if(permissionFlag('canManagePromotions',false))labels.push('โปรโมชั่น');
+  return labels;
+}
+function syncManageDataEntryCopy(){
+  const labels=getManageDataEntryLabelsForUi();
+  const customerOnly=labels.length===1&&labels[0]==='ร้านค้า';
+  const description=customerOnly?'เพิ่ม/แก้ไขร้านค้าในพื้นที่ของคุณ':(labels.length?'เพิ่ม '+labels.join(' / ')+' ตามสิทธิ์ของบัญชีนี้':'ไม่มีสิทธิ์เพิ่มข้อมูล');
+  const tileDescription=document.querySelector('button.setting-tile[data-manage-data-only="true"] p');
+  if(tileDescription)tileDescription.textContent=description;
+  const dataDescription=document.querySelector('#settingData .card p');
+  if(dataDescription)dataDescription.textContent=description;
+}
 function openSettingPage(name){const targetName=String(name||'home'); if(targetName==='salesTargets'&&!canManageSalesTargetsUi()){toast('คุณไม่มีสิทธิ์จัดการเป้าหมาย');name='home'} if(['identity','systemGreeting'].indexOf(targetName)>=0&&!canManageSystemIdentitySettings()){toast('คุณไม่มีสิทธิ์แก้ไขชื่อบริษัทและชื่อระบบ');name='home'} if(targetName==='data'&&!canManageDataEntryUi()){toast('ไม่มีสิทธิ์เพิ่มข้อมูล');name='home'} document.querySelectorAll('#page-settings .setting-sub').forEach(x=>x.classList.remove('active')); let id=name==='home'?'settingsHome':'setting'+name.charAt(0).toUpperCase()+name.slice(1); let el=$(id); if(el)el.classList.add('active'); renderSettings(); if(name==='identity')loadSystemIdentitySettingsForSettings(); if(name==='salesTargets'){ensureSalesTargetFilterOptions();loadSalesTargets({force:true});} window.scrollTo({top:0,behavior:'smooth'});}
 function updateProfilePreview(src){let box=$('profilePreview'); if(!box)return; box.innerHTML=src?`<img src="${src}">`:'👩🏻';}
 function handleProfileImage(ev){let file=ev.target.files&&ev.target.files[0]; if(!file)return; let reader=new FileReader(); reader.onload=e=>{let img=new Image(); img.onload=()=>{let canvas=document.createElement('canvas'); let max=320,scale=Math.min(max/img.width,max/img.height,1); canvas.width=Math.round(img.width*scale); canvas.height=Math.round(img.height*scale); let ctx=canvas.getContext('2d'); ctx.drawImage(img,0,0,canvas.width,canvas.height); let data=canvas.toDataURL('image/jpeg',0.78); document.getElementById('setPhoto').value=data; updateProfilePreview(data); toast('อัพโหลดรูปแล้ว กดบันทึกโปรไฟล์เพื่อใช้งาน');}; img.src=e.target.result;}; reader.readAsDataURL(file);}
@@ -4723,6 +4740,23 @@ function setCustomerModalMessage(message,type){
     try{el.scrollIntoView({block:'nearest',inline:'nearest'});}catch(error){}
   }
 }
+function canManageCustomerAssignmentsUi(){
+  const permissions=getCustomerFormOptionsData().permissions||{};
+  return permissions.canViewCustomerAssignmentOptions===true||permissions.canManageCustomerAssignments===true;
+}
+function applyScopedCustomerModalPermissions(){
+  const canManageAssignments=canManageCustomerAssignmentsUi();
+  const assignedField=document.querySelector('#modal.customer-modal .customer-assigned-sales-field');
+  if(assignedField){
+    assignedField.hidden=!canManageAssignments;
+    assignedField.classList.toggle('hidden',!canManageAssignments);
+  }
+  const assignedSelect=$('mAssignedSalesUserId');
+  if(assignedSelect&&!canManageAssignments){
+    assignedSelect.disabled=true;
+    assignedSelect.dataset.dirty='false';
+  }
+}
 function activateCustomerModalLayout(){
   const modal=$('modal');
   if(!modal)return;
@@ -4734,6 +4768,7 @@ function activateCustomerModalLayout(){
     card.setAttribute('aria-labelledby','modalTitle');
   }
   enhanceCustomerModalStructure();
+  applyScopedCustomerModalPermissions();
   lockCustomerModalPageScroll();
   bindCustomerModalFocusScroll();
   ensureCustomerModalEscapeHandler();
@@ -4759,6 +4794,17 @@ function validateCustomerModalBeforeSave(existingId){
   if(phone&&!isValidPhone(phone))return 'กรุณากรอกเบอร์โทรศัพท์ให้ถูกต้อง';
   return '';
 }
+const baseOpenModalBeforeScopedCustomerPermission=openModal;
+openModal=function(type){
+  if(type==='customer'&&canManageCustomersUi()){
+    document.getElementById('modalTitle').textContent='เพิ่มร้านค้า';
+    document.getElementById('modalBody').innerHTML=customerFormHtml();
+    document.getElementById('modal').classList.add('show');
+    return;
+  }
+  return baseOpenModalBeforeScopedCustomerPermission(type);
+};
+canEditCustomers=function(){return canManageCustomersUi();};
 const baseOpenModalForCustomerLayout=openModal;
 openModal=function(type){
   baseOpenModalForCustomerLayout(type);
@@ -5355,7 +5401,7 @@ function renderQuoteProductPicker(){
   renderQuoteProductPreferenceSections();
 }
 
-function normalizeRole(role){const text=String(role||'').trim().toLowerCase().replace(/[\s-]+/g,'_');if(text==='super_admin'||text==='superadmin')return'SUPER_ADMIN';if(text==='admin')return'ADMIN';if(text==='manager')return'MANAGER';if(text==='viewer')return'VIEWER';return'SALES'}
+function normalizeRole(role){const text=String(role||'').trim().toLowerCase().replace(/[\s-]+/g,'_');if(text==='super_admin'||text==='superadmin')return'SUPER_ADMIN';if(text==='admin')return'ADMIN';if(text==='manager')return'MANAGER';if(text==='viewer')return'VIEWER';if(text==='pc')return'PC';return'SALES'}
 function currentRole(){return normalizeRole(USER&&USER.role)}
 function canManageSystemIdentitySettings(){return currentRole()==='SUPER_ADMIN'||Boolean(DB.permissions&&DB.permissions.isSuperAdmin)}
 function applySettingsPermissionUi(){
@@ -5369,6 +5415,7 @@ function applySettingsPermissionUi(){
     el.classList.toggle('hidden',!canManageData);
     el.hidden=!canManageData;
   });
+  syncManageDataEntryCopy();
   const active=document.querySelector('#page-settings .setting-sub.active[data-super-admin-only="true"]');
   if(active&&!allowed){
     active.classList.remove('active');

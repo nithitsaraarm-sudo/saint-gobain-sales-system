@@ -1307,3 +1307,27 @@ Known follow-up:
 - Google Drive profile-image/thumbnail `429 Too Many Requests` remains out of scope for this performance pass.
 
 No commit was created, per instruction.
+## 2026-08-18 — Phase 3.2 Sales scoped customer self-service permission
+
+Scope completed:
+
+- Opened the canonical customer-management permission flag for `SALES` while keeping Product Master and Promotion Master management restricted to `SUPER_ADMIN` / `ADMIN`.
+- Added backend customer write authorization inside `appscript/Customer.gs` so `saveCustomer()` / `updateCustomer()` do not rely only on the central API router.
+- Preserved customer read/edit scope through existing `canAccessCustomerRecord_()` behavior: SALES can access own-area customers only, and same-area assigned customers are limited to the assigned sales user when `assignedSalesUserId` is present.
+- Added SALES create guard: requested `salesArea` must match the authenticated user area, and missing assignment is safely derived from the authenticated SALES user.
+- Added assignment anti-hijack guard: SALES cannot set `assignedSalesUserId` / `assignedSalesUsername` to another sales user.
+- Added protected-field guard for SALES payloads covering `active`, `status`, `createdBy`, `createdAt`, `updatedBy`, and `updatedAt`.
+- Normalized `PC` as a distinct restricted role instead of falling through to `SALES`, and blocked PC customer reads/writes when backend helpers are called outside the API router.
+- Updated frontend Settings/Data Entry visibility so SALES sees customer data-entry affordances only; Product and Promotion actions remain hidden/blocked.
+- Hid customer assignment controls from roles without assignment-management permissions in the customer modal.
+- Added automated unit coverage for SALES customer create/edit scope, direct API bypass protection, protected fields, PC restriction, and Product/Promotion write denial.
+
+Validation performed locally:
+
+- Baseline before implementation: `npm.cmd run verify` passed with 38/38 tests.
+- After implementation: `npm.cmd run check` passed.
+- After implementation: `npm.cmd run test` passed with 53/53 tests.
+- After implementation: `npm.cmd run verify` passed with 53/53 tests.
+- After implementation: `git diff --check` passed; Git only reported line-ending normalization warnings.
+
+Runtime Apps Script deployment, live Google Sheets validation, desktop/mobile browser checks, iPhone Safari, Android Chrome, and PWA UAT remain required.
