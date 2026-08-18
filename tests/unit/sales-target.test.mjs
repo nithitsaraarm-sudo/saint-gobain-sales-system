@@ -212,6 +212,38 @@ test('Sales Target form options separate configurable BU values from filter BU v
   assert.deepEqual(toPlain(options.businessUnits), ['GYPROC', 'WEBER']);
   assert.deepEqual(toPlain(options.configurableBusinessUnits), ['GYPROC', 'WEBER']);
   assert.deepEqual(toPlain(options.filterBusinessUnits), ['ALL', 'GYPROC', 'WEBER']);
+  assert.equal(new Set(options.filterBusinessUnits).size, 3);
+});
+
+test('Sales Target validation canonicalizes annual period and rejects missing monthly month', () => {
+  const annual = ctx.salesTargetValidatePayload_({
+    targetType: 'ANNUAL',
+    periodYear: 2026,
+    periodMonth: 8,
+    businessUnit: 'GYPROC',
+    scopeType: 'AREA',
+    salesArea: 'NE03',
+    targetAmount: '1,300,000',
+    status: 'ACTIVE'
+  }, adminNE03, null);
+  assert.equal(annual.ok, true);
+  assert.equal(annual.data.periodMonth, '');
+  assert.equal(annual.data.periodStart, '2026-01-01');
+  assert.equal(annual.data.periodEnd, '2026-12-31');
+
+  const monthlyMissing = ctx.salesTargetValidatePayload_({
+    targetType: 'MONTHLY',
+    periodYear: 2026,
+    periodMonth: '',
+    businessUnit: 'WEBER',
+    scopeType: 'AREA',
+    salesArea: 'NE03',
+    targetAmount: '1,000,000',
+    status: 'ACTIVE'
+  }, adminNE03, null);
+  assert.equal(monthlyMissing.ok, false);
+  assert.equal(monthlyMissing.code, 'VALIDATION_ERROR');
+  assert.equal(monthlyMissing.message, 'Invalid target period');
 });
 
 test('Historical inactive ALL targets remain readable and are not automatically mutated', () => {
@@ -267,6 +299,17 @@ test('Sales Target period and numeric/version normalization keep concurrency met
     periodEnd: '2026-07-31',
     periodMonth: 7
   });
+  assert.deepEqual(toPlain(ctx.salesTargetPeriod_('ANNUAL', 2026, 7)), {
+    periodStart: '2026-01-01',
+    periodEnd: '2026-12-31',
+    periodMonth: ''
+  });
+  assert.deepEqual(toPlain(ctx.salesTargetPeriod_('MONTHLY', 2024, 2)), {
+    periodStart: '2024-02-01',
+    periodEnd: '2024-02-29',
+    periodMonth: 2
+  });
+  assert.equal(ctx.salesTargetPeriod_('MONTHLY', 2026, ''), null);
   assert.equal(ctx.salesTargetParseNumber_('1,300,000.50'), 1300000.5);
   assert.equal(Number.isNaN(ctx.salesTargetParseNumber_('not-a-number')), true);
   assert.equal(ctx.salesTargetNormalizeRow_({ version: 0 }).version, 1);

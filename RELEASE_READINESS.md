@@ -1,5 +1,13 @@
 # Release Readiness Report — Audit Remediation
 
+## Sales Target Management UI/UX cleanup addendum — 2026-08-18
+
+Decision impact: **SOURCE UI/UX DEFECTS REMEDIATED / NOT RUNTIME READY**.
+
+The focused Sales Target cleanup removed the duplicate visible `All` filter option, clarified the Sales Area form dropdown, hid/disabled Month for annual targets, required Month only for monthly targets, and preserved the approved `GYPROC + WEBER` Sales Target model.
+
+Automated unit coverage is now 38 tests after adding annual/monthly Sales Target period normalization coverage. Runtime readiness still requires Apps Script deployment plus live browser/mobile/PWA UAT for the Sales Target Management screen.
+
 ## Sales Target BU remediation addendum — 2026-08-18
 
 Decision impact: **SOURCE BUSINESS RULE REMEDIATED / NOT RUNTIME READY**.

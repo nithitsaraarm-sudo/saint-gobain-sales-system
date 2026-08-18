@@ -1,3 +1,16 @@
+## 2026-08-18 — Sales Target Management UI/UX cleanup
+
+Scope completed:
+
+- Removed the duplicate visible `All` Business Unit filter option by making `ALL` the single canonical filter value displayed as `ทุก BU`.
+- Kept target create/edit Business Unit configuration limited to `GYPROC` and `WEBER`.
+- Identified the previously reported unlabeled dropdown as `salesTargetArea`, sourced from `SALES_TARGET_OPTIONS.areas` and saved as payload field `salesArea`.
+- Added explicit accessible names to Sales Target Add/Edit form controls while preserving visible `label for/id` associations.
+- Hid and disabled the Month field for annual targets, made Month required only for monthly targets, and kept annual payloads normalized to blank `periodMonth`.
+- Added unit coverage for annual period normalization, missing monthly month rejection, monthly/leap-year period calculation, and unique filter/configurable BU options.
+
+No backend business logic, Sales Target RBAC, area scope, database schema, unrelated modules, or PWA versioning were changed. Browser/device UAT remains required after deployment.
+
 ## 2026-08-18 — Sales Target BU rule remediation
 
 Scope completed:
