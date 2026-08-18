@@ -927,10 +927,10 @@ function mockApi(action, payload) {
     case 'getEffectiveSalesTarget':
       return { ok: true, data: { targetAmount: null, totalTarget: null, gyprocTarget: 0, weberTarget: 0, targetType: 'MONTHLY', periodYear: new Date().getFullYear(), periodMonth: new Date().getMonth() + 1, periodStart: new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0') + '-01', periodEnd: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getFullYear() + '-' + String(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getMonth() + 1).padStart(2, '0') + '-' + String(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate()).padStart(2, '0'), businessUnit: 'ALL', sourceScope: 'NONE', sourceTargetIds: [] } };
     case 'getSalesTargetFormOptions':
-      return { ok: true, data: { areas: ['NE03'], salesUsers: [], businessUnits: ['ALL','GYPROC','WEBER'], targetTypes: ['ANNUAL','MONTHLY'], statuses: ['DRAFT','ACTIVE','INACTIVE','ARCHIVED'], canManage: true, actorArea: 'NE03' } };
+      return { ok: true, data: { areas: ['NE03'], salesUsers: [], businessUnits: ['GYPROC','WEBER'], configurableBusinessUnits: ['GYPROC','WEBER'], filterBusinessUnits: ['ALL','GYPROC','WEBER'], targetTypes: ['ANNUAL','MONTHLY'], statuses: ['DRAFT','ACTIVE','INACTIVE','ARCHIVED'], canManage: true, actorArea: 'NE03' } };
     case 'getSalesTargetManagementData':
       window.__mockSalesTargets = window.__mockSalesTargets || [];
-      return { ok: true, data: { targets: window.__mockSalesTargets, summary: { totalActive: 0, gyproc: 0, weber: 0, assignedUsers: 0 }, formOptions: { areas: ['NE03'], salesUsers: [], businessUnits: ['ALL','GYPROC','WEBER'], targetTypes: ['ANNUAL','MONTHLY'], statuses: ['DRAFT','ACTIVE','INACTIVE','ARCHIVED'], canManage: true, actorArea: 'NE03' } } };
+      return { ok: true, data: { targets: window.__mockSalesTargets, summary: { totalActive: 0, gyproc: 0, weber: 0, assignedUsers: 0 }, formOptions: { areas: ['NE03'], salesUsers: [], businessUnits: ['GYPROC','WEBER'], configurableBusinessUnits: ['GYPROC','WEBER'], filterBusinessUnits: ['ALL','GYPROC','WEBER'], targetTypes: ['ANNUAL','MONTHLY'], statuses: ['DRAFT','ACTIVE','INACTIVE','ARCHIVED'], canManage: true, actorArea: 'NE03' } } };
     case 'saveSalesTarget':
     case 'updateSalesTarget':
     case 'setSalesTargetStatus':

@@ -1,0 +1,15 @@
+{
+  "name": "saint-gobain-sales-system",
+  "private": true,
+  "description": "Development and static validation tooling only for the Saint-Gobain Sales System.",
+  "scripts": {
+    "check": "npm run check:js && npm run check:gas && npm run check:json && npm run check:assets",
+    "check:js": "node tools/check-js-syntax.mjs",
+    "check:gas": "node tools/check-gas-syntax.mjs",
+    "check:json": "node tools/check-json.mjs",
+    "check:assets": "node tools/check-static-assets.mjs",
+    "test": "node --test tests/unit/*.test.mjs",
+    "test:unit": "node --test tests/unit/*.test.mjs",
+    "verify": "npm run check && npm run test"
+  }
+}

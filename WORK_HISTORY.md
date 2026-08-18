@@ -1,3 +1,47 @@
+## 2026-08-18 — Sales Target BU rule remediation
+
+Scope completed:
+
+- Separated configurable Sales Target Business Units from filter Business Units.
+- Configurable target form/API Business Units are now `GYPROC` and `WEBER` only.
+- `ALL` remains available as a filter/history value and historical `ALL` rows remain readable.
+- Backend validation rejects new configurable `ALL` targets and rejects reactivation of legacy `ALL` targets.
+- Effective Sales Target and management summaries now derive current totals from active `GYPROC + WEBER` only, excluding legacy `ALL` to avoid double counting.
+- Frontend Sales Target create/edit UI removes `All` from normal target configuration and displays legacy `ALL` records as read-only BU entries.
+- Added unit coverage for create/reject/filter/history/aggregation/duplicate/concurrency Sales Target rules and Dashboard Sales KPI total usage.
+
+No data migration was added. Existing Google Sheet rows are not deleted, split, or rewritten automatically. Active legacy `ALL` rows, if present in production data, still require manual business review after deployment.
+
+## 2026-08-18 — Automated unit tests for critical business logic
+
+Scope completed:
+
+- Added dependency-free Node built-in unit tests using `node:test` and `node:assert/strict`.
+- Added a VM-based source loader so tests exercise existing production JavaScript and Apps Script functions without calling production APIs, Google Sheets, Drive, Gmail, Service Worker endpoints, or network resources.
+- Covered quotation calculations/validation, Sales Target summaries/effective target resolution, Customer KPI, Business KPI, Sales KPI, Promotion status/date/summary logic, and shared normalization utilities.
+- Added `npm run test`, `npm run test:unit`, and `npm run verify` while preserving Phase 2 `check:*` scripts.
+- Ran controlled failing test validation; `node --test` failed with non-zero exit as expected and the temporary failing fixture was removed.
+- Updated README, release readiness, and test catalogue with completed automated tests only.
+
+Production source files were not modified. No third-party dependencies, `node_modules`, or `package-lock.json` were created.
+
+Production bug / business-rule mismatch found but not fixed in this phase:
+
+- Sales Target still exposes `ALL` as a configurable Business Unit in the UI/backend, while the approved Phase 3 rule expects only `GYPROC` and `WEBER` for new target configuration.
+
+## 2026-08-18 — Minimal Node.js development validation tooling
+
+Scope completed:
+
+- Added a private, dependency-free `package.json` for development/static validation scripts only.
+- Added Node built-in tooling for JavaScript syntax, Google Apps Script syntax via stdin, JSON parse validation, and local static asset reference validation.
+- Preserved GitHub Pages/static frontend, Google Apps Script backend, Google Sheets data source, PWA, service worker, API contracts, RBAC, and all production runtime source.
+- Ran positive validation for `check:js`, `check:gas`, `check:json`, `check:assets`, and aggregate `check`.
+- Ran controlled negative tests with temporary invalid JS, Apps Script, JSON, and missing-asset fixtures; each failed as expected and temporary files were removed.
+- Updated README, test catalogue, and release-readiness documentation without claiming CI, unit tests, browser automation, or runtime validation exists.
+
+No npm dependencies, `node_modules`, or `package-lock.json` were created.
+
 ## 2026-08-18 — Quotation share file-only workflow
 
 Scope completed:

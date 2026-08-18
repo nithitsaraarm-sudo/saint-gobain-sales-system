@@ -4,7 +4,8 @@
  */
 const SALES_TARGETS_SHEET = 'SalesTargets';
 const SALES_TARGET_TYPES = Object.freeze({ ANNUAL: 'ANNUAL', MONTHLY: 'MONTHLY' });
-const SALES_TARGET_BUSINESS_UNITS = Object.freeze({ WEBER: 'WEBER', GYPROC: 'GYPROC', ALL: 'ALL' });
+const SALES_TARGET_CONFIGURABLE_BUSINESS_UNITS = Object.freeze({ GYPROC: 'GYPROC', WEBER: 'WEBER' });
+const SALES_TARGET_FILTER_BUSINESS_UNITS = Object.freeze({ ALL: 'ALL', GYPROC: 'GYPROC', WEBER: 'WEBER' });
 const SALES_TARGET_STATUSES = Object.freeze({ DRAFT: 'DRAFT', ACTIVE: 'ACTIVE', INACTIVE: 'INACTIVE', ARCHIVED: 'ARCHIVED' });
 const SALES_TARGET_HEADERS = ['targetId','targetType','periodYear','periodMonth','periodStart','periodEnd','businessUnit','salesArea','salesUserId','salesUserNameSnapshot','targetAmount','currency','status','active','createdByUserId','createdByNameSnapshot','createdAt','updatedByUserId','updatedByNameSnapshot','updatedAt','version'];
 const SALES_TARGET_CACHE_VERSION_PROPERTY = 'SALES_TARGET_CACHE_VERSION';
@@ -52,6 +53,25 @@ function salesTargetCanManage_(user) { return ['SUPER_ADMIN','ADMIN'].indexOf(sa
 function salesTargetCanView_(user) { return salesTargetNormalizeRole_(user) !== 'PC'; }
 function salesTargetIsSuperAdmin_(user) { return salesTargetNormalizeRole_(user) === 'SUPER_ADMIN'; }
 function salesTargetIsSystemArea_(area) { return String(area || '').trim().toUpperCase() === 'SYSTEM'; }
+function salesTargetNormalizeBusinessUnit_(value, fallback) {
+  const text = String(value === null || value === undefined || value === '' ? (fallback || '') : value).trim().toUpperCase();
+  return text;
+}
+function salesTargetConfigurableBusinessUnitValues_() {
+  return [SALES_TARGET_CONFIGURABLE_BUSINESS_UNITS.GYPROC, SALES_TARGET_CONFIGURABLE_BUSINESS_UNITS.WEBER];
+}
+function salesTargetFilterBusinessUnitValues_() {
+  return [SALES_TARGET_FILTER_BUSINESS_UNITS.ALL, SALES_TARGET_FILTER_BUSINESS_UNITS.GYPROC, SALES_TARGET_FILTER_BUSINESS_UNITS.WEBER];
+}
+function salesTargetIsConfigurableBusinessUnit_(value) {
+  return Boolean(SALES_TARGET_CONFIGURABLE_BUSINESS_UNITS[salesTargetNormalizeBusinessUnit_(value)]);
+}
+function salesTargetIsFilterBusinessUnit_(value) {
+  return Boolean(SALES_TARGET_FILTER_BUSINESS_UNITS[salesTargetNormalizeBusinessUnit_(value)]);
+}
+function salesTargetInvalidBusinessUnitError_(message, eventId) {
+  return salesTargetError_('INVALID_TARGET_BUSINESS_UNIT', message || 'Sales Target must use GYPROC or WEBER.', eventId);
+}
 function salesTargetEffectiveRequestArea_(user, request) {
   const data = request && typeof request === 'object' ? request : {};
   const requestedArea = String(data.salesArea || data.requestedArea || data.actorArea || '').trim().toUpperCase();
@@ -185,8 +205,20 @@ function salesTargetValidatePayload_(payload, user, existing) {
   const periodMonthRaw = data.periodMonth !== undefined ? data.periodMonth : existing && existing.periodMonth;
   const period = salesTargetPeriod_(targetType, periodYear, periodMonthRaw);
   if (!period) return salesTargetError_('VALIDATION_ERROR', 'Invalid target period');
-  const businessUnit = String(data.businessUnit || existing && existing.businessUnit || '').trim().toUpperCase();
-  if (!SALES_TARGET_BUSINESS_UNITS[businessUnit]) return salesTargetError_('VALIDATION_ERROR', 'Invalid Business Unit');
+  const existingBusinessUnit = salesTargetNormalizeBusinessUnit_(existing && existing.businessUnit);
+  const businessUnit = salesTargetNormalizeBusinessUnit_(data.businessUnit !== undefined ? data.businessUnit : existingBusinessUnit);
+  const status = String(data.status || existing && existing.status || 'DRAFT').trim().toUpperCase();
+  if (!SALES_TARGET_STATUSES[status]) return salesTargetError_('VALIDATION_ERROR', 'Invalid target status');
+  if (!salesTargetIsFilterBusinessUnit_(businessUnit)) return salesTargetInvalidBusinessUnitError_();
+  if (existingBusinessUnit === SALES_TARGET_FILTER_BUSINESS_UNITS.ALL && businessUnit !== SALES_TARGET_FILTER_BUSINESS_UNITS.ALL) {
+    return salesTargetInvalidBusinessUnitError_('Legacy ALL Sales Target business unit is read-only.');
+  }
+  if (businessUnit === SALES_TARGET_FILTER_BUSINESS_UNITS.ALL) {
+    if (existingBusinessUnit !== SALES_TARGET_FILTER_BUSINESS_UNITS.ALL) return salesTargetInvalidBusinessUnitError_();
+    if (status === SALES_TARGET_STATUSES.ACTIVE) return salesTargetInvalidBusinessUnitError_('Legacy ALL Sales Target cannot be active or reactivated.');
+  } else if (!salesTargetIsConfigurableBusinessUnit_(businessUnit)) {
+    return salesTargetInvalidBusinessUnitError_();
+  }
   const scopeType = String(data.scopeType || (data.salesUserId || existing && existing.salesUserId ? 'USER' : 'AREA')).trim().toUpperCase();
   const salesArea = String(data.salesArea || existing && existing.salesArea || '').trim().toUpperCase();
   var salesUserId = scopeType === 'USER' ? String(data.salesUserId || existing && existing.salesUserId || '').trim() : '';
@@ -200,8 +232,6 @@ function salesTargetValidatePayload_(payload, user, existing) {
     salesUserNameSnapshot = salesUserCheck.data.salesUserNameSnapshot;
   }
   const amount = salesTargetParseNumber_(data.targetAmount !== undefined ? data.targetAmount : existing && existing.targetAmount);
-  const status = String(data.status || existing && existing.status || 'DRAFT').trim().toUpperCase();
-  if (!SALES_TARGET_STATUSES[status]) return salesTargetError_('VALIDATION_ERROR', 'Invalid target status');
   if (!Number.isFinite(amount) || amount < 0 || (amount === 0 && status === 'ACTIVE')) return salesTargetError_('VALIDATION_ERROR', 'Target amount must be greater than zero for an active target');
   const normalized = { targetType: targetType, periodYear: periodYear, periodMonth: period.periodMonth, periodStart: period.periodStart, periodEnd: period.periodEnd,
     businessUnit: businessUnit, salesArea: salesArea, salesUserId: salesUserId, salesUserNameSnapshot: salesTargetSafeText_(data.salesUserNameSnapshot || existing && existing.salesUserNameSnapshot || ''),
@@ -225,8 +255,11 @@ function getSalesTargets(payload) {
     if (!salesTargetCanView_(auth.data)) return salesTargetError_('FORBIDDEN', 'Sales target access denied', eventId);
     const data = payload || {};
     let rows = salesTargetRows_().map(salesTargetNormalizeRow_).filter(function (row) { return salesTargetScopeAllowed_(auth.data, row, false); });
-    const filters = ['targetType','businessUnit','salesArea','salesUserId','status'];
+    const filters = ['targetType','salesArea','salesUserId','status'];
     filters.forEach(function (key) { if (data[key] !== undefined && String(data[key]).trim() !== '') rows = rows.filter(function (row) { return String(row[key]).toUpperCase() === String(data[key]).trim().toUpperCase(); }); });
+    const requestedBusinessUnit = salesTargetNormalizeBusinessUnit_(data.businessUnit);
+    if (requestedBusinessUnit && !salesTargetIsFilterBusinessUnit_(requestedBusinessUnit)) return salesTargetInvalidBusinessUnitError_('Invalid Sales Target Business Unit filter.', eventId);
+    if (requestedBusinessUnit && requestedBusinessUnit !== SALES_TARGET_FILTER_BUSINESS_UNITS.ALL) rows = rows.filter(function (row) { return row.businessUnit === requestedBusinessUnit; });
     if (data.periodYear) rows = rows.filter(function (row) { return row.periodYear === Number(data.periodYear); });
     if (data.periodMonth !== undefined && String(data.periodMonth) !== '') rows = rows.filter(function (row) { return Number(row.periodMonth) === Number(data.periodMonth); });
     rows.sort(function (a,b) { return String(b.periodStart).localeCompare(String(a.periodStart)) || String(b.updatedAt).localeCompare(String(a.updatedAt)); });
@@ -262,14 +295,14 @@ function setSalesTargetStatus(payload) {
   const current=getSalesTarget(payload); if(!current.ok)return current; const next=Object.assign({},current.data,{status:String(payload&&payload.status||'').toUpperCase(),version:current.data.version}); return updateSalesTarget(Object.assign({},payload,next));
 }
 function salesTargetPrecedence_(row, context, businessUnit) {
-  const exactBu=row.businessUnit===businessUnit, allBu=row.businessUnit==='ALL'; const isUser=Boolean(row.salesUserId)&&row.salesUserId===String(context&&context.salesUserId||''); const isArea=!row.salesUserId&&row.salesArea===String(context&&context.salesArea||'');
-  if(isUser&&exactBu)return 1; if(isUser&&allBu)return 2; if(isArea&&exactBu)return 3; if(isArea&&allBu)return 4; return 99;
+  const exactBu=row.businessUnit===businessUnit; const isUser=Boolean(row.salesUserId)&&row.salesUserId===String(context&&context.salesUserId||''); const isArea=!row.salesUserId&&row.salesArea===String(context&&context.salesArea||'');
+  if(isUser&&exactBu)return 1; if(isArea&&exactBu)return 3; return 99;
 }
 function resolveEffectiveSalesTarget_(rows, user, request) {
   const data = request && typeof request === 'object' ? request : {};
-  const type=String(data.targetType||'ANNUAL').toUpperCase(); const year=Number(data.periodYear||new Date().getFullYear()); const month=type==='MONTHLY'?Number(data.periodMonth||new Date().getMonth()+1):''; const bu=String(data.businessUnit||'ALL').toUpperCase();
+  const type=String(data.targetType||'ANNUAL').toUpperCase(); const year=Number(data.periodYear||new Date().getFullYear()); const month=type==='MONTHLY'?Number(data.periodMonth||new Date().getMonth()+1):''; const bu=salesTargetNormalizeBusinessUnit_(data.businessUnit, SALES_TARGET_FILTER_BUSINESS_UNITS.ALL);
   const period=salesTargetPeriod_(type,year,month);
-  if(!period)return null;
+  if(!period || !salesTargetIsFilterBusinessUnit_(bu))return null;
   const candidates=rows.map(salesTargetNormalizeRow_).filter(function(row){return row.active&&row.status==='ACTIVE'&&row.targetType===type&&row.periodYear===year&&String(row.periodMonth||'')===String(month||'')&&salesTargetScopeAllowed_(user,row,false);});
   const context = {
     salesArea: salesTargetEffectiveRequestArea_(user, data),
@@ -277,17 +310,18 @@ function resolveEffectiveSalesTarget_(rows, user, request) {
   };
   if (!context.salesArea && salesTargetIsSuperAdmin_(user)) {
     const matchingAreas = Array.from(new Set(candidates.filter(function(row){
-      return !row.salesUserId && row.salesArea && (row.businessUnit === bu || row.businessUnit === 'ALL' || bu === 'ALL');
+      return !row.salesUserId && row.salesArea && (row.businessUnit === bu || (bu === SALES_TARGET_FILTER_BUSINESS_UNITS.ALL && salesTargetIsConfigurableBusinessUnit_(row.businessUnit)));
     }).map(function(row){ return row.salesArea; })));
     if (matchingAreas.length === 1) context.salesArea = matchingAreas[0];
   }
   function pick(unit){return candidates.filter(function(row){return salesTargetPrecedence_(row,context,unit)<99;}).sort(function(a,b){return salesTargetPrecedence_(a,context,unit)-salesTargetPrecedence_(b,context,unit);})[0]||null;}
-  let selected=[]; if(bu==='ALL'){const all=pick('ALL'); if(all&&all.businessUnit==='ALL')selected=[all]; else {const g=pick('GYPROC'),w=pick('WEBER'); if(g)selected.push(g); if(w&&(!g||w.targetId!==g.targetId))selected.push(w);}} else {const one=pick(bu);if(one)selected=[one];}
+  let selected=[]; if(bu===SALES_TARGET_FILTER_BUSINESS_UNITS.ALL){const g=pick(SALES_TARGET_CONFIGURABLE_BUSINESS_UNITS.GYPROC),w=pick(SALES_TARGET_CONFIGURABLE_BUSINESS_UNITS.WEBER); if(g)selected.push(g); if(w&&(!g||w.targetId!==g.targetId))selected.push(w);} else {const one=pick(bu);if(one)selected=[one];}
+  const legacyAllTargets = candidates.filter(function(row){return row.businessUnit===SALES_TARGET_FILTER_BUSINESS_UNITS.ALL && salesTargetPrecedence_(row,context,SALES_TARGET_FILTER_BUSINESS_UNITS.ALL)<99;});
   const total=selected.reduce(function(sum,row){return sum+Number(row.targetAmount||0);},0);
-  return {targetAmount:selected.length?total:null,totalTarget:selected.length?total:null,gyprocTarget:selected.filter(function(r){return r.businessUnit==='GYPROC';}).reduce(function(s,r){return s+r.targetAmount;},0),weberTarget:selected.filter(function(r){return r.businessUnit==='WEBER';}).reduce(function(s,r){return s+r.targetAmount;},0),targetType:type,periodYear:year,periodMonth:month,periodStart:period.periodStart,periodEnd:period.periodEnd,businessUnit:bu,salesArea:context.salesArea,salesUserId:context.salesUserId,sourceScope:selected.length?(selected[0].salesUserId?'USER':'AREA'):'NONE',sourceTargetIds:selected.map(function(r){return r.targetId;}),targets:selected};
+  return {targetAmount:selected.length?total:null,totalTarget:selected.length?total:null,gyprocTarget:selected.filter(function(r){return r.businessUnit==='GYPROC';}).reduce(function(s,r){return s+Number(r.targetAmount||0);},0),weberTarget:selected.filter(function(r){return r.businessUnit==='WEBER';}).reduce(function(s,r){return s+Number(r.targetAmount||0);},0),targetType:type,periodYear:year,periodMonth:month,periodStart:period.periodStart,periodEnd:period.periodEnd,businessUnit:bu,salesArea:context.salesArea,salesUserId:context.salesUserId,sourceScope:selected.length?(selected[0].salesUserId?'USER':'AREA'):'NONE',sourceTargetIds:selected.map(function(r){return r.targetId;}),targets:selected,legacyAllTargetIds:legacyAllTargets.map(function(r){return r.targetId;}),legacyAllActiveCount:legacyAllTargets.length,legacyAllRequiresManualReview:legacyAllTargets.length>0};
 }
 function getEffectiveSalesTarget(payload) {
-  const eventId=salesTargetEventId_('TARGET-EFFECTIVE'); try{const auth=requireApiUser(payload||{});if(!auth.ok)return auth;if(!salesTargetCanView_(auth.data))return salesTargetError_('FORBIDDEN','Sales KPI access denied',eventId);const target=resolveEffectiveSalesTarget_(salesTargetRows_(),auth.data,payload||{});if(!target)return salesTargetError_('VALIDATION_ERROR','Invalid target period',eventId);return salesTargetResult_(true,target,'Effective sales target loaded','SUCCESS',eventId);}catch(error){logError('getEffectiveSalesTarget',error);return salesTargetError_('ERROR',error.message||'Unable to resolve sales target',eventId);} }
+  const eventId=salesTargetEventId_('TARGET-EFFECTIVE'); try{const auth=requireApiUser(payload||{});if(!auth.ok)return auth;if(!salesTargetCanView_(auth.data))return salesTargetError_('FORBIDDEN','Sales KPI access denied',eventId);const requestedBusinessUnit=salesTargetNormalizeBusinessUnit_(payload&&payload.businessUnit);if(requestedBusinessUnit&&!salesTargetIsFilterBusinessUnit_(requestedBusinessUnit))return salesTargetInvalidBusinessUnitError_('Invalid Sales Target Business Unit filter.',eventId);const target=resolveEffectiveSalesTarget_(salesTargetRows_(),auth.data,payload||{});if(!target)return salesTargetError_('VALIDATION_ERROR','Invalid target period',eventId);return salesTargetResult_(true,target,'Effective sales target loaded','SUCCESS',eventId);}catch(error){logError('getEffectiveSalesTarget',error);return salesTargetError_('ERROR',error.message||'Unable to resolve sales target',eventId);} }
 function getSalesTargetFormOptions(payload) {
   const eventId=salesTargetEventId_('TARGET-OPTIONS'); try{const auth=requireApiUser(payload||{});if(!auth.ok)return auth;if(!salesTargetCanManage_(auth.data))return salesTargetError_('FORBIDDEN','Sales target management denied',eventId);
     return salesTargetResult_(true,salesTargetBuildFormOptions_(payload||{},auth.data),'Sales target options loaded','SUCCESS',eventId);
@@ -297,29 +331,38 @@ function salesTargetBuildFormOptions_(payload, user) {
   const area = salesTargetUserArea_(user);
   users = users.map(function(u){return{userId:String(u.userId||''),name:salesTargetDisplayName_(u),salesArea:salesTargetUserArea_(u),status:String(u.status||'')};});
   const areas = salesTargetIsSuperAdmin_(user) ? Array.from(new Set(users.map(function(u){return u.salesArea;}).filter(Boolean))).sort() : [area].filter(Boolean);
-  return {areas:areas,salesUsers:users,businessUnits:['ALL','GYPROC','WEBER'],targetTypes:['ANNUAL','MONTHLY'],statuses:['DRAFT','ACTIVE','INACTIVE','ARCHIVED'],canManage:true,actorArea:area};
+  return {areas:areas,salesUsers:users,businessUnits:salesTargetConfigurableBusinessUnitValues_(),configurableBusinessUnits:salesTargetConfigurableBusinessUnitValues_(),filterBusinessUnits:salesTargetFilterBusinessUnitValues_(),targetTypes:['ANNUAL','MONTHLY'],statuses:['DRAFT','ACTIVE','INACTIVE','ARCHIVED'],canManage:true,actorArea:area};
 }
 function salesTargetApplyFilters_(rows, filters) {
   const data = filters || {};
   var scopedRows = Array.isArray(rows) ? rows.slice() : [];
-  ['targetType','businessUnit','salesArea','salesUserId','status'].forEach(function (key) {
+  ['targetType','salesArea','salesUserId','status'].forEach(function (key) {
     if (data[key] !== undefined && String(data[key]).trim() !== '') {
       scopedRows = scopedRows.filter(function (row) {
         return String(row[key]).toUpperCase() === String(data[key]).trim().toUpperCase();
       });
     }
   });
+  const requestedBusinessUnit = salesTargetNormalizeBusinessUnit_(data.businessUnit);
+  if (requestedBusinessUnit && requestedBusinessUnit !== SALES_TARGET_FILTER_BUSINESS_UNITS.ALL) {
+    scopedRows = scopedRows.filter(function (row) { return String(row.businessUnit).toUpperCase() === requestedBusinessUnit; });
+  }
   if (data.periodYear) scopedRows = scopedRows.filter(function (row) { return row.periodYear === Number(data.periodYear); });
   if (data.periodMonth !== undefined && String(data.periodMonth) !== '') scopedRows = scopedRows.filter(function (row) { return Number(row.periodMonth) === Number(data.periodMonth); });
   return scopedRows.sort(function (a,b) { return String(b.periodStart).localeCompare(String(a.periodStart)) || String(b.updatedAt).localeCompare(String(a.updatedAt)); });
 }
 function salesTargetBuildSummary_(rows) {
   const active = (Array.isArray(rows) ? rows : []).filter(function (row) { return row.active || row.status === 'ACTIVE'; });
+  const configurableActive = active.filter(function (row) { return salesTargetIsConfigurableBusinessUnit_(row.businessUnit); });
+  const legacyAllActive = active.filter(function (row) { return row.businessUnit === SALES_TARGET_FILTER_BUSINESS_UNITS.ALL; });
   return {
-    totalActive: active.reduce(function (sum, row) { return sum + Number(row.targetAmount || 0); }, 0),
-    gyproc: active.filter(function (row) { return row.businessUnit === 'GYPROC'; }).reduce(function (sum, row) { return sum + Number(row.targetAmount || 0); }, 0),
-    weber: active.filter(function (row) { return row.businessUnit === 'WEBER'; }).reduce(function (sum, row) { return sum + Number(row.targetAmount || 0); }, 0),
-    assignedUsers: Array.from(new Set(active.map(function (row) { return row.salesUserId; }).filter(Boolean))).length
+    totalActive: configurableActive.reduce(function (sum, row) { return sum + Number(row.targetAmount || 0); }, 0),
+    gyproc: configurableActive.filter(function (row) { return row.businessUnit === 'GYPROC'; }).reduce(function (sum, row) { return sum + Number(row.targetAmount || 0); }, 0),
+    weber: configurableActive.filter(function (row) { return row.businessUnit === 'WEBER'; }).reduce(function (sum, row) { return sum + Number(row.targetAmount || 0); }, 0),
+    assignedUsers: Array.from(new Set(configurableActive.map(function (row) { return row.salesUserId; }).filter(Boolean))).length,
+    legacyAllActiveCount: legacyAllActive.length,
+    legacyAllActiveAmount: legacyAllActive.reduce(function (sum, row) { return sum + Number(row.targetAmount || 0); }, 0),
+    legacyAllRequiresManualReview: legacyAllActive.length > 0
   };
 }
 function getSalesTargetManagementData(payload) {
@@ -328,6 +371,8 @@ function getSalesTargetManagementData(payload) {
     const auth = requireApiUser(payload || {});
     if (!auth.ok) return auth;
     if (!salesTargetCanManage_(auth.data)) return salesTargetError_('FORBIDDEN', 'Sales target management denied', eventId);
+    const requestedBusinessUnit = salesTargetNormalizeBusinessUnit_(payload && payload.businessUnit);
+    if (requestedBusinessUnit && !salesTargetIsFilterBusinessUnit_(requestedBusinessUnit)) return salesTargetInvalidBusinessUnitError_('Invalid Sales Target Business Unit filter.', eventId);
     const allRows = salesTargetRows_().map(salesTargetNormalizeRow_).filter(function (row) { return salesTargetScopeAllowed_(auth.data, row, false); });
     const targets = salesTargetApplyFilters_(allRows, payload || {});
     return salesTargetResult_(true, {

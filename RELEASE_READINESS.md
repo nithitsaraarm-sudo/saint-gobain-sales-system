@@ -1,8 +1,52 @@
 # Release Readiness Report — Audit Remediation
 
+## Sales Target BU remediation addendum — 2026-08-18
+
+Decision impact: **SOURCE BUSINESS RULE REMEDIATED / NOT RUNTIME READY**.
+
+Phase 3.1 remediated the Sales Target Business Unit mismatch found in Phase 3:
+
+- Target create/edit configuration now allows only `GYPROC` and `WEBER`.
+- `ALL` remains available as a filter/history concept.
+- Backend validation rejects new configurable `ALL` targets and reactivation of legacy `ALL` targets.
+- Current target total is derived from active `GYPROC + WEBER` targets; legacy active `ALL` rows are excluded from current totals and flagged for manual review.
+- Automated unit coverage increased to 37 tests.
+
+Runtime readiness still requires Apps Script deployment and live Google Sheets/browser/PWA/UAT verification. If production contains active legacy `ALL` target rows, those rows require manual business review; the source code does not delete, split, or rewrite them automatically.
+
+## Minimal Node unit business validation addendum — 2026-08-18
+
+Decision impact: **SOURCE REGRESSION PROTECTION IMPROVED / NOT RUNTIME READY**.
+
+Phase 3 added dependency-free unit tests with Node built-in `node:test` / `node:assert` for critical business logic: quotation calculations/validation, Sales Target summary/effective target logic, Dashboard Customer/Business/Sales KPI logic, Promotion date/status/summary logic, and shared normalization utilities.
+
+Recommended pre-release source validation command:
+
+```powershell
+npm.cmd run verify
+```
+
+`verify` runs Phase 2 static checks and Phase 3 unit tests. It does not replace live Apps Script, Google Sheets, RBAC, mobile browser, PWA, quotation export/share, or production smoke testing.
+
+Phase 3 found a Sales Target business-rule mismatch; source remediation is now tracked in the Phase 3.1 addendum above. Runtime deployment/UAT remains required before marking the production environment ready.
+
 Date: 2026-07-26
 Branch: `audit/full-remediation`
 Baseline audit commit: `0cb62334d62341a78ba6f3b1194ca42c985c1c47`
+
+## Minimal Node development validation addendum — 2026-08-18
+
+Decision impact: **SOURCE VALIDATION IMPROVED / NOT RUNTIME READY**.
+
+Phase 2 added development-only npm scripts with zero dependencies for local static validation:
+
+- `npm run check`
+- `npm run check:js`
+- `npm run check:gas`
+- `npm run check:json`
+- `npm run check:assets`
+
+Pre-release source validation should now include `npm run check` before Apps Script/static deployment. This does not replace live Apps Script, Google Sheets, RBAC, mobile browser, PWA, quotation, customer, product, promotion, or production smoke testing. Do not change the release recommendation to runtime-ready until the existing `TEST_CASES.md` runtime/manual gates are executed with evidence.
 
 ## Final commit-readiness addendum — 2026-08-15
 
