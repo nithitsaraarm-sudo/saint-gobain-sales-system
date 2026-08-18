@@ -1,3 +1,17 @@
+## 2026-08-18 — Quotation share file-only workflow
+
+Scope completed:
+
+- Audited quotation sharing in `js/quotation.js`, including `navigator.share`, generated share text helpers, clipboard fallback, PNG export, and PDF export paths.
+- Root cause: quotation share included generated text/caption fields (`title` and `text`) in the Web Share payload, and fallback copied the same quotation summary text to the clipboard.
+- Removed the legacy text-only `shareQuote()` implementation and duplicate share-text helper code.
+- Updated the active quotation share workflow so native Web Share sends image files only via `{ files }`.
+- Preserved PNG/PDF document generation and quotation export filenames.
+- Preserved quotation save, pricing, permissions, API, backend, and database behavior.
+- Updated fallback behavior to download generated quotation image pages only; fallback no longer copies quote/customer/total/system text.
+
+Static validation was performed locally. Runtime native-share validation on iPhone Safari, Android Chrome, and installed PWA remains required after deployment.
+
 ## 2026-08-15 — Final release audit fixes before commit
 
 Scope completed:

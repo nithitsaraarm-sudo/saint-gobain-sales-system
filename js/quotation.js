@@ -3897,34 +3897,6 @@ async function saveQuote() {
   return saveQuotation();
 }
 
-async function shareQuote() {
-  const customer = DB.customers.find(c => String(c.customerId || '').trim() === String(document.getElementById('quoteCustomer')?.value || '').trim()) || {};
-  const totalText = document.getElementById('sumTotal')?.textContent || '0.00';
-  const text = `ใบเสนอราคา ${customer.customerName || ''}\nยอดสุทธิ ${totalText} บาท`;
-  try {
-    if (navigator.share) {
-      await navigator.share({ text: text });
-      return;
-    }
-    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-      await navigator.clipboard.writeText(text);
-      toast('คัดลอกข้อความแล้ว');
-      return;
-    }
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.style.position = 'fixed';
-    textarea.style.left = '-9999px';
-    document.body.appendChild(textarea);
-    textarea.select();
-    document.execCommand('copy');
-    document.body.removeChild(textarea);
-    toast('คัดลอกข้อความแล้ว');
-  } catch (error) {
-    toast('แชร์หรือคัดลอกข้อความไม่สำเร็จ');
-  }
-}
-
 function selectCustomer(customerId) {
   return startCustomerQuotationFlow(customerId);
 }
@@ -5542,100 +5514,6 @@ function quotationCanvasToBlob(canvas) {
   });
 }
 
-function getQuotationShareText(printData, documentNode) {
-  const data = printData || {};
-  const quote = data.quote || {};
-  const totals = data.totals || {};
-  const quoteNo = getRealQuotationNumber(documentNode && documentNode.dataset && documentNode.dataset.quoteNo)
-    || getRealQuotationNumber(quote.quoteNo)
-    || getRealQuotationNumber(quote.quoteId)
-    || getCurrentRealQuotationNumber()
-    || QUOTATION_UNSAVED_NUMBER_LABEL;
-  const customerName = quote.customerName || CURRENT_QUOTE.customerName || '-';
-  const grandTotal = totals.grandTotal ?? quote.grandTotal ?? quote.total ?? calcCart().total ?? 0;
-  return `ใบเสนอราคา: ${quoteNo}
-ร้านค้า: ${customerName || '-'}
-ยอดรวมสุทธิ: ${money(grandTotal)} บาท
-
-สร้างโดย Saint-Gobain Sales System`;
-}
-
-async function copyQuotationShareText(text) {
-  try {
-    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch (error) {
-    console.warn('Clipboard API failed, using fallback', error);
-  }
-  try {
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.style.position = 'fixed';
-    textarea.style.left = '-9999px';
-    textarea.style.top = '0';
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-    const copied = document.execCommand('copy');
-    document.body.removeChild(textarea);
-    return copied;
-  } catch (error) {
-    console.warn('Clipboard fallback failed', error);
-    return false;
-  }
-}
-
-async function shareQuote(quoteId) {
-  if (!assertQuotationCanExport(quoteId, 'share')) return null;
-  const preview = document.getElementById('quotationPrintPreview');
-  const currentDocument = document.getElementById('printQuotationSheet');
-  const hasPreview = currentDocument && currentDocument.innerHTML.trim();
-  const previewOpen = preview && preview.classList.contains('is-open');
-  const prepared = quoteId || !hasPreview || !previewOpen
-    ? await prepareQuotationPrintPreview(quoteId, true)
-    : { preview, documentNode: currentDocument, response: { ok: true, data: getCurrentQuotationPrintData() } };
-  if (!prepared || !prepared.documentNode) {
-    return null;
-  }
-  if (!assertPreparedQuotationCanExport(prepared, 'share')) return null;
-  if (typeof html2canvas !== 'function') {
-    toast('ไม่พบ html2canvas สำหรับ Share');
-    return null;
-  }
-
-  toast('กำลังสร้างรูปสำหรับแชร์...');
-  const canvas = await captureQuotationSheet(prepared.documentNode);
-  const fileName = getQuotationExportFileName(prepared.documentNode);
-  const printData = prepared.response && prepared.response.data ? prepared.response.data : getCurrentQuotationPrintData();
-  const shareText = getQuotationShareText(printData, prepared.documentNode);
-  const blob = await quotationCanvasToBlob(canvas);
-
-  if (blob && typeof File === 'function' && navigator.share && navigator.canShare) {
-    const file = new File([blob], fileName, { type: 'image/png' });
-    const shareData = {
-      title: fileName.replace(/\.png$/i, ''),
-      text: shareText,
-      files: [file]
-    };
-    try {
-      if (navigator.canShare({ files: [file] })) {
-        await navigator.share(shareData);
-        toast('เปิด Share Sheet แล้ว');
-        return { ok: true, shared: true };
-      }
-    } catch (error) {
-      console.warn('Native file share failed, using fallback', error);
-    }
-  }
-
-  downloadQuotationCanvas(canvas, fileName);
-  await copyQuotationShareText(shareText);
-  toast('บันทึกรูปแล้ว กรุณาเลือกส่งผ่าน LINE');
-  return { ok: true, shared: false };
-}
-
 function getQuotationPrintPages(documentNode) {
   if (!documentNode) {
     return [];
@@ -5737,8 +5615,6 @@ async function shareQuote(quoteId) {
   }
 
   const pages = getQuotationPrintPages(prepared.documentNode);
-  const printData = prepared.response && prepared.response.data ? prepared.response.data : getCurrentQuotationPrintData();
-  const shareText = getQuotationShareText(printData, prepared.documentNode);
   const files = [];
   const canvases = [];
 
@@ -5753,11 +5629,7 @@ async function shareQuote(quoteId) {
   }
 
   if (files.length && navigator.share && navigator.canShare) {
-    const shareData = {
-      title: getQuotationExportBaseName(prepared.documentNode),
-      text: shareText,
-      files: files
-    };
+    const shareData = { files: files };
     try {
       if (navigator.canShare({ files: files })) {
         await navigator.share(shareData);
@@ -5765,6 +5637,10 @@ async function shareQuote(quoteId) {
         return { ok: true, shared: true, files: files.length };
       }
     } catch (error) {
+      const shareCancelled = error && (error.name === 'AbortError' || /abort/i.test(String(error.message || '')));
+      if (shareCancelled) {
+        return { ok: false, cancelled: true, shared: false, files: files.length };
+      }
       console.warn('Native file share failed, using fallback', error);
     }
   }
@@ -5772,27 +5648,8 @@ async function shareQuote(quoteId) {
   canvases.forEach((canvas, index) => {
     downloadQuotationCanvas(canvas, getQuotationExportFileName(prepared.documentNode, index, canvases.length));
   });
-  await copyQuotationShareText(shareText);
-  toast(canvases.length > 1 ? 'บันทึกรูปใบเสนอราคาครบทุกหน้าแล้ว กรุณาเลือกส่งผ่าน LINE' : 'บันทึกรูปแล้ว กรุณาเลือกส่งผ่าน LINE');
+  toast(canvases.length > 1 ? 'บันทึกรูปใบเสนอราคาครบทุกหน้าแล้ว กรุณาแนบรูปด้วยตนเอง' : 'บันทึกรูปแล้ว กรุณาแนบรูปด้วยตนเอง');
   return { ok: true, shared: false, files: canvases.length };
-}
-
-function getQuotationShareText(printData, documentNode) {
-  const data = printData || {};
-  const quote = data.quote || {};
-  const totals = data.totals || {};
-  const quoteNo = getRealQuotationNumber(documentNode && documentNode.dataset && documentNode.dataset.quoteNo)
-    || getRealQuotationNumber(quote.quoteNo)
-    || getRealQuotationNumber(quote.quoteId)
-    || getCurrentRealQuotationNumber()
-    || QUOTATION_UNSAVED_NUMBER_LABEL;
-  const customerName = quote.customerName || CURRENT_QUOTE.customerName || '-';
-  const grandTotal = totals.grandTotal ?? quote.grandTotal ?? quote.total ?? calcCart().total ?? 0;
-  return `ใบเสนอราคา: ${quoteNo}
-ร้านค้า: ${customerName || '-'}
-ยอดรวมสุทธิ: ${money(grandTotal)} บาท
-
-สร้างโดย Saint-Gobain Sales System`;
 }
 
 async function duplicateCurrentQuotation() {
