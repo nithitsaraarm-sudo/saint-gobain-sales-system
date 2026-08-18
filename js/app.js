@@ -4085,7 +4085,14 @@ async function changeSalesTargetStatus(targetId,status,version){if(!confirm('ย
 function getDashboardEffectiveSalesTargetRequest(){const now=new Date(),area=String(getUserArea(USER)||'').trim();const request={targetType:'MONTHLY',periodYear:now.getFullYear(),periodMonth:now.getMonth()+1,businessUnit:'ALL',force:true};if(area&&area.toUpperCase()!=='SYSTEM')request.salesArea=area;return request;}
 async function refreshEffectiveSalesTarget(){if(!canViewSalesTargetsUi())return null;try{const response=await callApi('getEffectiveSalesTarget',getDashboardEffectiveSalesTargetRequest());if(response?.ok){EFFECTIVE_SALES_TARGET=response.data||null;DB.effectiveSalesTarget=EFFECTIVE_SALES_TARGET;return EFFECTIVE_SALES_TARGET;}}catch(error){console.warn('[SALES_TARGET] effective target refresh failed',error);}return null;}
 function renderSettings(){if(!USER)return;document.querySelectorAll('[data-target-management-only]').forEach(el=>{el.hidden=!canManageSalesTargetsUi();});let s=DB.settings||{},identity=getSystemIdentitySettingsForUi(); let set=(id,val)=>{let el=$(id); if(el)el.value=val||''}; set('setDisplay',USER.displayName); set('setPosition',USER.position); set('setPhone',USER.phone); set('setPhoto',USER.photoUrl); set('setPersonalGreeting',USER.greetingText||''); set('setCompany',identity.companyName); set('setAppName',identity.systemName); set('setWelcome',s.welcomeText); set('setMorning',s.greetingMorning); set('setAfternoon',s.greetingAfternoon); set('setEvening',s.greetingEvening); set('setNight',s.greetingNight); applySettingsPermissionUi(); updateProfilePreview(USER.photoUrl||'');}
-function canManageCustomersUi(){return permissionFlag('canManageCustomers',['SUPER_ADMIN','ADMIN','SALES'].indexOf(currentRole())>=0)}
+function customerManageRoleFallbackUi(){return ['SUPER_ADMIN','ADMIN','SALES'].indexOf(currentRole())>=0}
+function canManageCustomersUi(){
+  const role=currentRole();
+  if(role==='VIEWER'||role==='PC')return false;
+  const permissions=DB&&DB.permissions&&typeof DB.permissions==='object'?DB.permissions:null;
+  const hasPermission=permissions&&Object.prototype.hasOwnProperty.call(permissions,'canManageCustomers');
+  return hasPermission?permissions.canManageCustomers===true||customerManageRoleFallbackUi():customerManageRoleFallbackUi();
+}
 function canManageDataEntryUi(){return canManageCustomersUi()||permissionFlag('canManageProducts',false)||permissionFlag('canManagePromotions',false)||['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0}
 function getManageDataEntryLabelsForUi(){
   const labels=[];
@@ -4595,8 +4602,8 @@ function retryCustomerFormOptionsModal(){
     return response;
   });
 }
-function openModal(type){if(type==='customer'&&!permissionFlag('canManageCustomers',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0)){toast('ไม่มีสิทธิ์เพิ่มร้านค้า');return;} if(type==='product'&&!permissionFlag('canManageProducts',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0)){toast('ไม่มีสิทธิ์เพิ่มสินค้า');return;} if(type==='promo'&&!permissionFlag('canManagePromotions',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0)){toast('ไม่มีสิทธิ์เพิ่มโปรโมชั่น');return;} let title={customer:'เพิ่มร้านค้า',product:'เพิ่มสินค้า',promo:'เพิ่มโปรโมชั่น'}[type]; document.getElementById('modalTitle').textContent=title; let html=''; if(type==='customer')html=customerFormHtml(); if(type==='product')html=`<div class="field"><label>ชื่อสินค้า</label><input id="mName"></div><div class="field"><label>แบรนด์</label><select id="mBrand"><option>Weber</option><option>Gyproc</option></select></div><div class="field"><label>หน่วย</label><input id="mUnit"></div><div class="field"><label>ราคา</label><input id="mPrice" type="number"></div><button type="button" class="primary" onclick="saveModal('product')">บันทึก</button>`; if(type==='promo')html=`<div class="field"><label>แบรนด์</label><select id="mBrand"><option>Weber</option><option>Gyproc</option></select></div><div class="field"><label>สินค้า</label><input id="mName"></div><div class="field"><label>รายละเอียด</label><textarea id="mDesc"></textarea></div><div class="field"><label>ส่วนลด/โปร</label><input id="mDiscount"></div><button type="button" class="primary" onclick="saveModal('promo')">บันทึก</button>`; document.getElementById('modalBody').innerHTML=html; document.getElementById('modal').classList.add('show')}
-function canEditCustomers(){return !!(DB.permissions&&DB.permissions.canManageCustomers)||['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0}
+function openModal(type){if(type==='customer'&&!canManageCustomersUi()){toast('ไม่มีสิทธิ์เพิ่มร้านค้า');return;} if(type==='product'&&!permissionFlag('canManageProducts',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0)){toast('ไม่มีสิทธิ์เพิ่มสินค้า');return;} if(type==='promo'&&!permissionFlag('canManagePromotions',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())>=0)){toast('ไม่มีสิทธิ์เพิ่มโปรโมชั่น');return;} let title={customer:'เพิ่มร้านค้า',product:'เพิ่มสินค้า',promo:'เพิ่มโปรโมชั่น'}[type]; document.getElementById('modalTitle').textContent=title; let html=''; if(type==='customer')html=customerFormHtml(); if(type==='product')html=`<div class="field"><label>ชื่อสินค้า</label><input id="mName"></div><div class="field"><label>แบรนด์</label><select id="mBrand"><option>Weber</option><option>Gyproc</option></select></div><div class="field"><label>หน่วย</label><input id="mUnit"></div><div class="field"><label>ราคา</label><input id="mPrice" type="number"></div><button type="button" class="primary" onclick="saveModal('product')">บันทึก</button>`; if(type==='promo')html=`<div class="field"><label>แบรนด์</label><select id="mBrand"><option>Weber</option><option>Gyproc</option></select></div><div class="field"><label>สินค้า</label><input id="mName"></div><div class="field"><label>รายละเอียด</label><textarea id="mDesc"></textarea></div><div class="field"><label>ส่วนลด/โปร</label><input id="mDiscount"></div><button type="button" class="primary" onclick="saveModal('promo')">บันทึก</button>`; document.getElementById('modalBody').innerHTML=html; document.getElementById('modal').classList.add('show')}
+function canEditCustomers(){return canManageCustomersUi()}
 function openCustomerEditModal(customerId){if(!canEditCustomers()){toast('คุณไม่มีสิทธิ์แก้ไขข้อมูลร้านค้า');return;}const customer=findCustomerById(customerId);if(!customer){toast('ไม่พบข้อมูลร้านค้า');return;}$('modalTitle').textContent='แก้ไขข้อมูลร้านค้า';$('modalBody').innerHTML=customerFormHtml(customer);$('modal').classList.add('show')}
 async function saveCustomerModal(existingId){
   const button=$('saveCustomerModalButton');
@@ -4794,17 +4801,6 @@ function validateCustomerModalBeforeSave(existingId){
   if(phone&&!isValidPhone(phone))return 'กรุณากรอกเบอร์โทรศัพท์ให้ถูกต้อง';
   return '';
 }
-const baseOpenModalBeforeScopedCustomerPermission=openModal;
-openModal=function(type){
-  if(type==='customer'&&canManageCustomersUi()){
-    document.getElementById('modalTitle').textContent='เพิ่มร้านค้า';
-    document.getElementById('modalBody').innerHTML=customerFormHtml();
-    document.getElementById('modal').classList.add('show');
-    return;
-  }
-  return baseOpenModalBeforeScopedCustomerPermission(type);
-};
-canEditCustomers=function(){return canManageCustomersUi();};
 const baseOpenModalForCustomerLayout=openModal;
 openModal=function(type){
   baseOpenModalForCustomerLayout(type);
@@ -5457,6 +5453,11 @@ function toggleUserPasswordVisibility(inputId,button){
   button.setAttribute('aria-pressed',String(show));
 }
 function permissionFlag(name,fallback){return DB&&DB.permissions&&Object.prototype.hasOwnProperty.call(DB.permissions,name)?DB.permissions[name]===true:!!fallback}
+function permissionAllowedForUi(permission){
+  const name=String(permission||'').trim();
+  if(name==='canManageCustomers')return canManageCustomersUi();
+  return permissionFlag(name,false);
+}
 function canCreateQuotationsUi(){return permissionFlag('canCreateQuotations',['SUPER_ADMIN','ADMIN','SALES'].indexOf(currentRole())>=0)}
 function canEditQuotationsUi(){return permissionFlag('canEditQuotations',['SUPER_ADMIN','ADMIN','SALES'].indexOf(currentRole())>=0)}
 function canViewQuotationsUi(){return permissionFlag('canViewQuotations',['SUPER_ADMIN','ADMIN','MANAGER','SALES','VIEWER'].indexOf(currentRole())>=0)}
@@ -5478,7 +5479,7 @@ function canAccessPage(page){
 }
 function applyRolePermissions(){
   document.querySelectorAll('.nav button[data-route],.nav button[data-page]').forEach(btn=>{const page=getNavigationButtonRoute(btn);btn.classList.toggle('hidden',!canAccessPage(page));});
-  document.querySelectorAll('[data-permission]').forEach(btn=>{const permission=btn.getAttribute('data-permission');const allowed=permissionFlag(permission,false);btn.classList.toggle('hidden',!allowed);btn.hidden=!allowed;});
+  document.querySelectorAll('[data-permission]').forEach(btn=>{const permission=btn.getAttribute('data-permission');const allowed=permissionAllowedForUi(permission);btn.classList.toggle('hidden',!allowed);btn.hidden=!allowed;});
   document.querySelectorAll('.main-action:not([data-permission])').forEach(btn=>{btn.classList.toggle('hidden',['SUPER_ADMIN','ADMIN'].indexOf(currentRole())<0);});
   const quoteActions=document.querySelector('#page-quote .actions');
   if(quoteActions)quoteActions.classList.toggle('hidden',currentRole()==='VIEWER');

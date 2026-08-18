@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadAppsScriptContext } from '../helpers/source-loader.mjs';
+import vm from 'node:vm';
+import { loadAppsScriptContext, loadFrontendAppContext } from '../helpers/source-loader.mjs';
 
 function toPlain(value) {
   return JSON.parse(JSON.stringify(value));
@@ -236,6 +237,59 @@ function createApiContext(actor) {
   return ctx;
 }
 
+function createTrackingClassList(initial = []) {
+  const classes = new Set(initial);
+  return {
+    add(...names) {
+      names.forEach(name => classes.add(String(name)));
+    },
+    remove(...names) {
+      names.forEach(name => classes.delete(String(name)));
+    },
+    contains(name) {
+      return classes.has(String(name));
+    },
+    toggle(name, force) {
+      const className = String(name);
+      const shouldHave = force === undefined ? !classes.has(className) : Boolean(force);
+      if (shouldHave) classes.add(className);
+      else classes.delete(className);
+      return shouldHave;
+    },
+    values() {
+      return Array.from(classes);
+    }
+  };
+}
+
+function createPermissionButton(permission) {
+  return {
+    hidden: false,
+    classList: createTrackingClassList(),
+    getAttribute(name) {
+      return String(name) === 'data-permission' ? permission : null;
+    }
+  };
+}
+
+function createFrontendCustomerPermissionContext(actor, permissions = {}) {
+  const ctx = loadFrontendAppContext();
+  ctx.__testUser = actor;
+  ctx.__testPermissions = permissions;
+  vm.runInContext('USER=__testUser; DB=normalizeDb({user:__testUser, permissions:__testPermissions});', ctx);
+  return ctx;
+}
+
+function applyPermissionButtons(ctx, buttons) {
+  ctx.document.querySelector = function querySelectorForPermissionTest() {
+    return null;
+  };
+  ctx.document.querySelectorAll = function querySelectorAllForPermissionTest(selector) {
+    return String(selector) === '[data-permission]' ? buttons : [];
+  };
+  ctx.applyRolePermissions();
+}
+
 test('Permission model allows SALES to manage customers but not product or promotion masters', () => {
   const ctx = loadAppsScriptContext('appscript/Permission.gs');
   const permissions = ctx.getUserPermissions(salesNE03);
@@ -298,6 +352,110 @@ test('SUPER_ADMIN and ADMIN customer master permissions remain available', () =>
   assert.equal(ctx.getUserPermissions(adminSystem).canManageCustomers, true);
   assert.equal(ctx.getUserPermissions(adminSystem).canManageProducts, true);
   assert.equal(ctx.getUserPermissions(adminSystem).canManagePromotions, true);
+});
+
+test('Customer add UI action is visible for SUPER_ADMIN, ADMIN, and SALES', () => {
+  [
+    [superAdmin, { canManageCustomers: true }],
+    [adminSystem, { canManageCustomers: true }],
+    [salesNE03, { canManageCustomers: false, canManageProducts: false, canManagePromotions: false }]
+  ].forEach(([actor, permissions]) => {
+    const ctx = createFrontendCustomerPermissionContext(actor, permissions);
+    const customerButton = createPermissionButton('canManageCustomers');
+    applyPermissionButtons(ctx, [customerButton]);
+
+    assert.equal(ctx.canManageCustomersUi(), true, `${actor.role} should resolve customer manage UI permission`);
+    assert.equal(ctx.permissionAllowedForUi('canManageCustomers'), true, `${actor.role} data-permission should match helper`);
+    assert.equal(customerButton.hidden, false, `${actor.role} customer add button should remain visible`);
+    assert.equal(customerButton.classList.contains('hidden'), false, `${actor.role} customer add button should not get hidden class`);
+  });
+});
+
+test('Customer add UI action remains hidden for VIEWER and PC', () => {
+  [
+    [viewer, { canManageCustomers: false }],
+    [pcUser, { canManageCustomers: false }]
+  ].forEach(([actor, permissions]) => {
+    const ctx = createFrontendCustomerPermissionContext(actor, permissions);
+    const customerButton = createPermissionButton('canManageCustomers');
+    applyPermissionButtons(ctx, [customerButton]);
+
+    assert.equal(ctx.canManageCustomersUi(), false, `${actor.role} should not resolve customer manage UI permission`);
+    assert.equal(ctx.permissionAllowedForUi('canManageCustomers'), false, `${actor.role} data-permission should match helper`);
+    assert.equal(customerButton.hidden, true, `${actor.role} customer add button should remain hidden`);
+    assert.equal(customerButton.classList.contains('hidden'), true, `${actor.role} customer add button should get hidden class`);
+  });
+});
+
+test('SALES customer create entry points agree across data entry, Customer page button, and modal guard', () => {
+  const ctx = createFrontendCustomerPermissionContext(salesNE03, {
+    canManageCustomers: false,
+    canManageProducts: false,
+    canManagePromotions: false
+  });
+  ctx.setCustomerFormOptionsData({
+    salesAreas: ['NE03'],
+    permissions: { canViewCustomerAssignmentOptions: false, canManageCustomerAssignments: false }
+  });
+  const customerButton = createPermissionButton('canManageCustomers');
+  applyPermissionButtons(ctx, [customerButton]);
+
+  const modal = {
+    hidden: false,
+    classList: createTrackingClassList(),
+    style: {},
+    dataset: {},
+    setAttribute() {},
+    addEventListener() {},
+    querySelector() { return null; },
+    querySelectorAll() { return []; }
+  };
+  const modalTitle = { textContent: '' };
+  const modalBody = {
+    innerHTML: '',
+    childNodes: [],
+    children: [],
+    dataset: {},
+    addEventListener() {},
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+    replaceChildren(...children) {
+      this.children = children;
+      this.childNodes = children;
+    }
+  };
+  const elements = new Map([
+    ['modal', modal],
+    ['modalTitle', modalTitle],
+    ['modalBody', modalBody]
+  ]);
+  ctx.document.getElementById = function getElementByIdForCustomerModalTest(id) {
+    return elements.get(String(id)) || null;
+  };
+
+  assert.equal(ctx.canManageDataEntryUi(), true);
+  assert.equal(customerButton.hidden, false);
+  ctx.openModal('customer');
+
+  assert.equal(modal.classList.contains('show'), true);
+  assert.equal(modal.classList.contains('customer-modal'), true);
+  assert.equal(modalBody.innerHTML.includes('mCustomerId'), true);
+});
+
+test('SALES Product and Promotion create UI actions remain hidden and forbidden', () => {
+  const ctx = createFrontendCustomerPermissionContext(salesNE03, {
+    canManageCustomers: false,
+    canManageProducts: false,
+    canManagePromotions: false
+  });
+  const productButton = createPermissionButton('canManageProducts');
+  const promotionButton = createPermissionButton('canManagePromotions');
+  applyPermissionButtons(ctx, [productButton, promotionButton]);
+
+  assert.equal(ctx.permissionAllowedForUi('canManageProducts'), false);
+  assert.equal(ctx.permissionAllowedForUi('canManagePromotions'), false);
+  assert.equal(productButton.hidden, true);
+  assert.equal(promotionButton.hidden, true);
 });
 
 test('SALES can create a customer in own area and backend assigns the current sales user', () => {

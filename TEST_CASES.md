@@ -1,3 +1,16 @@
+## Phase 3.2.1 Customer Add Button Permission Sync addendum — 2026-08-18
+
+This addendum covers the completed Phase 3.2.1 source remediation for keeping the Customer page `+ เพิ่มร้านค้า`, Settings > เพิ่มข้อมูล customer action, and customer modal open guard aligned to the same frontend customer permission source. These tests use synthetic frontend/backend fixtures only and do not call the live Apps Script deployment, production Google Sheets, browser APIs, iPhone Safari, Android Chrome, or PWA.
+
+Environment: Local Windows / Node.js v24.19.0 / npm 11.17.0. Evidence commands executed after implementation: `npm.cmd run check`, `npm.cmd run test` with 57/57 tests passed, `npm.cmd run verify` with 57/57 tests passed, and `git diff --check` passed with line-ending warnings only. Runtime/browser/UAT remains required.
+
+| Test ID | Module | Priority | Test type | Applicable roles | Preconditions | Test data | Numbered steps | Expected result | Actual result | Status | Environment | Evidence | Related audit finding or requirement | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| RBAC-UNIT-011 | RBAC | P0 | Automated unit | SUPER_ADMIN, ADMIN, SALES | Node tooling available | Synthetic frontend user/permission states | 1. Load `js/app.js` in VM. 2. Apply `[data-permission="canManageCustomers"]`. | Customer add action is visible for SUPER_ADMIN, ADMIN, and SALES. | Passed. | Automated Unit Passed | Local Node VM | `npm.cmd run test` | Phase 3.2.1 Customer Add Button Permission Sync | Includes stale `canManageCustomers:false` cache scenario for SALES. |
+| RBAC-UNIT-012 | RBAC | P0 | Automated unit | VIEWER, PC | Node tooling available | Synthetic VIEWER and PC users | 1. Load `js/app.js` in VM. 2. Apply `[data-permission="canManageCustomers"]`. | Customer add action remains hidden for VIEWER and PC. | Passed. | Automated Unit Passed | Local Node VM | `npm.cmd run test` | PC must not inherit SALES permission | No live role account used. |
+| CUST-UNIT-020 | CUST | P0 | Automated unit | SALES | Node tooling available | Synthetic SALES NE03 user and customer form option fixture | 1. Resolve Settings/Data Entry permission. 2. Resolve Customer page button. 3. Call `openModal('customer')`. | All customer-create UI entry points agree and modal opens. | Passed. | Automated Unit Passed | Local Node VM | `npm.cmd run test` | Entry-point consistency regression | Fake DOM only; browser UAT remains required. |
+| RBAC-UNIT-013 | RBAC | P0 | Automated unit | SALES | Node tooling available | Synthetic SALES user with Product/Promotion permissions false | 1. Apply Product/Promotion `[data-permission]` buttons. 2. Resolve helpers. | Product and Promotion create actions remain hidden/forbidden for SALES. | Passed. | Automated Unit Passed | Local Node VM | `npm.cmd run test` | Do not broaden Product/Promotion permissions | Backend API tests from Phase 3.2 remain in same suite. |
+
 ## Sales Target Management UI/UX cleanup addendum — 2026-08-18
 
 This addendum covers the focused Sales Target Management UI/UX cleanup before Phase 4. Automated tests use local synthetic fixtures only. Static source checks do not replace deployed Apps Script, live Google Sheets, browser, mobile Safari, Android Chrome, or PWA UAT.

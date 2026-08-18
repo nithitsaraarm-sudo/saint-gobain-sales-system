@@ -1,3 +1,25 @@
+## 2026-08-18 — Phase 3.2.1 Customer Add Button Permission Sync
+
+Scope completed:
+
+- Audited Customer add entry points in `index.html`, frontend permission helpers in `js/app.js`, bootstrap permission state from `appscript/Code.gs`, and central API customer/Product/Promotion guards in `appscript/Api.gs`.
+- Confirmed the Customer page `+ เพิ่มร้านค้า` button used generic `[data-permission]` handling while the Phase 3.2 customer modal/data-entry flow used `canManageCustomersUi()`, creating inconsistent UI permission behavior for SALES.
+- Updated Customer UI permission resolution so `data-permission="canManageCustomers"` uses `canManageCustomersUi()` instead of the generic `permissionFlag(permission,false)` path.
+- Updated the original `openModal('customer')` guard and `canEditCustomers()` to use `canManageCustomersUi()` directly, then removed the duplicate customer permission wrapper.
+- Preserved Product/Promotion create restrictions for SALES, VIEWER/PC customer-create denial, and all Phase 3.2 backend area/assignment protections.
+- Added frontend unit coverage for Customer page button visibility, Settings/Data Entry consistency, modal-open guard consistency, PC/VIEWER denial, and Product/Promotion denial for SALES.
+
+Validation performed locally:
+
+- Baseline before implementation: `npm.cmd run verify` passed with 53/53 tests.
+- After implementation: `npm.cmd run check` passed.
+- After implementation: `npm.cmd run test` passed with 57/57 tests.
+- After implementation: `npm.cmd run verify` passed with 57/57 tests.
+- After implementation: `git diff --check` passed; Git only reported line-ending normalization warnings.
+- Confirmed `node_modules` and `package-lock.json` are absent, with no root temp/bak files detected.
+
+Runtime Apps Script deployment, live Google Sheets validation, desktop/mobile browser checks, iPhone Safari, Android Chrome, and PWA UAT remain required.
+
 ## 2026-08-18 — Sales Target Management UI/UX cleanup
 
 Scope completed:

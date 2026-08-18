@@ -1,5 +1,29 @@
 # RBAC & Security Audit — Saint-Gobain Sales System
 
+## Phase 3.2.1 UI permission-sync addendum — 2026-08-18
+
+Phase 3.2.1 updates the frontend customer add-action permission sync discovered in `index.html` and `js/app.js`.
+
+Confirmed source-level behavior:
+
+| UI entry point | SUPER_ADMIN | ADMIN | MANAGER | SALES | VIEWER | PC |
+|---|---|---|---|---|---|---|
+| Customer page `+ เพิ่มร้านค้า` | Show | Show | Hide | Show | Hide | Hide |
+| Settings > เพิ่มข้อมูล > `+ เพิ่มร้านค้า` | Show | Show | Hide | Show | Hide | Hide |
+| Customer create modal open guard | Allow | Allow | Deny | Allow | Deny | Deny |
+| Product/Promotion create actions for SALES | No | No | No | Hidden/forbidden | No | No |
+
+Root cause confirmed: the Customer page button used the generic `[data-permission]` renderer with `permissionFlag(permission, false)`, while Phase 3.2 customer modal/data-entry logic used `canManageCustomersUi()`. This duplicated permission source could hide the Customer page add button for `SALES`, especially when a stale pre-3.2 bootstrap permission map contained `canManageCustomers:false`.
+
+The remediation keeps Product/Promotion permissions unchanged and does not weaken backend customer area or assigned-sales validation.
+
+Automated source evidence:
+
+- `tests/unit/customer-permission.test.mjs` now covers frontend customer add-action visibility for `SUPER_ADMIN`, `ADMIN`, `SALES`, `VIEWER`, and `PC`; entry-point consistency between Settings/Data Entry, Customer page button, and modal open guard; and Product/Promotion create denial for `SALES`.
+- `npm.cmd run check`, `npm.cmd run test` with 57/57 tests, `npm.cmd run verify` with 57/57 tests, and `git diff --check` passed locally after implementation.
+
+Runtime role-matrix validation against the deployed Apps Script Web App, live Google Sheets, desktop browsers, iPhone Safari, Android Chrome, and PWA remains required before production readiness can be claimed.
+
 ## Phase 3.2 RBAC addendum — 2026-08-18
 
 Phase 3.2 updates the canonical customer-management policy discovered in `appscript/Permission.gs`, `appscript/Api.gs`, `appscript/Customer.gs`, and `js/app.js`.

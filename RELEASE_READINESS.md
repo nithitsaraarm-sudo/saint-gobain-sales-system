@@ -1,5 +1,29 @@
 # Release Readiness Report — Audit Remediation
 
+## Phase 3.2.1 Customer Add Button Permission Sync addendum — 2026-08-18
+
+Decision impact: **SOURCE UI PERMISSION SYNC REMEDIATED / NOT RUNTIME READY**.
+
+Phase 3.2.1 remediated the Customer page add-action visibility regression found after Phase 3.2:
+
+- The Customer page `+ เพิ่มร้านค้า` button and Settings > เพิ่มข้อมูล customer action now resolve `canManageCustomers` through the same frontend helper used by the customer modal open/edit flow.
+- `SALES` resolves customer-create UI access from the approved scoped customer-management policy, including resilience against stale pre-3.2 cached permission maps.
+- `VIEWER` and `PC` remain blocked from customer-create UI access.
+- Product Master and Promotion Master add actions remain hidden/forbidden for `SALES`.
+- Customer backend authorization and Phase 3.2 area/assignment protections were not changed.
+- Automated unit coverage increased to 57 tests after adding the Phase 3.2.1 frontend permission-sync suite.
+
+Local source validation for this addendum:
+
+- Baseline `npm.cmd run verify`: passed before implementation with 53/53 tests.
+- `npm.cmd run check`: passed after implementation.
+- `npm.cmd run test`: passed after implementation with 57/57 tests.
+- `npm.cmd run verify`: passed after implementation with 57/57 tests.
+- `git diff --check`: passed; Git only reported line-ending normalization warnings.
+- `node_modules`: absent; `package-lock.json`: absent; no root temp/bak files detected.
+
+Runtime readiness still requires Apps Script deployment, live role-specific Google Sheets/API/UAT, desktop browser checks, iPhone Safari, Android Chrome, and installed-PWA verification. This addendum does **not** change the release recommendation to runtime-ready.
+
 ## Phase 3.2 Sales scoped customer self-service addendum — 2026-08-18
 
 Decision impact: **SOURCE RBAC REMEDIATED / NOT RUNTIME READY**.
