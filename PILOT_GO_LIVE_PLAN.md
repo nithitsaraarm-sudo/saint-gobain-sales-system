@@ -3,6 +3,18 @@
 Date prepared: 2026-07-29
 Current recommendation: **Do not start pilot until UAT passes.**
 
+Runtime UAT deferment status as of 2026-08-18: **DEFERRED FOR DEVELOPMENT / BLOCKER BEFORE PILOT GO-LIVE**.
+
+Development may continue from the current automated baseline, but Pilot Go-Live must not start until these runtime items are executed and PASS with evidence:
+
+- Apps Script live backend
+- Google Sheets persistence
+- Desktop runtime smoke test
+- SALES/ADMIN/RBAC runtime checks
+- iPhone Safari critical flow
+- Android Chrome critical flow
+- Installed PWA install/open/update flow
+
 ## 1. Pilot objective
 
 Run a limited pilot with controlled users and real-but-recoverable data to validate production behavior before broad rollout.
@@ -10,6 +22,7 @@ Run a limited pilot with controlled users and real-but-recoverable data to valid
 ## 2. Prerequisites
 
 - UAT checklist completed and signed off.
+- Deferred Runtime UAT resumed and passed for Apps Script live backend, Google Sheets persistence, Desktop, iPhone Safari, Android Chrome, and installed PWA.
 - All P0 tests in `TEST_CASES.md` passed with evidence.
 - No unresolved Sev1/Sev2 defects.
 - Google Sheet backup and restore drill completed.

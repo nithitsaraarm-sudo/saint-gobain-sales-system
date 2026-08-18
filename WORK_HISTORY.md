@@ -1,3 +1,32 @@
+## 2026-08-18 — Deferred Runtime UAT Status
+
+Scope completed:
+
+- Audited release/status documentation after Phase 4 automated integration/API contract testing.
+- Recorded the explicit project decision to defer Runtime UAT temporarily so development can continue.
+- Preserved the release blocker: Runtime UAT must PASS before Pilot Go-Live and Production Go-Live.
+- Updated status language so live/runtime tests remain **NOT RUN**, not PASS or source-verified.
+- Preserved the current automated baseline: static validation PASS, unit tests PASS, integration/API contract tests PASS, total automated tests 92/92 PASS.
+- No production runtime, API, backend, database, test harness, or tooling files were changed.
+
+Gate status:
+
+| Gate | Status |
+|---|---|
+| Development Gate | PASS |
+| Release Gate | BLOCKED — Runtime UAT pending |
+
+Deferred Runtime UAT status:
+
+| Runtime validation | Status |
+|---|---|
+| Apps Script Live Backend | NOT RUN |
+| Google Sheets Live Data | NOT RUN |
+| Desktop Runtime UAT | NOT RUN |
+| iPhone Safari | NOT RUN |
+| Android Chrome | NOT RUN |
+| PWA Runtime | NOT RUN |
+
 ## 2026-08-18 — Phase 4 Integration / API Contract Testing
 
 Scope completed:

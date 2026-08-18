@@ -4,6 +4,8 @@ Date prepared: 2026-07-29
 Version inspected: `0.5.26`
 Release recommendation: **Not ready for real-user UAT/Pilot until P0 runtime gates pass.**
 
+Runtime UAT deferment note as of 2026-08-18: live backend, live Google Sheets persistence, Desktop browser, iPhone Safari, Android Chrome, and installed PWA validation are **NOT RUN** and intentionally deferred during active development. This deferment does not approve Pilot Go-Live or Production Go-Live.
+
 ## Highlights included in the V1 candidate
 
 - Role-based access control for `SUPER_ADMIN`, `ADMIN`, `MANAGER`, `SALES`, and `VIEWER`.

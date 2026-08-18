@@ -1,5 +1,53 @@
 # Release Readiness Report — Audit Remediation
 
+## Deferred Runtime UAT decision — 2026-08-18
+
+Decision impact: **DEVELOPMENT MAY CONTINUE / RELEASE GATE BLOCKED**.
+
+Runtime UAT is intentionally deferred during active development. This deferment does **not** mean runtime validation passed, and it does **not** weaken Pilot Go-Live or Production Go-Live criteria.
+
+Current live/runtime status:
+
+| Runtime validation | Status |
+|---|---|
+| Apps Script Live Backend | NOT RUN |
+| Google Sheets Live Data | NOT RUN |
+| Desktop Runtime UAT | NOT RUN |
+| iPhone Safari | NOT RUN |
+| Android Chrome | NOT RUN |
+| PWA Runtime | NOT RUN |
+
+Gate status:
+
+| Gate | Status | Meaning |
+|---|---|---|
+| Development Gate | PASS | Engineering phases may continue from the current source-verified baseline. |
+| Release Gate | BLOCKED — Runtime UAT pending | Pilot Go-Live and Production Go-Live must not proceed until mandatory runtime validation passes with evidence. |
+
+Current automated baseline preserved:
+
+- Static validation: PASS
+- Unit tests: PASS
+- Integration/API contract tests: PASS
+- Total automated tests: 92/92 PASS
+- Phase 4 commit: `a3c25c3f5a295ba8f01b3996fa30f9a0ece78535`
+
+Mandatory before Pilot Go-Live:
+
+- Apps Script live backend: PASS
+- Google Sheets persistence: PASS
+- Desktop runtime smoke test: PASS
+- SALES/ADMIN/RBAC runtime checks: PASS
+- iPhone Safari critical flow: PASS
+- Android Chrome critical flow: PASS
+- PWA install/open/update flow: PASS
+
+Mandatory before Full Production Go-Live:
+
+- All P0/P1 runtime blockers resolved.
+- Critical mobile/PWA flows PASS.
+- No unresolved live backend persistence issue.
+
 ## Phase 4 Integration/API Contract Testing addendum — 2026-08-18
 
 Decision impact: **SOURCE CONTRACT COVERAGE IMPROVED / NOT RUNTIME READY**.

@@ -1,3 +1,45 @@
+## Deferred Runtime UAT — 2026-08-18
+
+Status: **NOT RUN**
+
+Reason: Runtime UAT is temporarily deferred so active engineering phases may continue. This is a scheduling/status decision only; it is not a test pass, source verification, or release approval.
+
+Runtime validations intentionally deferred:
+
+| Runtime validation | Status |
+|---|---|
+| Apps Script Live Backend | NOT RUN |
+| Google Sheets Live Data | NOT RUN |
+| Desktop Runtime UAT | NOT RUN |
+| iPhone Safari | NOT RUN |
+| Android Chrome | NOT RUN |
+| PWA Runtime | NOT RUN |
+
+Gate distinction:
+
+| Gate | Status |
+|---|---|
+| Development Gate | PASS |
+| Release Gate | BLOCKED — Runtime UAT pending |
+
+Mandatory before Pilot Go-Live:
+
+- Apps Script live backend
+- Google Sheets persistence
+- Desktop browser runtime smoke test
+- SALES/ADMIN/RBAC runtime checks
+- iPhone Safari critical flow
+- Android Chrome critical flow
+- Installed PWA install/open/update flow
+
+Mandatory before Production Go-Live:
+
+- All P0/P1 runtime blockers resolved.
+- Critical mobile/PWA flows PASS.
+- No unresolved live backend persistence issue.
+
+Automated baseline remains: static validation PASS, unit tests PASS, integration/API contract tests PASS, total automated tests 92/92 PASS. Automated tests do not replace runtime UAT.
+
 ## Phase 4 Integration / API Contract Testing addendum — 2026-08-18
 
 This addendum covers the completed Phase 4 zero-network integration/API contract suite. Tests use synthetic fixtures, fake `fetch`, VM-loaded Apps Script/frontend source, and in-memory sheet/session stubs only. They do not call the deployed Apps Script Web App, production Google Sheets, Drive, Gmail, browser APIs, iPhone Safari, Android Chrome, or installed PWA.

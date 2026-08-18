@@ -1,5 +1,40 @@
 # แผนงานโครงการ (Project Plan)
 
+## Runtime UAT Deferment Gate — 2026-08-18
+
+Current project status separates engineering progress from release approval:
+
+| Gate | Status | Meaning |
+|---|---|---|
+| Development Gate | PASS | Development may continue to the next approved engineering phase. |
+| Release Gate | BLOCKED — Runtime UAT pending | Pilot Go-Live and Production Go-Live remain blocked until live runtime validation passes with evidence. |
+
+Current verified automated baseline:
+
+- Static validation: PASS
+- Unit tests: PASS
+- Integration/API contract tests: PASS
+- Total automated tests: 92/92 PASS
+- Phase 4 commit: `a3c25c3f5a295ba8f01b3996fa30f9a0ece78535`
+
+Runtime UAT is intentionally deferred for now and remains **NOT RUN**:
+
+- Apps Script Live Backend: NOT RUN
+- Google Sheets Live Data: NOT RUN
+- Desktop Runtime UAT: NOT RUN
+- iPhone Safari: NOT RUN
+- Android Chrome: NOT RUN
+- PWA Runtime: NOT RUN
+
+Next-step sequence:
+
+1. Phase 4 Automated Integration/API Contract Tests — completed.
+2. Runtime UAT — DEFERRED.
+3. Continue Development — next approved engineering phase.
+4. Before Pilot Go-Live — resume Runtime UAT, fix runtime bugs, re-test, run production smoke, then decide Pilot Go-Live.
+
+Runtime UAT must not be removed from the final release path.
+
 เอกสารนี้สรุป roadmap, milestone, ภารกิจสำคัญ และแผนการทำงานระยะสั้น-กลาง-ยาว สำหรับทีมพัฒนา
 
 ## ภาพรวม Roadmap (6 เดือนแรก)
