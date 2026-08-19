@@ -65,7 +65,10 @@ const READ_ACTIONS = [
   'getSalesTarget',
   'getEffectiveSalesTarget',
   'getSalesTargetFormOptions',
-  'getSalesTargetManagementData'
+  'getSalesTargetManagementData',
+  'getCustomerAgreements',
+  'getAgreementDetail',
+  'getAgreementEntries'
 ];
 const WRITE_ACTIONS = [
   'login',
@@ -100,7 +103,16 @@ const WRITE_ACTIONS = [
   'saveQuotation',
   'saveSalesTarget',
   'updateSalesTarget',
-  'setSalesTargetStatus'
+  'setSalesTargetStatus',
+  'createCustomerAgreement',
+  'updateCustomerAgreement',
+  'closeCustomerAgreement',
+  'archiveCustomerAgreement',
+  'createAgreementEntry',
+  'updateAgreementEntry',
+  'deactivateAgreementEntry',
+  'uploadAgreementAttachment',
+  'deleteAgreementAttachment'
 ];
 
 function isApiDebugEnabled() {
@@ -976,6 +988,58 @@ function mockApi(action, payload) {
     case 'reorderFavoriteCustomers':
       window.__mockFavoriteCustomers=(data.customerIds||[]).map(id=>(window.__mockFavoriteCustomers||[]).find(c=>c.customerId===id)).filter(Boolean);
       return {ok:true,data:data,message:'จัดลำดับร้านค้าโปรดแล้ว'};
+    case 'getCustomerAgreements': {
+      window.__mockCustomerAgreements=window.__mockCustomerAgreements||[];
+      window.__mockAgreementEntries=window.__mockAgreementEntries||[];
+      const customer=(window.DB?.customers||[]).find(c=>String(c.customerId||c.customerCode||c.id||'')===String(data.customerId||''));
+      const agreements=window.__mockCustomerAgreements.filter(item=>String(item.customerId||'')===String(data.customerId||'')&&item.active!==false);
+      return {ok:true,data:{customer:customer||{customerId:data.customerId},agreements:agreements.map(item=>Object.assign({},item,{summary:{entryCount:window.__mockAgreementEntries.filter(entry=>entry.agreementId===item.agreementId&&entry.active!==false).length,totalTarget:0,totalActual:0,totalEligible:0,totalBenefit:0,achievementPercent:''}})),summary:{entryCount:0,totalTarget:0,totalActual:0,totalEligible:0,totalBenefit:0,achievementPercent:''}},message:'Mock agreements loaded'};
+    }
+    case 'getAgreementDetail': {
+      window.__mockCustomerAgreements=window.__mockCustomerAgreements||[];
+      window.__mockAgreementEntries=window.__mockAgreementEntries||[];
+      window.__mockAgreementAttachments=window.__mockAgreementAttachments||[];
+      const agreement=window.__mockCustomerAgreements.find(item=>String(item.agreementId||'')===String(data.agreementId||''));
+      const entries=window.__mockAgreementEntries.filter(item=>String(item.agreementId||'')===String(data.agreementId||'')&&item.active!==false);
+      const attachments=window.__mockAgreementAttachments.filter(item=>String(item.agreementId||'')===String(data.agreementId||'')&&item.active!==false);
+      return agreement?{ok:true,data:{agreement,entries,attachments,summary:{entryCount:entries.length,totalTarget:0,totalActual:0,totalEligible:0,totalBenefit:0,achievementPercent:''}},message:'Mock agreement loaded'}:{ok:false,code:'NOT_FOUND',message:'Agreement not found'};
+    }
+    case 'getAgreementEntries':
+      window.__mockAgreementEntries=window.__mockAgreementEntries||[];
+      return {ok:true,data:window.__mockAgreementEntries.filter(item=>String(item.agreementId||'')===String(data.agreementId||'')&&item.active!==false),message:'Mock entries loaded'};
+    case 'createCustomerAgreement':
+      window.__mockCustomerAgreements=window.__mockCustomerAgreements||[];
+      window.__mockCustomerAgreements.push(Object.assign({agreementId:'AGR-MOCK-'+Date.now(),version:1,status:'DRAFT',active:true,createdAt:new Date().toISOString()},data,{updatedAt:new Date().toISOString()}));
+      return {ok:true,data:window.__mockCustomerAgreements[window.__mockCustomerAgreements.length-1],message:'Mock agreement saved'};
+    case 'updateCustomerAgreement':
+      window.__mockCustomerAgreements=window.__mockCustomerAgreements||[];
+      window.__mockCustomerAgreements=window.__mockCustomerAgreements.map(item=>String(item.agreementId||'')===String(data.agreementId||'')?Object.assign({},item,data,{version:Number(item.version||1)+1,updatedAt:new Date().toISOString()}):item);
+      return {ok:true,data:window.__mockCustomerAgreements.find(item=>String(item.agreementId||'')===String(data.agreementId||'')),message:'Mock agreement updated'};
+    case 'closeCustomerAgreement':
+    case 'archiveCustomerAgreement':
+      window.__mockCustomerAgreements=window.__mockCustomerAgreements||[];
+      window.__mockCustomerAgreements=window.__mockCustomerAgreements.map(item=>String(item.agreementId||'')===String(data.agreementId||'')?Object.assign({},item,{status:action==='closeCustomerAgreement'?'CLOSED':'ARCHIVED',active:action==='closeCustomerAgreement',version:Number(item.version||1)+1,updatedAt:new Date().toISOString()}):item);
+      return {ok:true,data:window.__mockCustomerAgreements.find(item=>String(item.agreementId||'')===String(data.agreementId||'')),message:'Mock agreement status updated'};
+    case 'createAgreementEntry':
+      window.__mockAgreementEntries=window.__mockAgreementEntries||[];
+      window.__mockAgreementEntries.push(Object.assign({entryId:'AGRE-MOCK-'+Date.now(),version:1,active:true,createdAt:new Date().toISOString()},data,{updatedAt:new Date().toISOString()}));
+      return {ok:true,data:window.__mockAgreementEntries[window.__mockAgreementEntries.length-1],message:'Mock entry saved'};
+    case 'updateAgreementEntry':
+      window.__mockAgreementEntries=window.__mockAgreementEntries||[];
+      window.__mockAgreementEntries=window.__mockAgreementEntries.map(item=>String(item.entryId||'')===String(data.entryId||'')?Object.assign({},item,data,{version:Number(item.version||1)+1,updatedAt:new Date().toISOString()}):item);
+      return {ok:true,data:window.__mockAgreementEntries.find(item=>String(item.entryId||'')===String(data.entryId||'')),message:'Mock entry updated'};
+    case 'deactivateAgreementEntry':
+      window.__mockAgreementEntries=window.__mockAgreementEntries||[];
+      window.__mockAgreementEntries=window.__mockAgreementEntries.map(item=>String(item.entryId||'')===String(data.entryId||'')?Object.assign({},item,{active:false,version:Number(item.version||1)+1}):item);
+      return {ok:true,data:{entryId:data.entryId,active:false},message:'Mock entry deactivated'};
+    case 'uploadAgreementAttachment':
+      window.__mockAgreementAttachments=window.__mockAgreementAttachments||[];
+      window.__mockAgreementAttachments.push({attachmentId:'AGRA-MOCK-'+Date.now(),agreementId:data.agreementId,fileName:data.fileName,mimeType:data.mimeType,fileSize:data.fileSize||0,driveUrl:data.fileData||'',active:true,version:1});
+      return {ok:true,data:window.__mockAgreementAttachments[window.__mockAgreementAttachments.length-1],message:'Mock attachment uploaded'};
+    case 'deleteAgreementAttachment':
+      window.__mockAgreementAttachments=window.__mockAgreementAttachments||[];
+      window.__mockAgreementAttachments=window.__mockAgreementAttachments.map(item=>String(item.attachmentId||'')===String(data.attachmentId||'')?Object.assign({},item,{active:false,version:Number(item.version||1)+1}):item);
+      return {ok:true,data:{attachmentId:data.attachmentId,active:false},message:'Mock attachment deleted'};
     case 'getProductPreferences':
       window.__mockFavoriteProducts=window.__mockFavoriteProducts||[];
       window.__mockPinnedProducts=window.__mockPinnedProducts||[];

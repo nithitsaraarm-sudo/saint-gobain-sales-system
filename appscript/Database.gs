@@ -219,6 +219,15 @@ function getSheetDataCacheKey(sheetName) {
   if (name === String(typeof SALES_TARGETS_SHEET !== 'undefined' ? SALES_TARGETS_SHEET : 'SalesTargets')) {
     return 'sheetData:salesTargets';
   }
+  if (name === String(typeof CUSTOMER_AGREEMENTS_SHEET !== 'undefined' ? CUSTOMER_AGREEMENTS_SHEET : 'CustomerAgreements')) {
+    return 'sheetData:customerAgreements';
+  }
+  if (name === String(typeof AGREEMENT_ENTRIES_SHEET !== 'undefined' ? AGREEMENT_ENTRIES_SHEET : 'AgreementEntries')) {
+    return 'sheetData:agreementEntries';
+  }
+  if (name === String(typeof AGREEMENT_ATTACHMENTS_SHEET !== 'undefined' ? AGREEMENT_ATTACHMENTS_SHEET : 'AgreementAttachments')) {
+    return 'sheetData:agreementAttachments';
+  }
   return '';
 }
 
@@ -573,6 +582,15 @@ function getHeadersForSheet(sheetName) {
   }
   if (String(sheetName || '') === 'SalesTargets') {
     return ['targetId', 'targetType', 'periodYear', 'periodMonth', 'periodStart', 'periodEnd', 'businessUnit', 'salesArea', 'salesUserId', 'salesUserNameSnapshot', 'targetAmount', 'currency', 'status', 'active', 'createdByUserId', 'createdByNameSnapshot', 'createdAt', 'updatedByUserId', 'updatedByNameSnapshot', 'updatedAt', 'version'];
+  }
+  if (sheetName === SHEET_NAMES.CUSTOMER_AGREEMENTS || String(sheetName || '') === 'CustomerAgreements') {
+    return ['agreementId', 'customerId', 'customerCodeSnapshot', 'customerNameSnapshot', 'salesAreaSnapshot', 'businessUnit', 'agreementName', 'agreementYear', 'startDate', 'endDate', 'status', 'note', 'active', 'createdByUserId', 'createdByNameSnapshot', 'createdAt', 'updatedByUserId', 'updatedByNameSnapshot', 'updatedAt', 'version'];
+  }
+  if (sheetName === SHEET_NAMES.AGREEMENT_ENTRIES || String(sheetName || '') === 'AgreementEntries') {
+    return ['entryId', 'agreementId', 'entryType', 'entryLabel', 'periodYear', 'periodMonth', 'periodQuarter', 'periodHalf', 'targetAmount', 'actualAmount', 'eligibleAmount', 'benefitRate', 'achievementPercent', 'passed', 'benefitAmount', 'note', 'sortOrder', 'active', 'createdByUserId', 'createdByNameSnapshot', 'createdAt', 'updatedByUserId', 'updatedByNameSnapshot', 'updatedAt', 'deletedByUserId', 'deletedAt', 'version'];
+  }
+  if (sheetName === SHEET_NAMES.AGREEMENT_ATTACHMENTS || String(sheetName || '') === 'AgreementAttachments') {
+    return ['attachmentId', 'agreementId', 'fileName', 'fileExtension', 'mimeType', 'fileSize', 'driveFileId', 'driveUrl', 'active', 'uploadedByUserId', 'uploadedByNameSnapshot', 'uploadedAt', 'deletedByUserId', 'deletedAt', 'version'];
   }
   return [];
 }

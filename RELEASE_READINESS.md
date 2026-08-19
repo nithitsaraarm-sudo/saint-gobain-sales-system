@@ -1,5 +1,23 @@
 # Release Readiness Report — Audit Remediation
 
+## Customer Agreement V1 addendum — 2026-08-19
+
+Decision impact: **DEVELOPMENT VALIDATION PASSED / RELEASE GATE STILL BLOCKED**.
+
+Customer Agreement / Store Benefit Tracking V1 has local source-level validation only:
+
+| Validation | Status |
+|---|---|
+| Static JS/GAS/JSON/assets check | PASS |
+| Automated unit/integration tests | PASS — 103/103 |
+| Apps Script live deployment | NOT RUN |
+| Google Sheets live migration/headers | NOT RUN |
+| Google Drive attachment upload | NOT RUN |
+| Desktop/mobile browser UAT | NOT RUN |
+| iPhone Safari, Android Chrome, PWA UAT | NOT RUN |
+
+Release recommendation is unchanged: do not approve Pilot Go-Live or Production Go-Live until runtime/manual UAT passes with evidence.
+
 ## Deferred Runtime UAT decision — 2026-08-18
 
 Decision impact: **DEVELOPMENT MAY CONTINUE / RELEASE GATE BLOCKED**.

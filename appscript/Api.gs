@@ -140,6 +140,36 @@ function api(action, payload) {
         return authorizeAction(removeFavoriteCustomer, [payload]);
       case 'reorderFavoriteCustomers':
         return authorizeAction(reorderFavoriteCustomers, [payload]);
+      case 'getCustomerAgreements':
+      case 'getAgreementDetail':
+      case 'getAgreementEntries':
+        if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.SALES, USER_ROLES.VIEWER])) return forbidden('Insufficient permission');
+        if (!payload || typeof payload !== 'object') payload = {};
+        payload.currentUser = user;
+        if (normalizedAction === 'getCustomerAgreements') return authorizeAction(getCustomerAgreements, [payload]);
+        if (normalizedAction === 'getAgreementDetail') return authorizeAction(getAgreementDetail, [payload]);
+        return authorizeAction(getAgreementEntries, [payload]);
+      case 'createCustomerAgreement':
+      case 'updateCustomerAgreement':
+      case 'closeCustomerAgreement':
+      case 'archiveCustomerAgreement':
+      case 'createAgreementEntry':
+      case 'updateAgreementEntry':
+      case 'deactivateAgreementEntry':
+      case 'uploadAgreementAttachment':
+      case 'deleteAgreementAttachment':
+        if (!hasRole(user, [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.SALES])) return forbidden('Insufficient permission');
+        if (!payload || typeof payload !== 'object') payload = {};
+        payload.currentUser = user;
+        if (normalizedAction === 'createCustomerAgreement') return authorizeAction(createCustomerAgreement, [payload]);
+        if (normalizedAction === 'updateCustomerAgreement') return authorizeAction(updateCustomerAgreement, [payload]);
+        if (normalizedAction === 'closeCustomerAgreement') return authorizeAction(closeCustomerAgreement, [payload]);
+        if (normalizedAction === 'archiveCustomerAgreement') return authorizeAction(archiveCustomerAgreement, [payload]);
+        if (normalizedAction === 'createAgreementEntry') return authorizeAction(createAgreementEntry, [payload]);
+        if (normalizedAction === 'updateAgreementEntry') return authorizeAction(updateAgreementEntry, [payload]);
+        if (normalizedAction === 'deactivateAgreementEntry') return authorizeAction(deactivateAgreementEntry, [payload]);
+        if (normalizedAction === 'uploadAgreementAttachment') return authorizeAction(uploadAgreementAttachment, [payload]);
+        return authorizeAction(deleteAgreementAttachment, [payload]);
       case 'saveProduct':
         if (!permissions.canManageProducts) return forbidden('Insufficient permission');
         return authorizeAction(saveProduct, [payload]);

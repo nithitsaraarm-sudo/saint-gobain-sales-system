@@ -1,5 +1,28 @@
 # RBAC & Security Audit — Saint-Gobain Sales System
 
+## Customer Agreement V1 RBAC addendum — 2026-08-19
+
+Customer Agreement / Store Benefit Tracking uses the existing Customer scope model as its authority source:
+
+| Feature | SUPER_ADMIN | ADMIN | MANAGER | SALES | VIEWER | PC |
+|---|---|---|---|---|---|---|
+| View customer agreement list/detail | Yes | Yes, within existing admin/customer scope | Yes, read scope only through read routes | Yes, own authorized customer/area scope | Yes, read only where route allows | No |
+| Create/update customer agreement | Yes | Yes, within existing admin/customer scope | No | Yes, own authorized customer/area scope | No | No |
+| Close/archive customer agreement | Yes | Yes, within existing admin/customer scope | No | Yes, own authorized customer/area scope | No | No |
+| Create/update/deactivate agreement entries | Yes | Yes, within existing admin/customer scope | No | Yes, own authorized customer/area scope | No | No |
+| Upload/delete agreement attachments | Yes | Yes, within existing admin/customer scope | No | Yes, own authorized customer/area scope | No | No |
+| Edit closed/archived agreement | No | No | No | No | No | No |
+
+Security notes:
+
+- Backend never trusts customer area or assignment from the request payload; it loads the authoritative Customer record with `getCustomer(customerId, { currentUser })`.
+- Derived financial fields are backend-owned; caller-supplied achievement, pass/fail, benefit amount, and summary values are ignored.
+- PC is intentionally not allowed and does not fall through to SALES.
+- Writes require optimistic concurrency via `expectedVersion` and re-check current records inside `LockService` before final write.
+- Attachment API does not expose `driveFileId` to the frontend response.
+
+Remaining live validation required: Apps Script deployment, Google Sheets live headers, Drive upload permissions, real role sessions, and mobile/PWA UAT.
+
 ## Phase 4 Integration/API Contract Testing addendum — 2026-08-18
 
 Phase 4 adds automated source-level contract tests for the current RBAC/API behavior without calling live Apps Script, Google Sheets, browsers, devices, or production endpoints.

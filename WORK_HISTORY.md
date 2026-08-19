@@ -1,3 +1,24 @@
+## 2026-08-19 — Customer Agreement / Store Benefit Tracking V1
+
+Scope completed:
+
+- Added a separate Customer Agreement module for manual customer agreement and store-benefit tracking.
+- Added additive sheet support for `CustomerAgreements`, `AgreementEntries`, and `AgreementAttachments`.
+- Added central API routing for agreement list/detail/create/update/close/archive, entry create/update/deactivate, and attachment upload/delete.
+- Added backend-owned calculations for achievement percent, pass/fail, benefit amount, and summary totals.
+- Added customer-card UI entry point and responsive agreement list/detail modal with entry and attachment workflows.
+- Preserved Customer area/assigned-sales scope, PC non-SALES behavior, VIEWER read/write restrictions, and existing quotation/customer/product/promotion logic.
+- Added optimistic concurrency re-checks inside `LockService` critical sections before writes.
+- Added unit and integration tests for formulas, validation, RBAC/API route contracts, and attachment validation.
+
+Validation completed:
+
+- `npm.cmd run check` passed.
+- `npm.cmd run test:all` passed with 103/103 tests.
+- `npm.cmd run verify` passed with 103/103 tests.
+
+Runtime Apps Script deployment, live Google Sheets validation, Google Drive upload validation, desktop/mobile browser checks, iPhone Safari, Android Chrome, and PWA UAT remain required before release approval.
+
 ## 2026-08-18 — Deferred Runtime UAT Status
 
 Scope completed:

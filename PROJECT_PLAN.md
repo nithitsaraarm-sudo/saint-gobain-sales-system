@@ -1,5 +1,28 @@
 # แผนงานโครงการ (Project Plan)
 
+## Customer Agreement V1 — 2026-08-19
+
+Status: **Implementation complete at source level; runtime UAT pending**.
+
+This phase adds Customer Agreement / Store Benefit Tracking as a separate module, not as part of Sales Target. V1 is manual-input only and has no automatic sales-data synchronization.
+
+Implemented scope:
+
+- Additive data structures for `CustomerAgreements`, `AgreementEntries`, and `AgreementAttachments`.
+- Backend formulas for achievement, pass/fail, benefit, and summary.
+- Customer-scope RBAC using existing Customer area/assigned-sales rules.
+- Customer card entry point and responsive agreement modal UI.
+- Attachment validation and Drive storage workflow.
+- Automated unit/integration coverage for core formulas, validation, RBAC route behavior, and attachment validation.
+
+Pending before release:
+
+- Apps Script deployment.
+- Live Google Sheets header verification/migration.
+- Google Drive upload verification.
+- Desktop, Android Chrome, iPhone Safari, and PWA UAT.
+- Customer Agreement regression in Customer list/detail workflows.
+
 ## Runtime UAT Deferment Gate — 2026-08-18
 
 Current project status separates engineering progress from release approval:

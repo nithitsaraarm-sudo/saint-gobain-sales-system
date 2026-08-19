@@ -1,5 +1,16 @@
 # Saint-Gobain Sales System
 
+## Customer Agreement / Store Benefit Tracking V1
+
+V1 adds a separate customer-context module for manually tracking customer agreements and store benefits. It is intentionally **not** merged into Sales Target and has **no automatic sales-data synchronization**.
+
+- Source of truth: manual user input for target, actual, eligible sales, and benefit rate.
+- Backend-owned derived values: achievement percent, pass/fail, benefit amount, and summary totals.
+- Dedicated Sheets: `CustomerAgreements`, `AgreementEntries`, and `AgreementAttachments`.
+- Permissions reuse existing Customer area/assignment scope. SALES users may manage only agreements for customers they are authorized to access. VIEWER and PC remain read/write restricted by the central API router.
+- Attachments support PDF, PNG, and XLSX only, up to 10 MB, stored in Google Drive through Apps Script.
+- Runtime Google Sheets, Drive upload, mobile browser, and PWA UAT remain required before release approval.
+
 เอกสารเบื้องต้นสำหรับทีมพัฒนา: โครงงาน PWA เพื่อจัดการใบเสนอราคาและการคำนวณส่วนลดโดยใช้ Google Sheets เป็นแหล่งข้อมูลหลัก
 
 **เนื้อหาใน repo นี้**

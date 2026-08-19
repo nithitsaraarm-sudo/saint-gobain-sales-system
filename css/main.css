@@ -1425,6 +1425,67 @@ body.quotation-action-sheet-open{overflow:hidden;touch-action:none}
 .customer-detail-actions{
     justify-content:flex-end;
 }
+body.customer-agreement-modal-open{overflow:hidden;touch-action:none}
+#modal.customer-agreement-modal{box-sizing:border-box;padding:10px;padding:calc(10px + env(safe-area-inset-top,0px)) 10px calc(10px + env(safe-area-inset-bottom,0px));overflow:hidden;align-items:center;justify-items:center}
+#modal.customer-agreement-modal .modal-card{box-sizing:border-box;width:min(980px,calc(100vw - 20px));max-width:100%;max-height:calc(100vh - 20px);max-height:calc(100dvh - 20px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;overflow:hidden;padding:0;border-radius:24px}
+#modal.customer-agreement-modal .section-title{flex-shrink:0;margin:0;padding:16px 18px 12px;border-bottom:1px solid var(--line);gap:12px}
+#modal.customer-agreement-modal .section-title h2{min-width:0;margin:0;overflow-wrap:anywhere}
+#modal.customer-agreement-modal .section-title .ghost{flex-shrink:0;min-height:44px}
+#modal.customer-agreement-modal #modalBody{flex:1;min-height:0;overflow:hidden}
+.customer-agreement-modal-body{min-height:0;overflow:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.agreement-panel{display:grid;gap:14px;padding:16px 18px 18px;min-width:0}
+.agreement-header,.agreement-detail-header,.agreement-section-title{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}
+.agreement-header h3,.agreement-detail-header h3,.agreement-section-title h4{margin:0;overflow-wrap:anywhere}
+.agreement-header small,.agreement-detail-header small,.agreement-section-title small{color:var(--muted);font-weight:800}
+.agreement-new-button{min-height:44px;white-space:nowrap}
+.agreement-state{border:1px dashed var(--line);border-radius:16px;background:#f8fbff;color:var(--muted);padding:12px 14px;font-weight:800;overflow-wrap:anywhere}
+.agreement-state[hidden]{display:none}
+.agreement-state.error{border-color:#fecdd3;background:#fff1f2;color:#b42318}
+.agreement-state.loading{color:var(--blue)}
+.agreement-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.agreement-summary-card,.agreement-card,.agreement-entry-card,.agreement-empty,.agreement-attachment-row{border:1px solid var(--line);border-radius:18px;background:#fff;padding:12px 14px;min-width:0}
+.agreement-summary-card{background:#f8fbff}
+.agreement-summary-card small,.agreement-mini-summary small,.agreement-entry-metrics small{display:block;color:var(--muted);font-size:12px;font-weight:900}
+.agreement-summary-card b,.agreement-mini-summary b,.agreement-entry-metrics b{display:block;color:var(--blue);font-size:18px;line-height:1.25;overflow-wrap:anywhere}
+.agreement-list,.agreement-entry-list,.agreement-attachment-list{display:grid;gap:10px;min-width:0}
+.agreement-card{display:grid;gap:10px}
+.agreement-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;min-width:0}
+.agreement-card-head h4{margin:0;color:#08223c;overflow-wrap:anywhere}
+.agreement-card-head small{color:var(--muted);font-weight:800}
+.agreement-status{display:inline-flex;align-items:center;border-radius:999px;padding:5px 9px;font-size:12px;font-weight:900;border:1px solid var(--line);background:#f8fbff;color:#475569;white-space:nowrap}
+.agreement-status-active{background:#ecfdf3;border-color:#bbf7d0;color:#14833b}
+.agreement-status-draft{background:#fff7e6;border-color:#fed7aa;color:#b45309}
+.agreement-status-closed{background:#eff6ff;border-color:#bfdbfe;color:#1d5fd0}
+.agreement-status-archived{background:#f8fafc;border-color:#e2e8f0;color:#475569}
+.agreement-mini-summary,.agreement-entry-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.agreement-entry-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}
+.agreement-card-actions,.agreement-entry-actions,.agreement-form-actions,.agreement-attachment-form{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.agreement-card-actions button,.agreement-entry-actions button,.agreement-form-actions button,.agreement-attachment-form button{min-height:44px}
+.agreement-form,.agreement-entry-form{border:1px solid var(--line);border-radius:20px;background:#f8fbff;padding:14px;display:grid;gap:12px}
+.agreement-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.agreement-field-full{grid-column:1/-1}
+.agreement-form input,.agreement-form select,.agreement-form textarea,.agreement-entry-form input,.agreement-entry-form select,.agreement-entry-form textarea{width:100%;max-width:100%;min-height:44px;box-sizing:border-box}
+.agreement-form textarea,.agreement-entry-form textarea{min-height:76px;resize:vertical}
+.agreement-detail-header{align-items:flex-start}
+.agreement-entry-card{display:grid;gap:10px}
+.agreement-entry-card b{overflow-wrap:anywhere}
+.agreement-entry-card small{color:var(--muted);font-weight:800}
+.agreement-attachment-form{border:1px dashed var(--line);border-radius:18px;background:#f8fbff;padding:12px}
+.agreement-attachment-form span{color:var(--muted);font-weight:800;overflow-wrap:anywhere}
+.agreement-attachment-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center}
+.agreement-attachment-row a{font-weight:900;color:var(--blue);overflow-wrap:anywhere}
+.agreement-attachment-row small{color:var(--muted);font-weight:800}
+.danger-text{color:#b42318!important;border-color:#fecdd3!important;background:#fff1f2!important}
+@media(max-width:760px){
+  #modal.customer-agreement-modal{align-items:end;padding:8px;padding:calc(8px + env(safe-area-inset-top,0px)) 8px calc(8px + env(safe-area-inset-bottom,0px))}
+  #modal.customer-agreement-modal .modal-card{width:calc(100vw - 16px);max-height:calc(100vh - 16px);max-height:calc(100dvh - 16px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px));border-radius:20px}
+  #modal.customer-agreement-modal .section-title{padding:14px}
+  .agreement-panel{padding:14px}
+  .agreement-header,.agreement-detail-header{display:grid;grid-template-columns:1fr;align-items:start}
+  .agreement-summary-grid,.agreement-form-grid,.agreement-mini-summary,.agreement-entry-metrics{grid-template-columns:1fr}
+  .agreement-attachment-row{grid-template-columns:1fr}
+  .agreement-card-actions,.agreement-entry-actions,.agreement-form-actions,.agreement-attachment-form{display:grid;grid-template-columns:1fr}
+}
 @media(max-width:480px){
     .customer-card-head{
         display:grid;
